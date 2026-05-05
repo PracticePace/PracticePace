@@ -251,6 +251,19 @@ export function releaseDuck() {
   doRestore()
 }
 
+/**
+ * Start a fresh duck right now.
+ * Called on utterance.onstart when the speech fires 10 s after the horn —
+ * the horn's 3-second duck will have long since restored, so we need a
+ * brand-new duck rather than extending an existing one.
+ */
+export function duckNow() {
+  if (!isPlaying || volume <= 25) return
+  if (duckTimer) { clearTimeout(duckTimer); duckTimer = null }
+  duckedFrom = volume
+  if (audio) audio.volume = 0.20
+}
+
 // ── Stop & reset ──────────────────────────────────────────────────────────────
 export function stop() {
   if (audio) {

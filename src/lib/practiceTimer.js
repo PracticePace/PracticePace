@@ -6,7 +6,7 @@
 // Pattern matches audioPlayer.js: subscribe(fn) / getSnapshot() / actions.
 
 import { playAirHorn, playWhistle, playPeriodEnd, loadHorn, getAutoSounds, setAutoSound } from './sounds'
-import { duckForHorn, holdDuck, releaseDuck } from './audioPlayer'
+import { duckForHorn, duckNow, releaseDuck } from './audioPlayer'
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = 'pp_practice_timer'
@@ -24,9 +24,14 @@ function savePrefs(patch) {
 // the voices list is empty until the 'voiceschanged' event fires.
 let _cachedVoice             = undefined   // undefined = unresolved, null = use browser default
 let _voicesChangedRegistered = false
+let _pendingSpeechTimer      = null        // setTimeout id for the 10-second announcement delay
 
+// Voice priority: Daniel (iOS/macOS male) → Alex (macOS male) →
+//   any voice with "male" in name → any English → browser default
 function _resolveVoice(voices) {
-  return voices.find(v => v.lang === 'en-US')
+  return voices.find(v => v.name?.includes('Daniel') && v.lang?.startsWith('en'))
+    ?? voices.find(v => v.name?.includes('Alex')     && v.lang?.startsWith('en'))
+    ?? voices.find(v => /male/i.test(v.name)          && v.lang?.startsWith('en'))
     ?? voices.find(v => v.lang?.startsWith('en'))
     ?? null
 }
@@ -41,6 +46,7 @@ function _getEnglishVoice() {
   if (voices.length > 0) {
     // Voices available synchronously (Chromium)
     _cachedVoice = _resolveVoice(voices)
+    console.log('[PracticePace] TTS voice:', _cachedVoice?.name ?? '(browser default)')
     return _cachedVoice
   }
 
@@ -49,6 +55,7 @@ function _getEnglishVoice() {
     _voicesChangedRegistered = true
     window.speechSynthesis.onvoiceschanged = () => {
       _cachedVoice = _resolveVoice(window.speechSynthesis.getVoices())
+      console.log('[PracticePace] TTS voice:', _cachedVoice?.name ?? '(browser default)')
       window.speechSynthesis.onvoiceschanged = null
     }
   }
@@ -56,10 +63,9 @@ function _getEnglishVoice() {
 }
 
 /**
- * Speak the drill name through the browser's speechSynthesis API.
- * Ducks the music for the duration of the utterance by cancelling the
- * horn's 3-second restore timer (holdDuck) and restoring only when
- * speech ends or errors (releaseDuck).
+ * Speak the announcement immediately.
+ * The music duck is a fresh independent duck — by the time this runs
+ * (10 s after the horn), the horn's 3-second duck has long since restored.
  */
 function speakDrillName(name) {
   if (!name) return
@@ -68,20 +74,38 @@ function speakDrillName(name) {
   // Cancel any previously queued utterance (rapid double-advance guard)
   window.speechSynthesis.cancel()
 
-  const utterance  = new SpeechSynthesisUtterance(name)
-  utterance.rate   = 1.0
-  utterance.pitch  = 1.0
+  const utterance  = new SpeechSynthesisUtterance(`Next up. ${name}.`)
+  utterance.rate   = 0.95   // slightly slower — authoritative, easier to hear at distance
+  utterance.pitch  = 0.9    // slightly lower — sounds more masculine on most voices
   utterance.volume = 1.0
 
   const voice = _getEnglishVoice()
   if (voice) utterance.voice = voice
 
-  // Hold the duck open while speaking; release when done (or on error)
-  utterance.onstart = () => holdDuck()
+  // Fresh duck for the utterance — independent of the horn duck
+  utterance.onstart = () => duckNow()
   utterance.onend   = () => releaseDuck()
   utterance.onerror = () => releaseDuck()
 
   window.speechSynthesis.speak(utterance)
+}
+
+/**
+ * Cancel any pending announcement and schedule a new one 10 s from now.
+ * Storing the timer id lets us cancel if the coach manually advances,
+ * resets, or pauses before the announcement fires.
+ */
+function _scheduleSpeech(name) {
+  if (_pendingSpeechTimer) { clearTimeout(_pendingSpeechTimer); _pendingSpeechTimer = null }
+  _pendingSpeechTimer = setTimeout(() => {
+    _pendingSpeechTimer = null
+    speakDrillName(name)
+  }, 10000)
+}
+
+/** Cancel any pending announcement (no-op if none is pending). */
+function _cancelSpeech() {
+  if (_pendingSpeechTimer) { clearTimeout(_pendingSpeechTimer); _pendingSpeechTimer = null }
 }
 
 // Also pull from getAutoSounds() so horn/whistle toggles stay in sync with
@@ -280,7 +304,7 @@ function tick() {
         // Speak the next drill name 200 ms after the horn fires so the two
         // don't overlap audibly.  Music stays ducked until speech finishes.
         const nextName = drills[nxt].name
-        setTimeout(() => speakDrillName(nextName), 200)
+        _scheduleSpeech(nextName)
         emit()
         return
       }
@@ -315,13 +339,18 @@ export function startPause() {
   loadHorn()    // preload audio on first interaction
   s.isRunning  = !s.isRunning
   s.hasStarted = true
-  if (s.isRunning) startInterval()
-  else             stopInterval()
+  if (s.isRunning) {
+    startInterval()
+  } else {
+    stopInterval()
+    _cancelSpeech()   // cancel pending announcement if paused
+  }
   emit()
 }
 
 /** Reset to beginning of current script (or manual duration). */
 export function reset() {
+  _cancelSpeech()
   stopInterval()
   s.isRunning       = false
   s.hasStarted      = false
@@ -338,6 +367,7 @@ export function reset() {
 export function jumpTo(i) {
   const drills = s.activeScript?.drills ?? []
   if (i < 0 || i >= drills.length) return
+  _cancelSpeech()
   stopInterval()
   s.isRunning       = false
   s.isOverrun       = false
@@ -372,7 +402,7 @@ export function next() {
     // Speak the next drill name 200 ms after the horn fires.
     // Music stays ducked until speech finishes (same as auto-advance).
     const nextName = drills[nxt].name
-    setTimeout(() => speakDrillName(nextName), 200)
+    _scheduleSpeech(nextName)
     startInterval()
   } else {
     // Already at last drill — no speech, just stop
