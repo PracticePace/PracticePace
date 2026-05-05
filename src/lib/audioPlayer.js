@@ -202,24 +202,53 @@ export function setPlaylist(songs) {
   emit('state', getSnapshot())
 }
 
-// ── Volume ducking for air horn ───────────────────────────────────────────────
-export async function duckForHorn(hornFn) {
-  const prevVol    = volume
-  const shouldDuck = isPlaying && prevVol > 25
+// ── Volume ducking (air horn + speech chaining) ───────────────────────────────
+let duckTimer  = null   // pending auto-restore setTimeout id
+let duckedFrom = null   // volume% to restore to; null = not currently ducked
 
-  if (shouldDuck && audio) {
-    audio.volume = 0.20
+function doRestore() {
+  if (duckedFrom === null) return
+  volume     = duckedFrom
+  duckedFrom = null
+  if (audio) audio.volume = volume / 100
+  emit('state', getSnapshot())
+}
+
+export async function duckForHorn(hornFn) {
+  const shouldDuck = isPlaying && volume > 25
+
+  if (shouldDuck) {
+    duckedFrom = volume
+    if (audio) audio.volume = 0.20
+    // Cancel any in-flight restore from a previous duck so they don't stack
+    if (duckTimer) { clearTimeout(duckTimer); duckTimer = null }
   }
 
   try { await hornFn() } catch {}
 
   if (shouldDuck) {
-    setTimeout(() => {
-      volume = prevVol
-      if (audio) audio.volume = prevVol / 100
-      emit('state', getSnapshot())
-    }, 3000)
+    // Schedule auto-restore; speakDrillName will cancel this via holdDuck()
+    // and take over restoration via releaseDuck() when speech ends.
+    duckTimer = setTimeout(() => { duckTimer = null; doRestore() }, 3000)
   }
+}
+
+/**
+ * Cancel the pending auto-restore timer so the duck stays open.
+ * Called by speakDrillName() on utterance.onstart — prevents the horn's
+ * 3-second timer from popping music back up mid-sentence.
+ */
+export function holdDuck() {
+  if (duckTimer) { clearTimeout(duckTimer); duckTimer = null }
+}
+
+/**
+ * Restore music volume immediately.
+ * Called by speakDrillName() on utterance.onend / utterance.onerror.
+ */
+export function releaseDuck() {
+  if (duckTimer) { clearTimeout(duckTimer); duckTimer = null }
+  doRestore()
 }
 
 // ── Stop & reset ──────────────────────────────────────────────────────────────
