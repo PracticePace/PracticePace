@@ -4,11 +4,7 @@ import { supabase }            from '../lib/supabase'
 import { useAuth }             from '../context/AuthContext'
 import Logo    from '../components/Logo'
 import Tagline from '../components/Tagline'
-
-const SPORTS = [
-  'Football', 'Basketball', 'Volleyball', 'Baseball',
-  'Softball', 'Soccer', 'Track', 'Wrestling', 'Tennis', 'Other',
-]
+import { SPORTS } from '../lib/sports'
 
 const STEPS = ['Account Type', 'Program Details', 'Confirmation']
 
@@ -247,7 +243,7 @@ function Step2({ form, setForm }) {
           >
             <option value="">Select a sport…</option>
             {SPORTS.map(s => (
-              <option key={s} value={s}>{s}</option>
+              <option key={s.value} value={s.value}>{s.label}</option>
             ))}
           </select>
         </Field>

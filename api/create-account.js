@@ -107,7 +107,9 @@ export default async function handler(req) {
     const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
     const account = await sbInsert(supabaseUrl, serviceKey, 'accounts', {
       name:          orgName,
-      account_type:  planType === 'school' ? 'school' : 'single_program',
+      // accounts_account_type_check allows 'school' | 'program' only.
+      // Anything that isn't an explicit school-wide plan is a single-program account.
+      account_type:  planType === 'school' ? 'school' : 'program',
       plan_type:     'monthly',
       status:        'trialing',
       trial_ends_at: trialEndsAt,

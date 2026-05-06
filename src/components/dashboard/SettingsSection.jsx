@@ -12,8 +12,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
+import { SPORTS } from '../../lib/sports'
 
-const SPORTS = ['Football','Basketball','Volleyball','Baseball','Softball','Soccer','Track','Wrestling','Tennis','Other']
 const ROLES  = ['owner','admin','coach','readonly']
 
 // Role badge colours
@@ -410,7 +410,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                 style={inputStyle}
               >
                 <option value="">Select sport…</option>
-                {SPORTS.map(s => <option key={s} value={s.toLowerCase()}>{s}</option>)}
+                {SPORTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
             </div>
 
