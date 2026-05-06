@@ -44,7 +44,6 @@ const SECTIONS = [
       'Use the Music tab to upload MP3s and build a practice playlist.',
       'Music plays through the iPad speaker or any connected Bluetooth speaker.',
       'The air horn automatically ducks music volume when it fires.',
-      'For Spotify or Apple Music — play through their app, keep PracticePace active and use Split Screen if you need to adjust music.',
     ],
   },
   {
@@ -156,6 +155,38 @@ export default function PlaybookSection({ orgColor = '#cc1111' }) {
         <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#4a2020' }}>
           Quick-Start Guide
         </span>
+      </div>
+
+      {/* Page intro — sits above the section cards */}
+      <div className="px-4 md:px-6 pt-6 pb-2">
+        <div className="max-w-4xl mx-auto flex flex-col gap-2">
+          <h1
+            className="font-black tracking-widest uppercase"
+            style={{
+              fontFamily:    "'Bebas Neue', sans-serif",
+              fontSize:      'clamp(1.8rem, 4vw, 2.4rem)',
+              color:         orgColor,
+              letterSpacing: '0.1em',
+              lineHeight:    1.05,
+            }}
+          >
+            Optimal settings for Practice:Pace
+          </h1>
+          <p className="text-sm leading-relaxed" style={{ color: '#9a8080' }}>
+            Practice:Pace will operate on any computer or tablet, but these are
+            suggestions for optimal use.
+          </p>
+          <p className="text-xs" style={{ color: '#7a5050' }}>
+            For technical help, email{' '}
+            <a
+              href="mailto:practicepace@gmail.com"
+              className="underline transition-opacity hover:opacity-80"
+              style={{ color: orgColor }}
+            >
+              practicepace@gmail.com
+            </a>
+          </p>
+        </div>
       </div>
 
       {/* Cards grid */}
