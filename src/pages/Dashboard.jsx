@@ -8,6 +8,7 @@ import {
   subscribe as subscribeAudio,
   getSnapshot as getAudioSnapshot,
   togglePlay as audioTogglePlay,
+  setPlaylist as setAudioPlaylist,
 } from '../lib/audioPlayer'
 
 import PracticeSection   from '../components/dashboard/PracticeSection'
@@ -237,6 +238,29 @@ export default function Dashboard() {
           console.log('[ACTIVE] auth restore resolved to script id:', restored?.id ?? null, 'name:', restored?.name ?? null, 'matched:', !!restored)
           if (restored) setActiveScript(restored)
           else console.log('[ACTIVE] auth restore: no match — activeScript left as-is (current value will not be overwritten by restore)')
+        }
+
+        // Load the org's saved music playlist into the audioPlayer singleton
+        // on dashboard mount. Without this, the inline music controls on the
+        // Practice tab stay disabled until the user visits the Music tab.
+        // The Music tab's loadSongs effect will refetch when opened — same
+        // behavior the existing onRefresh-after-upload flow relies on.
+        try {
+          const { data: songsData, error: songsErr } = await supabase
+            .from('songs')
+            .select('*')
+            .eq('org_id', resolvedOrgId)
+            .order('position',   { ascending: true })
+            .order('created_at', { ascending: true })
+          if (songsErr) {
+            console.warn('[Dashboard] songs fetch failed (mini player will stay disabled):', songsErr.message)
+          } else {
+            const songList = songsData ?? []
+            console.log('[Dashboard] preloaded music playlist:', songList.length, 'songs')
+            setAudioPlaylist(songList)
+          }
+        } catch (err) {
+          console.warn('[Dashboard] songs fetch threw:', err?.message ?? err)
         }
 
         // Fetch account/subscription status from the accounts table.
