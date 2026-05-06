@@ -103,14 +103,24 @@ export default async function handler(req) {
   }
 
   try {
-    // 1. Create account row — trial starts immediately
+    // 1. Create account row — trial starts immediately.
+    //
+    // The accounts table carries THREE related columns, each with its own
+    // CHECK constraint:
+    //   - account_type : 'school' | 'program'                (plan tier)
+    //   - plan_type    : 'school' | 'single_program'         (plan tier — duplicates account_type semantically; kept in sync below)
+    //   - plan         : 'monthly' | 'annual'                (billing cycle; not the tier)
+    //
+    // Earlier code mistakenly wrote 'monthly' into plan_type, which fails
+    // accounts_plan_type_check. Set both tier columns from the same source
+    // and explicitly write the billing cycle to make the contract visible.
     const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
+    const isSchoolTier = planType === 'school'
     const account = await sbInsert(supabaseUrl, serviceKey, 'accounts', {
       name:          orgName,
-      // accounts_account_type_check allows 'school' | 'program' only.
-      // Anything that isn't an explicit school-wide plan is a single-program account.
-      account_type:  planType === 'school' ? 'school' : 'program',
-      plan_type:     'monthly',
+      account_type:  isSchoolTier ? 'school' : 'program',
+      plan_type:     isSchoolTier ? 'school' : 'single_program',
+      plan:          'monthly',
       status:        'trialing',
       trial_ends_at: trialEndsAt,
     })
