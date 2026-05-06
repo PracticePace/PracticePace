@@ -261,7 +261,7 @@ export function duckNow() {
   if (!isPlaying || volume <= 25) return
   if (duckTimer) { clearTimeout(duckTimer); duckTimer = null }
   duckedFrom = volume
-  if (audio) audio.volume = 0.20
+  if (audio) audio.volume = 0   // silence music completely during speech announcement
 }
 
 // ── Stop & reset ──────────────────────────────────────────────────────────────
