@@ -34,6 +34,7 @@ let _cachedVoice             = undefined   // undefined = unresolved, null = use
 let _voicesChangedRegistered = false
 let _pendingSpeechTimer      = null        // setTimeout id for the 3-second announcement delay
 let _currentUtterance        = null        // held in module scope — prevents GC on iOS Safari
+let _speechUnlocked          = false       // iOS requires a gesture-context speak() before async calls work
 
 // Voice priority: Daniel (iOS/macOS male) → Alex (macOS male) →
 //   any voice with "male" in name → any English → browser default
@@ -99,8 +100,12 @@ function speakDrillName(name) {
 
   const text = `Next up. ${name}.`
   console.log('[TTS] 3s elapsed, calling speak() with:', text)
+  console.log('[TTS] synth state — speaking:', window.speechSynthesis.speaking,
+    'pending:', window.speechSynthesis.pending,
+    'paused:', window.speechSynthesis.paused)
 
-  // Step 1: cancel any stuck synth state (iOS Safari can get wedged)
+  // Step 1: resume then cancel — iOS sometimes suspends the synth between uses
+  window.speechSynthesis.resume()
   window.speechSynthesis.cancel()
 
   // Step 2: build utterance and hold a module-level reference (prevents GC on iOS)
@@ -155,6 +160,22 @@ function _cancelSpeech() {
     clearTimeout(_pendingSpeechTimer)
     _pendingSpeechTimer = null
   }
+}
+
+/**
+ * iOS Safari requires speechSynthesis.speak() to be called synchronously
+ * inside a user-gesture handler at least once before async calls (setTimeout)
+ * will work.  Call this from every button handler that could lead to speech.
+ * The silent utterance grants permission without making a sound.
+ */
+function _unlockSpeech() {
+  if (_speechUnlocked) return
+  if (typeof window === 'undefined' || !window.speechSynthesis) return
+  _speechUnlocked = true
+  const u = new SpeechSynthesisUtterance('')
+  u.volume = 0
+  window.speechSynthesis.speak(u)
+  console.log('[TTS] speechSynthesis unlocked via user gesture')
 }
 
 // Also pull from getAutoSounds() so horn/whistle toggles stay in sync with
@@ -385,7 +406,8 @@ function tick() {
 
 /** Toggle play / pause. */
 export function startPause() {
-  loadHorn()    // preload audio on first interaction
+  loadHorn()         // preload audio on first interaction
+  _unlockSpeech()    // grant iOS permission for later async speak() calls
   s.isRunning  = !s.isRunning
   s.hasStarted = true
   if (s.isRunning) {
@@ -434,6 +456,7 @@ export function jumpTo(i) {
  * starts without requiring another press of Start.
  */
 export function next() {
+  _unlockSpeech()            // grant iOS permission for the upcoming async speak()
   duckForHorn(playAirHorn)   // horn fires immediately
 
   const drills = s.activeScript?.drills ?? []
