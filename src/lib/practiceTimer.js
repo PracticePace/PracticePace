@@ -512,7 +512,11 @@ export function addMinute() {
 export function setActiveScript(script) {
   const newId = script?.id ?? null
   const curId = s.activeScript?.id ?? null
-  if (newId === curId) return    // same script — don't disturb a running timer
+  console.log('[ACTIVE] practiceTimer.setActiveScript called — newId:', newId, 'curId:', curId, 'name:', script?.name ?? null)
+  if (newId === curId) {
+    console.log('[ACTIVE] practiceTimer.setActiveScript: same id, no-op')
+    return    // same script — don't disturb a running timer
+  }
 
   s.activeScript    = script ?? null
   stopInterval()

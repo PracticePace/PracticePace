@@ -67,7 +67,16 @@ export default function Dashboard() {
   const [org, setOrg]                   = useState(null)
   const [profile, setProfile]           = useState(null)
   const [scripts, setScripts]           = useState([])
-  const [activeScript, setActiveScript] = useState(null)
+  const [activeScript, _rawSetActiveScript] = useState(null)
+  // [ACTIVE-DEBUG] logging wrapper around setActiveScript so every change is traced.
+  const setActiveScript = (next) => {
+    try {
+      const id = next?.id ?? null
+      console.log('[ACTIVE] setActiveScript called with:', id, 'name:', next?.name ?? null)
+      console.log('[ACTIVE] setActiveScript stack:', new Error().stack)
+    } catch {}
+    _rawSetActiveScript(next)
+  }
   const [loading, setLoading]           = useState(true)
   const [subscription, setSubscription] = useState(null)   // subscriptions row or null
   const [checkoutLoading, setCheckoutLoading] = useState(false)
@@ -140,6 +149,7 @@ export default function Dashboard() {
   // Without this, every token refresh fires loadAll() and makes the app
   // look like it's reloading every time the user switches back to the tab.
   useEffect(() => {
+    console.log('[ACTIVE] loadAll-trigger effect fired, user.id:', user?.id ?? null, 'isGuest:', user?.is_anonymous === true)
     if (user?.id) loadAll()
   }, [user?.id])
 
@@ -149,10 +159,13 @@ export default function Dashboard() {
       try {
         seedGuestIfEmpty()
         const guestScripts = getGuestScripts()
+        console.log('[ACTIVE] Guest scripts loaded:', guestScripts.length, 'ids:', guestScripts.map(s => s.id))
         setScripts(guestScripts)
 
         const activeId = getGuestActiveId()
+        console.log('[ACTIVE] restoring from localStorage:', activeId, '(guest path, key=pp_guest_active_id)')
         const active   = guestScripts.find(s => s.id === activeId) ?? guestScripts[0] ?? null
+        console.log('[ACTIVE] guest restore resolved to script id:', active?.id ?? null, 'name:', active?.name ?? null)
         setActiveScript(active)
       } catch (err) {
         console.error('[Dashboard] Guest loadAll error:', err)
@@ -202,13 +215,19 @@ export default function Dashboard() {
           if (sample) {
             setScripts([sample])
             setActiveScript(sample)
-            try { localStorage.setItem(activeScriptKey(user.id), sample.id) } catch {}
+            try {
+              console.log('[ACTIVE] localStorage write:', activeScriptKey(user.id), '=', sample.id, '(seed sample path)')
+              localStorage.setItem(activeScriptKey(user.id), sample.id)
+            } catch {}
           }
         } else {
           // Restore the last loaded script for this user, if it still exists
           const savedId = (() => { try { return localStorage.getItem(activeScriptKey(user.id)) } catch { return null } })()
+          console.log('[ACTIVE] restoring from localStorage:', savedId, '(auth path, key=' + activeScriptKey(user.id) + ')')
           const restored = savedId ? list.find(s => s.id === savedId) : null
+          console.log('[ACTIVE] auth restore resolved to script id:', restored?.id ?? null, 'name:', restored?.name ?? null, 'matched:', !!restored)
           if (restored) setActiveScript(restored)
+          else console.log('[ACTIVE] auth restore: no match — activeScript left as-is (current value will not be overwritten by restore)')
         }
 
         // Fetch account/subscription status from the accounts table.
@@ -323,6 +342,7 @@ export default function Dashboard() {
     // ── Guest ──────────────────────────────────────────────────────────────
     if (isGuest) {
       const list = getGuestScripts()
+      console.log('[ACTIVE] loadScripts (guest) returned:', list.length, 'scripts, ids:', list.map(s => s.id))
       setScripts(list)
       return list
     }
@@ -330,13 +350,17 @@ export default function Dashboard() {
     // ── Authenticated ──────────────────────────────────────────────────────
     // Prefer the explicit orgId arg, then the one in context, then org state
     const id = orgId ?? contextOrgId ?? org?.id
-    if (!id) return []
+    if (!id) {
+      console.log('[ACTIVE] loadScripts (auth) skipped — no orgId resolved')
+      return []
+    }
     const { data } = await supabase
       .from('scripts')
       .select('*')
       .eq('org_id', id)
       .order('created_at', { ascending: false })
     const list = data ?? []
+    console.log('[ACTIVE] Supabase scripts fetch returned:', list.length, 'scripts, ids:', list.map(s => s.id))
     setScripts(list)
     return list
   }
@@ -361,13 +385,19 @@ export default function Dashboard() {
   }
 
   function handleSetActive(script) {
+    console.log('[ACTIVE] handleSetActive invoked with script id:', script?.id ?? null, 'name:', script?.name ?? null, 'isGuest:', isGuest)
     setActiveScript(script)
     if (isGuest) {
       setGuestActiveId(script?.id ?? null)
     } else if (user?.id) {
       try {
-        if (script?.id) localStorage.setItem(activeScriptKey(user.id), script.id)
-        else localStorage.removeItem(activeScriptKey(user.id))
+        if (script?.id) {
+          console.log('[ACTIVE] localStorage write:', activeScriptKey(user.id), '=', script.id, '(handleSetActive)')
+          localStorage.setItem(activeScriptKey(user.id), script.id)
+        } else {
+          console.log('[ACTIVE] localStorage clear:', activeScriptKey(user.id), '(handleSetActive — script null)')
+          localStorage.removeItem(activeScriptKey(user.id))
+        }
       } catch {}
     }
     if (script) setSection('practice')

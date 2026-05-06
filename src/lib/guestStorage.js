@@ -48,8 +48,13 @@ export function getGuestActiveId() {
 }
 
 export function setGuestActiveId(id) {
-  if (id) localStorage.setItem(ACTIVE_KEY, id)
-  else localStorage.removeItem(ACTIVE_KEY)
+  if (id) {
+    console.log('[ACTIVE] localStorage write:', ACTIVE_KEY, '=', id, '(setGuestActiveId)')
+    localStorage.setItem(ACTIVE_KEY, id)
+  } else {
+    console.log('[ACTIVE] localStorage clear:', ACTIVE_KEY, '(setGuestActiveId)')
+    localStorage.removeItem(ACTIVE_KEY)
+  }
 }
 
 // ── Videos ────────────────────────────────────────────────────────────────────

@@ -54,7 +54,10 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
   useEffect(() => subscribe(setSnap), [])
 
   // Tell the singleton when the script prop changes (only resets if script changed)
-  useEffect(() => { setActiveScript(activeScript) }, [activeScript])
+  useEffect(() => {
+    console.log('[ACTIVE] PracticeSection effect — pushing activeScript prop to timer singleton, id:', activeScript?.id ?? null, 'name:', activeScript?.name ?? null)
+    setActiveScript(activeScript)
+  }, [activeScript])
 
   // Derive display values from snapshot
   const {
