@@ -1,8 +1,9 @@
 import { useState }   from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase }    from '../lib/supabase'
-import Logo    from '../components/Logo'
-import Tagline from '../components/Tagline'
+import Logo          from '../components/Logo'
+import Tagline       from '../components/Tagline'
+import PasswordInput from '../components/PasswordInput'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -207,8 +208,7 @@ export default function Login() {
             <label className="text-xs font-semibold tracking-widest uppercase" style={{ color: '#9a8080' }}>
               Password
             </label>
-            <input
-              type="password"
+            <PasswordInput
               required
               autoComplete={mode === 'create' ? 'new-password' : 'current-password'}
               value={password}

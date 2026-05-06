@@ -21,6 +21,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate }          from 'react-router-dom'
 import { supabase }              from '../lib/supabase'
 import Logo                      from '../components/Logo'
+import PasswordInput             from '../components/PasswordInput'
 
 export default function ResetPassword() {
   const navigate = useNavigate()
@@ -166,8 +167,7 @@ export default function ResetPassword() {
                   style={{ color: '#9a8080' }}>
                   New Password
                 </label>
-                <input
-                  type="password"
+                <PasswordInput
                   required
                   minLength={8}
                   value={password}

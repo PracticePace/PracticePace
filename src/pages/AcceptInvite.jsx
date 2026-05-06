@@ -19,6 +19,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate }                  from 'react-router-dom'
 import { supabase }                     from '../lib/supabase'
 import Logo                             from '../components/Logo'
+import PasswordInput                    from '../components/PasswordInput'
 
 export default function AcceptInvite() {
   const navigate = useNavigate()
@@ -269,8 +270,7 @@ export default function AcceptInvite() {
                   style={{ color: '#9a8080' }}>
                   Create Password
                 </label>
-                <input
-                  type="password"
+                <PasswordInput
                   required
                   minLength={8}
                   value={password}
