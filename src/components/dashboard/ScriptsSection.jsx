@@ -307,7 +307,7 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
               Cancel
             </button>
             <button
-              onClick={() => onEditSave({
+              onClick={() => onEditSave(index, {
                 name: editName.trim(),
                 duration: Number(editMins || 0) * 60 + Number(editSecs || 0),
               })}
