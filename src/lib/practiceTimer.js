@@ -506,6 +506,18 @@ export function addMinute() {
 }
 
 /**
+ * Subtract 60 seconds from the current countdown, floored at 0.
+ * One-time adjustment to the running clock — does NOT modify the drill's
+ * saved duration. If the timer is running and this drops secondsLeft to 0,
+ * the next tick triggers the existing end-of-drill flow (horn, voice,
+ * auto-advance), which is intentional.
+ */
+export function subtractMinute() {
+  s.secondsLeft = Math.max(0, s.secondsLeft - 60)
+  emit()
+}
+
+/**
  * Called by Dashboard / PracticeSection when the active script changes.
  * Only resets the timer if the script actually changed (by id).
  */

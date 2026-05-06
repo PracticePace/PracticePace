@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import {
   subscribe, getSnapshot,
   startPause, reset, jumpTo, next,
-  setTimeTo, addMinute,
+  setTimeTo, addMinute, subtractMinute,
   setActiveScript,
   setAutoAdvance, setAllowOverrun, setHornOnEnd, setWhistleAt60,
 } from '../../lib/practiceTimer'
@@ -329,6 +329,14 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
               </button>
             )
           })}
+
+          <button
+            onClick={subtractMinute}
+            className="h-11 px-2.5 rounded-lg text-xs font-bold"
+            style={{ backgroundColor: '#110000', border: '1px solid #2a0000', color: '#9a8080' }}
+          >
+            −1m
+          </button>
 
           <button
             onClick={addMinute}
