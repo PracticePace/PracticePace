@@ -11,6 +11,7 @@ import Scoreboard from './pages/Scoreboard'
 import Admin from './pages/Admin'
 import AcceptInvite from './pages/AcceptInvite'
 import Pricing      from './pages/Pricing'
+import ResetPassword from './pages/ResetPassword'
 
 export default function App() {
   return (
@@ -26,7 +27,8 @@ export default function App() {
             <Route path="/script"     element={<ProtectedRoute><Script /></ProtectedRoute>} />
             <Route path="/scoreboard" element={<ProtectedRoute><Scoreboard /></ProtectedRoute>} />
             <Route path="/admin"      element={<ProtectedRoute><Admin /></ProtectedRoute>} />
-            <Route path="/invite"     element={<AcceptInvite />} />
+            <Route path="/invite"         element={<AcceptInvite />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
           </Routes>
         </OrgProvider>
       </AuthProvider>

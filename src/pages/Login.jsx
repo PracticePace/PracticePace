@@ -86,6 +86,32 @@ export default function Login() {
     }
   }
 
+  async function handleForgotPassword() {
+    setError('')
+    setInfo('')
+
+    if (!email.trim()) {
+      setError('Enter your email first')
+      return
+    }
+
+    setLoading(true)
+    try {
+      const { error: resetErr } = await withTimeout(
+        supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: 'https://www.practicepace.app/reset-password',
+        })
+      )
+      if (resetErr) throw resetErr
+      setInfo('Password reset email sent. Check your inbox.')
+    } catch (err) {
+      console.error('[Login] Reset password error:', err.message)
+      setError(friendlyError(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function handleGuest() {
     setError('')
     setLoading(true)
@@ -220,6 +246,20 @@ export default function Login() {
           >
             {loading ? 'Loading…' : mode === 'create' ? 'Create Account' : 'Sign In'}
           </button>
+
+          {mode === 'signin' && (
+            <button
+              type="button"
+              onClick={handleForgotPassword}
+              disabled={loading}
+              className="text-xs underline transition-colors disabled:opacity-50"
+              style={{ color: '#9a8080' }}
+              onMouseEnter={e => (e.target.style.color = '#cc1111')}
+              onMouseLeave={e => (e.target.style.color = '#9a8080')}
+            >
+              Forgot password?
+            </button>
+          )}
         </form>
 
         {/* Divider */}
