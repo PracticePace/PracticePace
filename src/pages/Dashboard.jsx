@@ -473,9 +473,24 @@ export default function Dashboard() {
       >
         <Logo variant="white" height={52} className="shrink-0" />
 
-        <span className="font-bold text-white text-sm md:text-base text-center truncate px-4 max-w-[200px] md:max-w-sm">
+        {/* Program name as a header hero — Bebas Neue, uppercase, hex color
+            from accounts.program_name_color (default white). Truncates with
+            ellipsis if longer than the available space; never wraps. */}
+        <h1
+          className="text-center px-4 truncate"
+          style={{
+            fontFamily:    "'Bebas Neue', sans-serif",
+            fontSize:      'clamp(22px, 3vw, 36px)',
+            color:         isGuest ? '#ffffff' : (subscription?.program_name_color ?? '#ffffff'),
+            letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+            lineHeight:    1,
+            flex:          '1 1 auto',
+            minWidth:      0,
+          }}
+        >
           {isGuest ? 'Guest Mode' : (org?.name ?? '')}
-        </span>
+        </h1>
 
         <button
           onClick={signOut}
@@ -634,6 +649,7 @@ export default function Dashboard() {
               orgColor={orgColor}
               onOrgUpdate={handleOrgUpdate}
               subscription={subscription}
+              onSubscriptionUpdate={updated => setSubscription(updated)}
               onStartCheckout={openPlanModal}
               checkoutLoading={checkoutLoading}
               checkoutError={checkoutError}

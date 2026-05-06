@@ -71,14 +71,15 @@ const STATUS_LABELS = {
 }
 
 export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
-  subscription, onStartCheckout, checkoutLoading, checkoutError }) {
+  subscription, onSubscriptionUpdate, onStartCheckout, checkoutLoading, checkoutError }) {
   const { user, loading: authLoading } = useAuth()
 
   const [form, setForm] = useState({
-    name:           org?.name  ?? '',
-    sport:          (org?.sport ?? '').toLowerCase(),
-    primaryColor:   org?.primary_color   ?? '#cc1111',
-    secondaryColor: org?.secondary_color ?? '#ffffff',
+    name:             org?.name  ?? '',
+    sport:            (org?.sport ?? '').toLowerCase(),
+    primaryColor:     org?.primary_color   ?? '#cc1111',
+    secondaryColor:   org?.secondary_color ?? '#ffffff',
+    programNameColor: subscription?.program_name_color ?? '#ffffff',
   })
   const [saving, setSaving]   = useState(false)
   const [saved, setSaved]     = useState(false)
@@ -108,18 +109,20 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
   const [portalLoading, setPortalLoading] = useState(false)
   const [portalError,   setPortalError]   = useState('')
 
-  // Sync form whenever org changes (includes initial load when org arrives async)
+  // Sync form whenever org or subscription changes (also covers initial load
+  // when either arrives async).
   useEffect(() => {
     if (org?.id) {
       setForm({
-        name:           org.name  ?? '',
-        sport:          (org.sport ?? '').toLowerCase(),
-        primaryColor:   org.primary_color   ?? '#cc1111',
-        secondaryColor: org.secondary_color ?? '#ffffff',
+        name:             org.name  ?? '',
+        sport:            (org.sport ?? '').toLowerCase(),
+        primaryColor:     org.primary_color   ?? '#cc1111',
+        secondaryColor:   org.secondary_color ?? '#ffffff',
+        programNameColor: subscription?.program_name_color ?? '#ffffff',
       })
       loadCoaches()
     }
-  }, [org?.id, org?.name, org?.sport, org?.primary_color, org?.secondary_color])
+  }, [org?.id, org?.name, org?.sport, org?.primary_color, org?.secondary_color, subscription?.id, subscription?.program_name_color])
 
   async function loadCoaches() {
     if (!org?.id) return
@@ -147,6 +150,23 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
           })
           .eq('id', org.id)
         if (err) { setSaveErr(err.message); return }
+
+        // program_name_color lives on the accounts row, not organizations.
+        // Skip when there's no subscription / accountId yet (e.g. legacy users
+        // whose profile.account_id wasn't linked) — never block the org save.
+        if (subscription?.id) {
+          const { error: accErr } = await supabase
+            .from('accounts')
+            .update({ program_name_color: form.programNameColor })
+            .eq('id', subscription.id)
+          if (accErr) {
+            // Non-blocking: surface but don't roll back the org update.
+            console.warn('[Settings] program_name_color update failed:', accErr.message)
+          } else {
+            onSubscriptionUpdate?.({ ...subscription, program_name_color: form.programNameColor })
+          }
+        }
+
         setSaved(true)
         onOrgUpdate?.({
           ...org,
@@ -399,6 +419,9 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                 className="rounded-lg px-4 py-3 text-sm outline-none"
                 style={inputStyle}
               />
+              <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
+                Your program name appears at the top of the dashboard and on the scoreboard team labels.
+              </p>
             </div>
 
             <div className="flex flex-col gap-1">
@@ -415,32 +438,59 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
             </div>
 
             {/* Color pickers */}
-            <div className="flex gap-3">
-              {[
-                { key: 'primaryColor',   label: 'Primary Color' },
-                { key: 'secondaryColor', label: 'Secondary Color' },
-              ].map(({ key, label }) => (
-                <div key={key} className="flex-1 flex flex-col gap-1">
-                  <label className="text-xs font-semibold tracking-widest uppercase" style={{ color: '#9a8080' }}>
-                    {label}
-                  </label>
-                  <div
-                    className="flex items-center gap-2 rounded-lg px-3 py-2"
-                    style={{ backgroundColor: '#1a0000', border: '1px solid #2a0000' }}
-                  >
-                    <input
-                      type="color"
-                      value={form[key]}
-                      onChange={e => upd(key, e.target.value)}
-                      className="w-8 h-8 rounded cursor-pointer shrink-0"
-                      style={{ backgroundColor: 'transparent', border: '1px solid #3a0000', padding: '1px' }}
-                    />
-                    <span className="text-xs font-mono" style={{ color: '#9a8080' }}>
-                      {form[key]}
-                    </span>
+            <div className="flex flex-col gap-3">
+              <div className="flex gap-3">
+                {[
+                  { key: 'primaryColor',   label: 'Primary Color' },
+                  { key: 'secondaryColor', label: 'Secondary Color' },
+                ].map(({ key, label }) => (
+                  <div key={key} className="flex-1 flex flex-col gap-1">
+                    <label className="text-xs font-semibold tracking-widest uppercase" style={{ color: '#9a8080' }}>
+                      {label}
+                    </label>
+                    <div
+                      className="flex items-center gap-2 rounded-lg px-3 py-2"
+                      style={{ backgroundColor: '#1a0000', border: '1px solid #2a0000' }}
+                    >
+                      <input
+                        type="color"
+                        value={form[key]}
+                        onChange={e => upd(key, e.target.value)}
+                        className="w-8 h-8 rounded cursor-pointer shrink-0"
+                        style={{ backgroundColor: 'transparent', border: '1px solid #3a0000', padding: '1px' }}
+                      />
+                      <span className="text-xs font-mono" style={{ color: '#9a8080' }}>
+                        {form[key]}
+                      </span>
+                    </div>
                   </div>
+                ))}
+              </div>
+
+              {/* Program name color — saved to accounts.program_name_color */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold tracking-widest uppercase" style={{ color: '#9a8080' }}>
+                  Program Name Color
+                </label>
+                <div
+                  className="flex items-center gap-2 rounded-lg px-3 py-2"
+                  style={{ backgroundColor: '#1a0000', border: '1px solid #2a0000' }}
+                >
+                  <input
+                    type="color"
+                    value={form.programNameColor}
+                    onChange={e => upd('programNameColor', e.target.value)}
+                    className="w-8 h-8 rounded cursor-pointer shrink-0"
+                    style={{ backgroundColor: 'transparent', border: '1px solid #3a0000', padding: '1px' }}
+                  />
+                  <span className="text-xs font-mono" style={{ color: '#9a8080' }}>
+                    {form.programNameColor}
+                  </span>
                 </div>
-              ))}
+                <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
+                  This is the color of your program name shown at the top of the dashboard.
+                </p>
+              </div>
             </div>
 
             {/* Live preview */}
