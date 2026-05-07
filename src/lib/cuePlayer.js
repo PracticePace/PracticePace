@@ -36,6 +36,7 @@ function clearAudio() {
  * does NOT fire when stopCue() is called by the orchestrator.
  */
 export async function playCue(url, { onEnded } = {}) {
+  console.log('[Cue][cuePlayer] playCue() called, url=', url)
   // Stop any currently-playing cue without invoking its onEnded — a brand
   // new cue is replacing it, the orchestrator will (re)decide what to do
   // with the main player.
@@ -46,17 +47,29 @@ export async function playCue(url, { onEnded } = {}) {
   a.preload = 'auto'
   a.volume  = 1.0
 
+  a.addEventListener('loadedmetadata', () => {
+    console.log('[Cue][cuePlayer] loadedmetadata, duration=', a.duration)
+  })
+  a.addEventListener('canplay', () => {
+    console.log('[Cue][cuePlayer] canplay event')
+  })
+  a.addEventListener('playing', () => {
+    console.log('[Cue][cuePlayer] playing event (cue audio is actually playing)')
+  })
+
   a.addEventListener('ended', () => {
     if (audio !== a) return        // a newer cue (or stop) replaced us
+    console.log('[Cue][cuePlayer] ended event — invoking onEnded callback')
     const cb = endedCb
     audio   = null
     endedCb = null
     if (typeof cb === 'function') { try { cb() } catch {} }
   })
 
-  a.addEventListener('error', () => {
+  a.addEventListener('error', (ev) => {
     if (audio !== a) return
-    console.error('[cuePlayer] error loading cue:', a.src)
+    console.error('[Cue][cuePlayer] error event on audio element',
+      { src: a.src, errorCode: a.error?.code, errorMsg: a.error?.message, ev })
     const cb = endedCb
     audio   = null
     endedCb = null
@@ -68,14 +81,16 @@ export async function playCue(url, { onEnded } = {}) {
   endedCb = typeof onEnded === 'function' ? onEnded : null
 
   try {
+    console.log('[Cue][cuePlayer] awaiting a.play() …')
     await a.play()
+    console.log('[Cue][cuePlayer] a.play() resolved successfully')
   } catch (err) {
     // Play failed (autoplay policy, etc). Behave as error path.
     if (audio === a) {
       const cb = endedCb
       audio   = null
       endedCb = null
-      console.error('[cuePlayer] play() rejected:', err?.message ?? err)
+      console.error('[Cue][cuePlayer] play() rejected:', err?.name, err?.message ?? err)
       if (typeof cb === 'function') { try { cb() } catch {} }
     }
   }
@@ -86,6 +101,7 @@ export async function playCue(url, { onEnded } = {}) {
  * the caller is taking responsibility for whatever comes next.
  */
 export function stopCue() {
+  console.log('[Cue][cuePlayer] stopCue() called, hadAudio=', !!audio)
   endedCb = null
   clearAudio()
 }
