@@ -745,7 +745,10 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
             </Section>
           )}
 
-          {/* ── Billing ── */}
+          {/* ── Billing — owner only ───────────────────────────────────────
+              Admins manage coaches/staff but should not see or touch billing.
+              Coaches/readonly should never see this card. */}
+          {profile?.role === 'owner' && (
           <Section title="Subscription & Billing">
             {(() => {
               const sub      = subscription
@@ -915,6 +918,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
               )
             })()}
           </Section>
+          )}
 
           {/* Account info */}
           <Section title="Your Account">

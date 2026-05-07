@@ -94,22 +94,33 @@ export default async function handler(req) {
       }, 400)
     }
 
-    // 2. Resolve account_id from the org. profiles.account_id is required for
-    //    org-membership reads (get_my_account_id is what the SELECT RLS uses).
-    const orgRes = await fetch(
-      `${supabaseUrl}/rest/v1/organizations?id=eq.${encodeURIComponent(org_id)}&select=account_id`,
+    // 2. Resolve account_id from the org's OWNER profile, NOT from
+    //    organizations.account_id directly. Reason: organizations.account_id
+    //    can drift when an account is upgraded/replaced (e.g. owner moves
+    //    from a single-program trial to a school plan; a new accounts row is
+    //    created and the owner's profile gets repointed at it, but
+    //    organizations.account_id can be left pointing at the obsolete row).
+    //    The owner's profile is the live source of truth for which account
+    //    the invitee should join — RLS uses get_my_account_id() (which reads
+    //    profiles.account_id) for org-membership SELECTs, so anchoring the
+    //    coach's account_id to the owner's keeps them visible to each other.
+    const ownerRes = await fetch(
+      `${supabaseUrl}/rest/v1/profiles?org_id=eq.${encodeURIComponent(org_id)}&role=eq.owner&select=account_id&limit=1`,
       { headers: sbHeaders(serviceKey) }
     )
-    if (!orgRes.ok) {
-      const text = await orgRes.text().catch(() => '')
-      console.error('[accept-invite] org lookup failed:', orgRes.status, text)
+    if (!ownerRes.ok) {
+      const text = await ownerRes.text().catch(() => '')
+      console.error('[accept-invite] owner lookup failed:', ownerRes.status, text)
       return json({ error: 'Could not look up your program.' }, 502)
     }
-    const orgs = await orgRes.json()
-    if (!Array.isArray(orgs) || orgs.length === 0) {
-      return json({ error: 'Your program could not be found. Ask your admin to send a fresh invite.' }, 404)
+    const owners = await ownerRes.json()
+    if (!Array.isArray(owners) || owners.length === 0) {
+      console.error('[accept-invite] no owner profile found for org', org_id)
+      return json({
+        error: `Cannot determine account for invite: no owner profile found for org ${org_id}. Ask your admin to send a fresh invite.`,
+      }, 404)
     }
-    const account_id = orgs[0].account_id
+    const account_id = owners[0].account_id
 
     // 3. Upsert the profile row. ON CONFLICT (id) makes this idempotent —
     //    safe to retry from the client without creating duplicates.
