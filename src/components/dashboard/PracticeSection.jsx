@@ -284,21 +284,41 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
           )}
         </div>
 
-        {/* ── 2. Current segment name ───────────────────────────────────────── */}
-        <div className="shrink-0 flex items-end justify-center pb-1" style={{ minHeight: 52 }}>
+        {/* ── 2. Current segment name (+ optional note) ─────────────────────── */}
+        <div className="shrink-0 flex flex-col items-center pb-1" style={{ minHeight: 52 }}>
           {currentDrill ? (
-            <h1
-              className="text-center leading-none tracking-wide"
-              style={{
-                fontFamily: "'Bebas Neue', sans-serif",
-                fontSize:   'clamp(2.8rem, 6.5vw, 5rem)',
-                color:      '#ffffff',
-                letterSpacing: '0.04em',
-                textShadow: '0 2px 24px rgba(0,0,0,0.8)',
-              }}
-            >
-              {currentDrill.name}
-            </h1>
+            <>
+              <h1
+                className="text-center leading-none tracking-wide"
+                style={{
+                  fontFamily: "'Bebas Neue', sans-serif",
+                  fontSize:   'clamp(2.8rem, 6.5vw, 5rem)',
+                  color:      '#ffffff',
+                  letterSpacing: '0.04em',
+                  textShadow: '0 2px 24px rgba(0,0,0,0.8)',
+                }}
+              >
+                {currentDrill.name}
+              </h1>
+              {/* Drill note — small secondary text under the name, only when
+                  the parent script's show_notes_on_practice toggle is ON and
+                  the current drill actually has a non-empty note. */}
+              {snap.activeScript?.show_notes_on_practice
+                && currentDrill.notes
+                && currentDrill.notes.trim() && (
+                  <p
+                    className="text-center mt-1.5 px-4 max-w-3xl whitespace-pre-wrap"
+                    style={{
+                      fontSize:    'clamp(0.85rem, 1.2vw, 1rem)',
+                      color:       'rgba(255,255,255,0.7)',
+                      lineHeight:  1.35,
+                      textShadow:  '0 1px 6px rgba(0,0,0,0.7)',
+                    }}
+                  >
+                    {currentDrill.notes}
+                  </p>
+                )}
+            </>
           ) : (
             <h1
               className="text-center leading-none tracking-wide"

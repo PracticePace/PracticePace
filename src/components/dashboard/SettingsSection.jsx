@@ -106,6 +106,11 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
   const [bgSuccess, setBgSuccess]     = useState(false)
   const bgInputRef = useRef(null)
 
+  const [logoUploading, setLogoUploading] = useState(false)
+  const [logoError, setLogoError]         = useState('')
+  const [logoSuccess, setLogoSuccess]     = useState(false)
+  const logoInputRef = useRef(null)
+
   const [portalLoading, setPortalLoading] = useState(false)
   const [portalError,   setPortalError]   = useState('')
 
@@ -282,6 +287,68 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
       .update({ background_url: null })
       .eq('id', org.id)
     if (!error) onOrgUpdate?.({ ...org, background_url: null })
+  }
+
+  // ── Program logo upload ────────────────────────────────────────────────────
+  // Stored in the existing `backgrounds` storage bucket under a `logos/` path
+  // prefix to avoid creating a second bucket. Public URL persists on
+  // organizations.logo_url (column already exists in the schema).
+  async function uploadLogo(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!org?.id) {
+      setLogoError('Organization not loaded yet — please wait a moment and try again.')
+      return
+    }
+    if (!file.type.startsWith('image/')) { setLogoError('Please select an image file.'); return }
+    if (file.size > 5 * 1024 * 1024)     { setLogoError('Logo must be under 5 MB.');     return }
+
+    setLogoUploading(true); setLogoError(''); setLogoSuccess(false)
+
+    try {
+      const ext  = file.name.split('.').pop()
+      const path = `logos/${org.id}/program-logo.${ext}`
+
+      const { error: upErr } = await supabase.storage
+        .from('backgrounds')
+        .upload(path, file, { upsert: true, contentType: file.type })
+
+      if (upErr) {
+        setLogoError(`Upload failed: ${upErr.message ?? 'unknown error'}`)
+        return
+      }
+
+      const { data: urlData } = supabase.storage.from('backgrounds').getPublicUrl(path)
+      const publicUrl = urlData?.publicUrl
+      if (!publicUrl) { setLogoError('Could not get logo URL.'); return }
+
+      const cacheBusted = `${publicUrl}?v=${Date.now()}`
+
+      const { error: dbErr } = await supabase
+        .from('organizations')
+        .update({ logo_url: cacheBusted })
+        .eq('id', org.id)
+
+      if (dbErr) { setLogoError(`Upload failed: ${dbErr.message}`); return }
+
+      setLogoSuccess(true)
+      onOrgUpdate?.({ ...org, logo_url: cacheBusted })
+      setTimeout(() => setLogoSuccess(false), 5000)
+      if (logoInputRef.current) logoInputRef.current.value = ''
+    } catch (err) {
+      setLogoError(err.message ?? 'Upload failed. Please try again.')
+    } finally {
+      setLogoUploading(false)
+    }
+  }
+
+  async function clearLogo() {
+    if (!org?.id) return
+    const { error } = await supabase
+      .from('organizations')
+      .update({ logo_url: null })
+      .eq('id', org.id)
+    if (!error) onOrgUpdate?.({ ...org, logo_url: null })
   }
 
   function startEditRole(coach) {
@@ -519,6 +586,69 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
               {saving ? 'Saving…' : saved ? '✓ Saved!' : org?.id ? 'Save Changes' : 'Create Program'}
             </button>
           </Section>
+
+          {/* Program Logo — owner+admin only (same gating as Coaches & Staff) */}
+          {canManageCoaches(profile?.role) && (
+          <Section title="Program Logo">
+            <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
+              Optional. Appears next to your program name in the dashboard header
+              and on printed practice scripts. PNG or JPG with a transparent
+              background works best (under 5 MB).
+            </p>
+
+            {org?.logo_url && (
+              <div className="relative rounded-xl overflow-hidden flex items-center justify-center"
+                style={{ aspectRatio: '4/1', backgroundColor: '#1a0000', border: '1px solid #2a0000' }}>
+                <img
+                  src={org.logo_url}
+                  alt="Program logo"
+                  className="max-w-full max-h-full object-contain p-3"
+                />
+                <div className="absolute inset-0 flex items-end p-3 justify-end pointer-events-none">
+                  <button
+                    onClick={clearLogo}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold pointer-events-auto"
+                    style={{ backgroundColor: 'rgba(0,0,0,0.8)', border: '1px solid #cc1111', color: '#cc1111' }}
+                  >
+                    ✕ Remove
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-col gap-2">
+              <input ref={logoInputRef} type="file" accept="image/*" onChange={uploadLogo} className="hidden" id="logo-upload" />
+              <label
+                htmlFor="logo-upload"
+                className="flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold cursor-pointer transition-all"
+                style={{
+                  border:          `2px dashed ${logoUploading ? orgColor : '#2a0000'}`,
+                  color:           logoUploading ? orgColor : '#9a8080',
+                  backgroundColor: '#1a0000',
+                  pointerEvents:   logoUploading ? 'none' : 'auto',
+                }}
+              >
+                {logoUploading
+                  ? <><span className="animate-spin inline-block">⟳</span> Uploading…</>
+                  : <>🏷️ {org?.logo_url ? 'Replace Logo' : 'Upload Program Logo'}</>
+                }
+              </label>
+
+              {logoError && (
+                <p className="text-xs rounded-lg px-3 py-2 leading-relaxed whitespace-pre-line"
+                  style={{ backgroundColor: '#2a0000', color: '#ff6666' }}>
+                  {logoError}
+                </p>
+              )}
+              {logoSuccess && (
+                <p className="text-xs rounded-lg px-3 py-2"
+                  style={{ backgroundColor: '#001a00', color: '#66cc88', border: '1px solid #003300' }}>
+                  ✓ Logo updated
+                </p>
+              )}
+            </div>
+          </Section>
+          )}
 
           {/* Practice Background */}
           <Section title="Practice Screen Background">

@@ -165,15 +165,314 @@ function NewScriptDialog({ orgColor, defaultSport, onCancel, onCreate }) {
   )
 }
 
+// ── PrintScriptDialog (Feature 4) ─────────────────────────────────────────────
+// Modal: asks for the practice start time, then opens a new browser window
+// containing a print-friendly HTML rendering of the script (header band with
+// program name + logo, table with Period / Time / Duration / Drill / Notes).
+// Time column is auto-calculated cumulatively from the start time + each
+// preceding drill's duration.
+//
+// The print window is a self-contained HTML document we write directly into
+// a new window — no React, no app chrome. Auto-triggers window.print() on
+// load, plus a visible Print button in case the auto-trigger is blocked.
+
+function fmtClock12h(d) {
+  const h24 = d.getHours()
+  const m   = d.getMinutes()
+  const ampm = h24 >= 12 ? 'PM' : 'AM'
+  const h12 = h24 % 12 || 12
+  const mm  = String(m).padStart(2, '0')
+  return `${h12}:${mm} ${ampm}`
+}
+
+// Parse a user-typed start time like "3:30 PM", "15:30", "3:30pm", "330 PM",
+// "9 AM" → returns { hour:0..23, minute:0..59 } or null if unparseable.
+function parseStartTime(input) {
+  if (!input) return null
+  const s = input.trim().toUpperCase().replace(/\s+/g, ' ')
+  // 12-hour with optional space + AM/PM
+  let m = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/)
+  if (m) {
+    let h = parseInt(m[1], 10), min = parseInt(m[2], 10)
+    if (h < 1 || h > 12 || min > 59) return null
+    if (m[3] === 'PM' && h !== 12) h += 12
+    if (m[3] === 'AM' && h === 12) h = 0
+    return { hour: h, minute: min }
+  }
+  // 12-hour with NO colon, e.g. "330 PM"
+  m = s.match(/^(\d{1,2})(\d{2})\s*(AM|PM)$/)
+  if (m) {
+    let h = parseInt(m[1], 10), min = parseInt(m[2], 10)
+    if (h < 1 || h > 12 || min > 59) return null
+    if (m[3] === 'PM' && h !== 12) h += 12
+    if (m[3] === 'AM' && h === 12) h = 0
+    return { hour: h, minute: min }
+  }
+  // hour only with AM/PM, e.g. "9 AM"
+  m = s.match(/^(\d{1,2})\s*(AM|PM)$/)
+  if (m) {
+    let h = parseInt(m[1], 10)
+    if (h < 1 || h > 12) return null
+    if (m[2] === 'PM' && h !== 12) h += 12
+    if (m[2] === 'AM' && h === 12) h = 0
+    return { hour: h, minute: 0 }
+  }
+  // 24-hour H:MM
+  m = s.match(/^(\d{1,2}):(\d{2})$/)
+  if (m) {
+    const h = parseInt(m[1], 10), min = parseInt(m[2], 10)
+    if (h > 23 || min > 59) return null
+    return { hour: h, minute: min }
+  }
+  return null
+}
+
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function buildPrintHtml({ scriptName, drills, programName, programNameColor, programLogoUrl, startHour, startMinute }) {
+  // Pre-compute time column cumulatively.
+  const cursor = new Date()
+  cursor.setHours(startHour, startMinute, 0, 0)
+
+  const rows = drills.map((d, i) => {
+    const time = fmtClock12h(cursor)
+    cursor.setSeconds(cursor.getSeconds() + (Number(d.duration) || 0))
+    const totalSeconds = Number(d.duration) || 0
+    const minPart = Math.floor(totalSeconds / 60)
+    const secPart = totalSeconds % 60
+    const dur = secPart === 0
+      ? `${minPart} min`
+      : `${minPart}:${String(secPart).padStart(2, '0')}`
+    return `
+      <tr>
+        <td class="num">${i + 1}</td>
+        <td class="time">${escapeHtml(time)}</td>
+        <td class="dur">${escapeHtml(dur)}</td>
+        <td class="drill">${escapeHtml(d.name ?? '')}</td>
+        <td class="notes">${escapeHtml(d.notes ?? '')}</td>
+      </tr>`
+  }).join('')
+
+  const headerColor = programNameColor || '#000000'
+  const logoTag = programLogoUrl
+    ? `<img class="logo" src="${escapeHtml(programLogoUrl)}" alt="" />`
+    : ''
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>${escapeHtml(programName || 'Practice')} — ${escapeHtml(scriptName || 'Script')}</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; font-family: 'Helvetica Neue', Arial, sans-serif; color: #000; background: #fff; }
+  .toolbar { padding: 12px 24px; background: #f3f3f3; border-bottom: 1px solid #ccc; display: flex; gap: 12px; align-items: center; }
+  .toolbar button { padding: 8px 16px; font-size: 14px; cursor: pointer; }
+  .sheet { padding: 24px 32px; }
+  .header {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    border: 2px solid #000;
+    padding: 24px 32px;
+    min-height: 140px;
+    margin-bottom: 16px;
+  }
+  .program-name {
+    font-family: 'Helvetica Neue', Arial Black, sans-serif;
+    font-weight: 900;
+    font-size: 42px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: ${escapeHtml(headerColor)};
+    line-height: 1;
+    text-align: center;
+    grid-column: 1 / 2;
+  }
+  .program-name .script-name {
+    display: block;
+    margin-top: 10px;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #333;
+  }
+  .header .logo {
+    grid-column: 2 / 3;
+    max-height: 110px;
+    max-width: 180px;
+    object-fit: contain;
+    justify-self: end;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 12pt; }
+  thead th {
+    text-align: left;
+    background: #1a1a1a;
+    color: #fff;
+    padding: 10px 12px;
+    font-size: 11pt;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border: 1px solid #000;
+  }
+  tbody td {
+    border: 1px solid #444;
+    padding: 10px 12px;
+    vertical-align: top;
+    page-break-inside: avoid;
+  }
+  tbody tr { page-break-inside: avoid; }
+  tbody tr:nth-child(even) td { background: #f6f6f6; }
+  .num   { width: 56px; text-align: center; font-weight: 700; }
+  .time  { width: 96px; white-space: nowrap; font-weight: 700; }
+  .dur   { width: 80px; white-space: nowrap; }
+  .drill { font-weight: 700; }
+  .notes { color: #444; font-size: 11pt; }
+  @media print {
+    .toolbar { display: none; }
+    .sheet { padding: 0; }
+    @page { margin: 0.5in; }
+  }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <button onclick="window.print()">🖨 Print</button>
+    <button onclick="window.close()">Close</button>
+  </div>
+  <div class="sheet">
+    <div class="header">
+      <div class="program-name">
+        ${escapeHtml(programName || 'Practice')}
+        <span class="script-name">${escapeHtml(scriptName || 'Script')}</span>
+      </div>
+      ${logoTag}
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th class="num">Period</th>
+          <th class="time">Time</th>
+          <th class="dur">Duration</th>
+          <th>Drill</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+      </tbody>
+    </table>
+  </div>
+  <script>
+    // Auto-trigger print after the document loads. The visible Print button
+    // is the fallback for browsers that block scripted printing.
+    window.addEventListener('load', () => {
+      setTimeout(() => { try { window.print() } catch (e) {} }, 250)
+    })
+  <\/script>
+</body>
+</html>`
+}
+
+function PrintScriptDialog({ scriptName, drills, orgColor,
+  programName, programNameColor, programLogoUrl, onClose }) {
+  const [startTime, setStartTime] = useState('')
+  const [error,     setError]     = useState('')
+
+  function handleSubmit(e) {
+    e.preventDefault()
+    const parsed = parseStartTime(startTime)
+    if (!parsed) {
+      setError('Enter a time like "3:30 PM" or "15:30".')
+      return
+    }
+    if (!drills || drills.length === 0) {
+      setError('This script has no drills yet.')
+      return
+    }
+    const html = buildPrintHtml({
+      scriptName, drills, programName, programNameColor, programLogoUrl,
+      startHour: parsed.hour, startMinute: parsed.minute,
+    })
+    const w = window.open('', '_blank', 'width=900,height=1100')
+    if (!w) {
+      setError('Popup blocked — allow popups for practicepace.app and try again.')
+      return
+    }
+    w.document.open()
+    w.document.write(html)
+    w.document.close()
+    onClose()
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}
+      onClick={onClose}
+    >
+      <form
+        onSubmit={handleSubmit}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-sm rounded-2xl flex flex-col gap-4 p-5"
+        style={{ backgroundColor: '#110000', border: '1px solid #2a0000' }}
+      >
+        <h2 className="font-black text-white text-lg">Print Script</h2>
+        <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
+          When does practice start? Times in the printout will be calculated
+          from this and each drill's duration.
+        </p>
+
+        <input
+          autoFocus
+          value={startTime}
+          onChange={e => { setStartTime(e.target.value); setError('') }}
+          placeholder="e.g. 3:30 PM"
+          className="rounded-lg px-4 py-3 text-sm outline-none"
+          style={{ backgroundColor: '#1a0000', border: '1px solid #2a0000', color: '#fff' }}
+        />
+
+        {error && (
+          <p className="text-xs rounded-lg px-3 py-2"
+            style={{ backgroundColor: '#2a0000', color: '#ff6666' }}>
+            {error}
+          </p>
+        )}
+
+        <div className="flex gap-2 justify-end pt-1">
+          <button type="button" onClick={onClose}
+            className="px-4 py-2 rounded-lg text-sm font-semibold"
+            style={{ border: '1px solid #2a0000', color: '#9a8080' }}>
+            Cancel
+          </button>
+          <button type="submit"
+            className="px-4 py-2 rounded-lg text-sm font-bold text-white"
+            style={{ backgroundColor: orgColor }}>
+            Open Print View
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
 // ── AddDrillForm ──────────────────────────────────────────────────────────────
 // Persistent form at the bottom of the drill list. Owns its own state,
 // reads values on Add click, calls onAdd(fields), then clears itself.
 const DURATION_PRESETS = [5, 10, 15, 20]
 
 function AddDrillForm({ orgColor, onAdd }) {
-  const [name, setName] = useState('')
-  const [mins, setMins] = useState('')
-  const [secs, setSecs] = useState('')
+  const [name,  setName]  = useState('')
+  const [mins,  setMins]  = useState('')
+  const [secs,  setSecs]  = useState('')
+  const [notes, setNotes] = useState('')
 
   const activePreset = (m) =>
     Number(mins) === m && (secs === '' || secs === '0' || Number(secs) === 0)
@@ -182,10 +481,11 @@ function AddDrillForm({ orgColor, onAdd }) {
     const drillName = name.trim()
     const duration  = Number(mins || 0) * 60 + Number(secs || 0)
     console.log('[AddDrill] name:', JSON.stringify(drillName), 'mins:', mins, 'secs:', secs, '→ duration (s):', duration)
-    onAdd({ name: drillName, duration })
+    onAdd({ name: drillName, duration, notes: notes.trim() })
     setName('')
     setMins('')
     setSecs('')
+    setNotes('')
   }
 
   return (
@@ -227,6 +527,15 @@ function AddDrillForm({ orgColor, onAdd }) {
         ))}
       </div>
 
+      <textarea
+        value={notes}
+        onChange={e => setNotes(e.target.value)}
+        placeholder="Notes (optional) — coach reminders, focus points, etc."
+        rows={2}
+        className="rounded-lg px-3 py-2 text-xs outline-none w-full resize-y"
+        style={{ backgroundColor: '#1a0000', border: '1px solid #3a0000', color: '#fff', minHeight: 48 }}
+      />
+
       <button onClick={handleAdd} disabled={!name.trim()}
         className="w-full py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-40"
         style={{ backgroundColor: orgColor }}>
@@ -240,9 +549,10 @@ function AddDrillForm({ orgColor, onAdd }) {
 
 function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
   rowRef, onStartDrag, onEditStart, onEditSave, onEditCancel, onDelete }) {
-  const [editName, setEditName] = useState(drill.name ?? '')
-  const [editMins, setEditMins] = useState(drill.duration ? String(Math.floor(drill.duration / 60)) : '')
-  const [editSecs, setEditSecs] = useState(drill.duration ? String(drill.duration % 60) : '')
+  const [editName,  setEditName]  = useState(drill.name ?? '')
+  const [editMins,  setEditMins]  = useState(drill.duration ? String(Math.floor(drill.duration / 60)) : '')
+  const [editSecs,  setEditSecs]  = useState(drill.duration ? String(drill.duration % 60) : '')
+  const [editNotes, setEditNotes] = useState(drill.notes ?? '')
 
   // Sync edit fields when editing starts
   useEffect(() => {
@@ -250,6 +560,7 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
       setEditName(drill.name ?? '')
       setEditMins(drill.duration ? String(Math.floor(drill.duration / 60)) : '')
       setEditSecs(drill.duration ? String(drill.duration % 60) : '')
+      setEditNotes(drill.notes ?? '')
     }
   }, [isEditing, drill])
 
@@ -300,6 +611,14 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
               </button>
             ))}
           </div>
+          <textarea
+            value={editNotes}
+            onChange={e => setEditNotes(e.target.value)}
+            placeholder="Notes (optional) — coach reminders, focus points, etc."
+            rows={2}
+            className="rounded-lg px-3 py-2 text-xs outline-none w-full resize-y"
+            style={{ backgroundColor: '#0d0000', border: '1px solid #3a0000', color: '#fff', minHeight: 48 }}
+          />
           <div className="flex gap-2 justify-end">
             <button onClick={onEditCancel}
               className="px-3 py-2 rounded-lg text-xs font-semibold"
@@ -308,8 +627,9 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
             </button>
             <button
               onClick={() => onEditSave(index, {
-                name: editName.trim(),
+                name:     editName.trim(),
                 duration: Number(editMins || 0) * 60 + Number(editSecs || 0),
+                notes:    editNotes.trim(),
               })}
               className="px-3 py-2 rounded-lg text-xs font-bold text-white"
               style={{ backgroundColor: orgColor }}>
@@ -319,36 +639,45 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
         </div>
       ) : (
         // ── Display mode ──────────────────────────────────────────────────────
-        <div className="flex items-center gap-2">
-          {/* Drag handle */}
-          <div
-            className="flex items-center justify-center w-8 h-8 shrink-0 rounded-lg cursor-grab active:cursor-grabbing touch-none"
-            style={{ color: '#4a2020', fontSize: 18 }}
-            onMouseDown={e => { e.preventDefault(); onStartDrag(index) }}
-            onTouchStart={e => { e.preventDefault(); onStartDrag(index) }}>
-            ⠿
+        <>
+          <div className="flex items-center gap-2">
+            {/* Drag handle */}
+            <div
+              className="flex items-center justify-center w-8 h-8 shrink-0 rounded-lg cursor-grab active:cursor-grabbing touch-none"
+              style={{ color: '#4a2020', fontSize: 18 }}
+              onMouseDown={e => { e.preventDefault(); onStartDrag(index) }}
+              onTouchStart={e => { e.preventDefault(); onStartDrag(index) }}>
+              ⠿
+            </div>
+
+            {/* Name + duration */}
+            <span className="flex-1 text-base font-bold text-white truncate">
+              {drill.name || <span style={{ color: '#4a2020', fontStyle: 'italic', fontWeight: 400 }}>Untitled drill</span>}
+            </span>
+            <span className="text-sm font-mono shrink-0 px-2" style={{ color: '#9a8080' }}>
+              {drill.duration ? fmt(drill.duration) : '—'}
+            </span>
+
+            {/* Edit + Delete */}
+            <button onClick={() => onEditStart(index)}
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-xs shrink-0"
+              style={{ color: '#9a8080', border: '1px solid #2a0000' }}>
+              ✎
+            </button>
+            <button onClick={() => onDelete(index)}
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-xs shrink-0"
+              style={{ color: '#6a3030', border: '1px solid #2a0000' }}>
+              ✕
+            </button>
           </div>
 
-          {/* Name + duration */}
-          <span className="flex-1 text-base font-bold text-white truncate">
-            {drill.name || <span style={{ color: '#4a2020', fontStyle: 'italic', fontWeight: 400 }}>Untitled drill</span>}
-          </span>
-          <span className="text-sm font-mono shrink-0 px-2" style={{ color: '#9a8080' }}>
-            {drill.duration ? fmt(drill.duration) : '—'}
-          </span>
-
-          {/* Edit + Delete */}
-          <button onClick={() => onEditStart(index)}
-            className="w-8 h-8 flex items-center justify-center rounded-lg text-xs shrink-0"
-            style={{ color: '#9a8080', border: '1px solid #2a0000' }}>
-            ✎
-          </button>
-          <button onClick={() => onDelete(index)}
-            className="w-8 h-8 flex items-center justify-center rounded-lg text-xs shrink-0"
-            style={{ color: '#6a3030', border: '1px solid #2a0000' }}>
-            ✕
-          </button>
-        </div>
+          {/* Notes preview — shown only when present */}
+          {drill.notes && drill.notes.trim() && (
+            <p className="text-xs leading-snug pl-10 pr-2 whitespace-pre-wrap" style={{ color: '#9a8080' }}>
+              {drill.notes}
+            </p>
+          )}
+        </>
       )}
     </div>
   )
@@ -356,24 +685,33 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
 
 // ── ScriptEditor ──────────────────────────────────────────────────────────────
 function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
+  programName, programNameColor, programLogoUrl,
   onBack, onSetActive, onSwitchTab, onReload }) {
   const [name,   setName]   = useState(script.name  ?? '')
   const [sport,  setSport]  = useState(script.sport ?? 'football')
   const [drills, setDrills] = useState(script.drills ?? [])
+  const [showNotesOnPractice, setShowNotesOnPractice] = useState(!!script.show_notes_on_practice)
   const [editingIndex,  setEditingIndex]  = useState(null)
   const [saving,  setSaving]  = useState(false)
   const [saveMsg, setSaveMsg] = useState('')  // '' | 'saving' | 'saved' | error string
+  const [showPrint, setShowPrint] = useState(false)
   const saveTimer = useRef(null)
   const scriptId  = useRef(script.id)
 
   // ── Save (debounced) ────────────────────────────────────────────────────────
-  const save = useCallback(async (nextName, nextSport, nextDrills) => {
+  const save = useCallback(async (nextName, nextSport, nextDrills, nextShowNotes) => {
     setSaveMsg('saving')
     setSaving(true)
     const payload = {
       name:   nextName.trim()  || 'Untitled Script',
       sport:  nextSport.toLowerCase(),
-      drills: nextDrills.map(d => ({ name: d.name.trim(), duration: Number(d.duration) || 0 })),
+      // Each drill gets `notes` (string) preserved alongside name + duration.
+      drills: nextDrills.map(d => ({
+        name:     d.name.trim(),
+        duration: Number(d.duration) || 0,
+        notes:    typeof d.notes === 'string' ? d.notes.trim() : '',
+      })),
+      show_notes_on_practice: !!nextShowNotes,
     }
 
     try {
@@ -408,23 +746,24 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
   }, [isGuest, orgId, userId, onReload])
 
   // Debounce saves by 600ms after any change
-  function schedSave(nextName, nextSport, nextDrills) {
+  function schedSave(nextName, nextSport, nextDrills, nextShowNotes) {
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
-      save(nextName, nextSport, nextDrills)
+      save(nextName, nextSport, nextDrills, nextShowNotes)
     }, 600)
   }
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current) }, [])
 
-  function updateName(v)   { setName(v);  schedSave(v,    sport,  drills) }
-  function updateSport(v)  { setSport(v); schedSave(name, v,      drills) }
-  function updateDrills(d) { setDrills(d); schedSave(name, sport,  d) }
+  function updateName(v)   { setName(v);  schedSave(v,    sport,  drills, showNotesOnPractice) }
+  function updateSport(v)  { setSport(v); schedSave(name, v,      drills, showNotesOnPractice) }
+  function updateDrills(d) { setDrills(d); schedSave(name, sport,  d,      showNotesOnPractice) }
+  function updateShowNotes(v) { setShowNotesOnPractice(v); schedSave(name, sport, drills, v) }
 
   // ── Drill mutations ─────────────────────────────────────────────────────────
   function addDrill(fields) {
-    const next = [...drills, { name: fields.name, duration: fields.duration }]
+    const next = [...drills, { name: fields.name, duration: fields.duration, notes: fields.notes ?? '' }]
     setDrills(next)
-    schedSave(name, sport, next)
+    schedSave(name, sport, next, showNotesOnPractice)
   }
 
   function saveDrill(index, updates) {
@@ -454,9 +793,15 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
     const isUnsaved  = !scriptId.current
     if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null }
     if (hasPending || isUnsaved) {
-      await save(name, sport, drills)
+      await save(name, sport, drills, showNotesOnPractice)
     }
-    const scriptObj = { id: scriptId.current, name, sport, drills }
+    const scriptObj = {
+      id:     scriptId.current,
+      name,
+      sport,
+      drills,
+      show_notes_on_practice: showNotesOnPractice,
+    }
     onSetActive(scriptObj)
     if (onSwitchTab) onSwitchTab('practice')
   }
@@ -521,14 +866,48 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
           {fmt(sec)} total
         </span>
 
+        {/* Show-notes-on-practice toggle (per script). */}
+        <label className="ml-auto flex items-center gap-2 cursor-pointer select-none text-xs"
+          style={{ color: '#9a8080' }}>
+          <input
+            type="checkbox"
+            checked={showNotesOnPractice}
+            onChange={e => updateShowNotes(e.target.checked)}
+            className="w-3.5 h-3.5 cursor-pointer"
+            style={{ accentColor: orgColor }}
+          />
+          Show notes on practice screen
+        </label>
+
+        {/* Print script — opens a dialog asking for the practice start time. */}
+        <button onClick={() => setShowPrint(true)}
+          className="text-xs font-bold px-3 py-1.5 rounded-lg"
+          style={{ border: `1px solid ${orgColor}66`, color: orgColor, backgroundColor: 'transparent' }}>
+          🖨 Print Script
+        </button>
+
         {isActive && (
-          <span className="ml-auto text-xs font-bold px-2.5 py-1 rounded-full"
+          <span className="text-xs font-bold px-2.5 py-1 rounded-full"
             style={{ backgroundColor: orgColor + '22', color: orgColor,
               border: `1px solid ${orgColor}66` }}>
             Active
           </span>
         )}
       </div>
+
+      {/* Print Script dialog — declared at the editor level so the modal can
+          reach the script's name, drills, sport, and notes. */}
+      {showPrint && (
+        <PrintScriptDialog
+          scriptName={name}
+          drills={drills}
+          orgColor={orgColor}
+          programName={programName}
+          programNameColor={programNameColor}
+          programLogoUrl={programLogoUrl}
+          onClose={() => setShowPrint(false)}
+        />
+      )}
 
       {/* ── Drill list ────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-4 md:px-6 py-4">
@@ -569,6 +948,7 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
 export default function ScriptsSection({
   scripts, activeScript, onSetActive,
   orgId, userId, orgColor, isGuest, orgSport,
+  programName, programNameColor, programLogoUrl,
   onReload, onSwitchTab,
 }) {
   const [view,           setView]          = useState('list')   // 'list' | 'editor'
@@ -611,6 +991,9 @@ export default function ScriptsSection({
           orgColor={orgColor}
           isGuest={isGuest}
           isActive={activeScript?.id === editingScript.id}
+          programName={programName}
+          programNameColor={programNameColor}
+          programLogoUrl={programLogoUrl}
           onBack={() => { setView('list'); setEditingScript(null); onReload() }}
           onSetActive={onSetActive}
           onSwitchTab={onSwitchTab}

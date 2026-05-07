@@ -473,6 +473,19 @@ export default function Dashboard() {
       >
         <Logo variant="white" height={52} className="shrink-0" />
 
+        {/* Program logo (uploaded by owner+admin in Settings → Program Logo).
+            Renders to the LEFT of the program name when present; nothing when
+            absent (no broken-image icon). Constrained height so it never
+            disrupts the 72px header. */}
+        {!isGuest && org?.logo_url && (
+          <img
+            src={org.logo_url}
+            alt=""
+            className="shrink-0 ml-2"
+            style={{ height: 48, maxWidth: 96, objectFit: 'contain' }}
+          />
+        )}
+
         {/* Program name as a header hero — Bebas Neue, uppercase, hex color
             from accounts.program_name_color (default white). Truncates with
             ellipsis if longer than the available space; never wraps. */}
@@ -612,6 +625,9 @@ export default function Dashboard() {
               orgColor={orgColor}
               isGuest={isGuest}
               orgSport={org?.sport}
+              programName={org?.name ?? ''}
+              programNameColor={subscription?.program_name_color ?? '#000000'}
+              programLogoUrl={org?.logo_url ?? null}
               onReload={() => loadScripts(org?.id ?? contextOrgId)}
             />
           )}
