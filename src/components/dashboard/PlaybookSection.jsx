@@ -41,9 +41,12 @@ const SECTIONS = [
     title: 'Music',
     icon: '🎵',
     items: [
-      'Use the Music tab to upload MP3s and build a practice playlist.',
-      'Music plays through the iPad speaker or any connected Bluetooth speaker.',
-      'The air horn automatically ducks music volume when it fires.',
+      'Use the Music tab to upload MP3s and build a practice playlist. Music plays through the iPad speaker or any connected Bluetooth speaker.',
+      'The mini player bar at the top of the music tab gives you full controls: play, pause, skip, volume, shuffle, and loop.',
+      'Quick controls in the bottom-left of the practice tab let you play, pause, and skip songs without leaving the practice screen. They show up automatically once you’ve added music to your library.',
+      'The air horn and the “next up” voice announcement automatically duck the music volume so you can still hear them clearly. Music returns to full volume right after.',
+      'Crowd noise: tap the megaphone icon in the bottom-right of the practice tab to play continuous stadium crowd noise. Loops until you turn it off. Plays alongside your music — adjust the iPad volume or pause your music if you want the crowd noise to dominate.',
+      'For maximum volume: turn the iPad volume to 100% and pair with a Bluetooth speaker positioned toward the field. The app’s audio cannot go louder than the iPad’s system volume.',
     ],
   },
   {

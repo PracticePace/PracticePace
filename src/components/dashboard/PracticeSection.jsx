@@ -110,23 +110,17 @@ function MusicMiniControls({ orgColor }) {
 }
 
 // ── Stadium noise toggle (bottom-right of practice tab) ──────────────────────
-// Standalone single-button widget. Wires to the stadiumNoise singleton — does
-// NOT participate in horn/voice ducking or the music player. Looped playback
-// at full volume; tap to start, tap again to stop.
-const Volume2Icon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+// Standalone widget. Wires to the stadiumNoise singleton — does NOT participate
+// in horn/voice ducking or the music player. Looped playback at full volume;
+// tap to start, tap again to stop. Uses the lucide Megaphone glyph (rendered as
+// inline SVG, same convention as the rest of this app's icons) so the affordance
+// reads unambiguously as "crowd noise" rather than "mute". Permanent CROWD label
+// underneath so coaches always know what the button does.
+const MegaphoneIcon = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
     stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-  </svg>
-)
-const VolumeXIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-    <line x1="22" y1="9" x2="16" y2="15" />
-    <line x1="16" y1="9" x2="22" y2="15" />
+    <path d="m3 11 18-5v12L3 14v-3z" />
+    <path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" />
   </svg>
 )
 
@@ -136,24 +130,34 @@ function StadiumNoiseToggle({ orgColor }) {
   const isOn = !!snap.isPlaying
 
   return (
-    <button
-      type="button"
-      onClick={() => toggleStadium().catch(() => {})}
-      aria-label={isOn ? 'Stop stadium noise' : 'Play stadium noise'}
-      // Same 44x44 touch-target language as the music mini-controls. Visual
-      // emphasis flips with state: filled in orgColor + glow when ON, dim
-      // outline when OFF.
-      className="shrink-0 w-11 h-11 rounded-2xl flex items-center justify-center transition-all active:scale-95"
-      style={{
-        backgroundColor: isOn ? orgColor : 'rgba(13,8,0,0.85)',
-        border:          `1px solid ${isOn ? orgColor : `${orgColor}33`}`,
-        color:           isOn ? '#ffffff' : '#9a8080',
-        boxShadow:       isOn ? `0 0 12px ${orgColor}66` : 'none',
-        backdropFilter:  'blur(6px)',
-      }}
-    >
-      {isOn ? <Volume2Icon /> : <VolumeXIcon />}
-    </button>
+    <div className="shrink-0 flex flex-col items-center gap-1">
+      <button
+        type="button"
+        onClick={() => toggleStadium().catch(() => {})}
+        aria-label={isOn ? 'Stop stadium noise' : 'Play stadium noise'}
+        // 44x44 touch-target. Visual emphasis flips with state: filled in
+        // orgColor + glow when ON, dim outline when OFF.
+        className="w-11 h-11 rounded-2xl flex items-center justify-center transition-all active:scale-95"
+        style={{
+          backgroundColor: isOn ? orgColor : 'transparent',
+          border:          `1px solid ${isOn ? orgColor : `${orgColor}55`}`,
+          color:           isOn ? '#ffffff' : '#9a8080',
+          boxShadow:       isOn ? `0 0 12px ${orgColor}66` : 'none',
+        }}
+      >
+        <MegaphoneIcon />
+      </button>
+      <span
+        className="font-semibold transition-colors"
+        style={{
+          fontSize:      11,
+          letterSpacing: '0.12em',
+          color:         isOn ? orgColor : '#7a6060',
+        }}
+      >
+        CROWD
+      </span>
+    </div>
   )
 }
 
@@ -216,20 +220,29 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
   const clockDisplay = isOverrun ? `+${fmt(overrunSeconds)}` : fmt(secondsLeft)
 
   // ── Render ──────────────────────────────────────────────────────────────────
+  // Two-zone layout (display zone above, controls strip below) so coaches can
+  // crop the display zone for ProPresenter / AirPlay while keeping the operator
+  // controls private on the iPad. Hard horizontal edge between the two zones,
+  // no gradient, no fade.
   return (
-    <div
-      className="flex-1 flex flex-col overflow-hidden relative"
-      style={{
-        backgroundImage:    backgroundUrl ? `url(${backgroundUrl})` : undefined,
-        backgroundSize:     'cover',
-        backgroundPosition: 'center',
-      }}
-    >
+    <div className="flex-1 flex flex-col overflow-hidden">
+
+      {/* ── DISPLAY ZONE ────────────────────────────────────────────────────
+          Background image lives here only. Stops cleanly at the controls
+          strip below. */}
+      <div
+        className="relative flex-1 flex flex-col overflow-hidden"
+        style={{
+          backgroundImage:    backgroundUrl ? `url(${backgroundUrl})` : undefined,
+          backgroundSize:     'cover',
+          backgroundPosition: 'center',
+        }}
+      >
       {backgroundUrl && (
         <div className="absolute inset-0 pointer-events-none" style={{ backgroundColor: 'rgba(0,0,0,0.72)' }} />
       )}
 
-      <div className="relative z-10 flex-1 flex flex-col overflow-hidden px-4 pb-2 gap-0">
+      <div className="relative z-10 flex-1 flex flex-col overflow-hidden px-4 gap-0">
 
         {/* ── 1. Script name + period dots ──────────────────────────────────── */}
         <div className="shrink-0 flex flex-col items-center gap-1.5 pt-2 pb-1">
@@ -388,6 +401,19 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
           )}
         </div>
 
+      </div>
+    </div>
+    {/* ─ end DISPLAY ZONE ─ */}
+
+    {/* ── CONTROLS STRIP ────────────────────────────────────────────────────
+        Lives just above the bottom tab bar. Solid #080000, no background
+        image, hard 1px top edge — so coaches can crop the display zone above
+        for ProPresenter / AirPlay and keep these controls private on iPad. */}
+    <div
+      className="shrink-0 flex flex-col gap-1 px-4 pt-2 pb-2"
+      style={{ backgroundColor: '#080000', borderTop: '1px solid #1a0000' }}
+    >
+
         {/* ── 6 & 7. Control row ───────────────────────────────────────────── */}
         <div className="shrink-0 flex items-center justify-center gap-2 pt-1 pb-0.5 flex-wrap">
 
@@ -520,7 +546,9 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
           <StadiumNoiseToggle orgColor={orgColor} />
         </div>
 
-      </div>
+    </div>
+    {/* ─ end CONTROLS STRIP ─ */}
+
     </div>
   )
 }
