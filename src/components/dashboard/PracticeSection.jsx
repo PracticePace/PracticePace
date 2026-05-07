@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   subscribe, getSnapshot,
   startPause, reset, jumpTo, next,
@@ -12,7 +12,14 @@ import {
   togglePlay as audioTogglePlay,
   playNext as audioPlayNext,
   playPrev as audioPlayPrev,
+  pause as audioPause,
+  resume as audioResume,
 } from '../../lib/audioPlayer'
+import {
+  playCue,
+  stopCue,
+  isCuePlaying,
+} from '../../lib/cuePlayer'
 import {
   subscribe as subscribeStadium,
   getSnapshot as getStadiumSnapshot,
@@ -199,6 +206,87 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     console.log('[ACTIVE] PracticeSection effect — pushing activeScript prop to timer singleton, id:', activeScript?.id ?? null, 'name:', activeScript?.name ?? null)
     setActiveScript(activeScript)
   }, [activeScript])
+
+  // ── Per-drill cue MP3 orchestration ────────────────────────────────────────
+  // When a drill becomes active and has cue_mp3_url set:
+  //   1. Capture whether the main playlist was playing.
+  //   2. If yes, pause the main player (state-preserving — currentTime kept).
+  //   3. Play the cue MP3 once via cuePlayer.
+  //   4. When the cue ends naturally, resume the main player IFF it was
+  //      playing before. If it was paused/stopped before the cue, leave it.
+  //   5. If the drill changes again before the cue ends, the next iteration
+  //      of this effect calls stopCue() (silent) + handles the new drill.
+  //   6. If the user manually plays the main player while a cue is in flight,
+  //      a separate subscription stops the cue and clears wasPlayingRef so
+  //      we don't fight them on auto-resume.
+  //
+  // The "drill becomes active" trigger is currentDrillIdx changing while
+  // hasStarted is true. Initial mount with hasStarted=false does not fire —
+  // the cue at drill 0 plays only after the coach taps Start.
+  const cueWasPlayingMainRef = useRef(false)
+  const cueLastFiredIdxRef   = useRef(null)
+
+  // (a) React to manual main-player state changes during cue playback.
+  useEffect(() => {
+    return subscribeAudio((type, payload) => {
+      if (type !== 'state') return
+      if (!isCuePlaying()) return
+      // The orchestrator's own audioPause / audioResume calls happen BEFORE
+      // a cue starts and AFTER it ends — neither is during cue playback —
+      // so anything we observe here is the user's manual interaction.
+      if (payload.isPlaying) {
+        // User manually resumed main → stop cue, don't auto-resume after.
+        stopCue()
+        cueWasPlayingMainRef.current = false
+      } else {
+        // User manually paused main → don't auto-resume after the cue.
+        cueWasPlayingMainRef.current = false
+      }
+    })
+  }, [])
+
+  // (b) Trigger the cue when the active drill changes.
+  useEffect(() => {
+    // Practice hasn't started → reset the "last fired" memo and bail. Any
+    // in-flight cue from a prior session is also stopped.
+    if (!hasStarted) {
+      cueLastFiredIdxRef.current = null
+      if (isCuePlaying()) {
+        stopCue()
+        if (cueWasPlayingMainRef.current) audioResume()
+        cueWasPlayingMainRef.current = false
+      }
+      return
+    }
+    if (cueLastFiredIdxRef.current === currentDrillIdx) return
+    cueLastFiredIdxRef.current = currentDrillIdx
+
+    const drill = drills[currentDrillIdx]
+    const cueUrl = drill?.cue_mp3_url
+
+    // Drill changed → if a previous cue is still playing, abort it cleanly
+    // and resume the main if we paused it for that prior cue.
+    if (isCuePlaying()) {
+      stopCue()
+      if (cueWasPlayingMainRef.current) audioResume()
+      cueWasPlayingMainRef.current = false
+    }
+
+    if (!cueUrl) return  // No cue on this drill — nothing more to do.
+
+    // Capture main-player state BEFORE pausing (snapshot is sync).
+    const mainSnap = getAudioSnapshot()
+    cueWasPlayingMainRef.current = !!mainSnap.isPlaying && mainSnap.currentIndex >= 0
+    if (cueWasPlayingMainRef.current) audioPause()
+
+    // Fire the cue. onEnded only runs on natural completion / load error.
+    playCue(cueUrl, {
+      onEnded: () => {
+        if (cueWasPlayingMainRef.current) audioResume()
+        cueWasPlayingMainRef.current = false
+      },
+    })
+  }, [hasStarted, currentDrillIdx, drills])
 
   // Derive display values from snapshot
   const {

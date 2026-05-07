@@ -152,6 +152,41 @@ export async function togglePlay() {
   }
 }
 
+/**
+ * Explicit pause that preserves the current track and currentTime so a
+ * subsequent resume() picks up exactly where we left off. Used by external
+ * orchestrators (e.g. the per-drill cue player) that need state-preserving
+ * pause without the toggle semantics of togglePlay().
+ *
+ * Idempotent: no-op if already paused or if there is no current track.
+ */
+export function pause() {
+  if (!isPlaying) return
+  if (!audio) return
+  audio.pause()
+  isPlaying = false
+  emit('state', getSnapshot())
+}
+
+/**
+ * Resume the current track from its existing currentTime. Mirror of pause().
+ * Idempotent: no-op if already playing or if there is no current track to
+ * resume. Errors during play() are emitted via the 'error' channel exactly
+ * like togglePlay().
+ */
+export async function resume() {
+  if (isPlaying) return
+  if (!audio) return
+  if (currentIndex < 0) return
+  try {
+    await audio.play()
+    isPlaying = true
+    emit('state', getSnapshot())
+  } catch (err) {
+    emit('error', err.message)
+  }
+}
+
 export async function playNext() {
   const next = getNextIndex()
   if (next !== -1) await playSongAtIndex(next)

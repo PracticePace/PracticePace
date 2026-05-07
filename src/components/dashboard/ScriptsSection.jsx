@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
 import { saveGuestScript, deleteGuestScript } from '../../lib/guestStorage'
+import { playCue, stopCue } from '../../lib/cuePlayer'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function pad(n) { return String(n).padStart(2, '0') }
@@ -471,17 +472,153 @@ function PrintScriptDialog({ scriptName, drills, orgColor,
   )
 }
 
+// ── CueControl ───────────────────────────────────────────────────────────────
+// Shared widget for the "drill cue MP3" affordance used by both AddDrillForm
+// and DrillRow's edit mode. Two visual states:
+//
+//   1. No cue:  "🎵 Add cue" button → opens an .mp3 file picker.
+//   2. Has cue: filename pill + ▶ preview button + ✕ remove button.
+//
+// Upload contract: the cue file goes into the existing 'music' storage bucket
+// with the path `${orgId}/cues/${Date.now()}_${safeName}.mp3`. The first
+// path segment must equal the user's profiles.org_id so the music bucket
+// RLS upload policy passes (it requires split_part(name,'/',1) = org_id).
+//
+// Guests don't have a Supabase session that can write to storage, so the
+// control hides itself entirely when isGuest is true.
+function CueControl({ cueUrl, onChange, orgColor, orgId, isGuest }) {
+  const [uploading, setUploading] = useState(false)
+  const [error,     setError]     = useState('')
+  const inputRef = useRef(null)
+
+  if (isGuest) return null
+
+  const filename = (() => {
+    if (!cueUrl) return ''
+    try {
+      const last = cueUrl.split('?')[0].split('/').pop() ?? ''
+      // Strip the leading "<timestamp>_" we added on upload.
+      return last.replace(/^\d+_/, '')
+    } catch { return '' }
+  })()
+
+  async function handleFile(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''  // allow re-selecting the same file later
+    if (!file) return
+
+    if (!orgId) { setError('Organization not loaded yet.'); return }
+    const isMp3 = /\.mp3$/i.test(file.name) || file.type === 'audio/mpeg'
+    if (!isMp3)                       { setError('MP3 files only.');                 return }
+    if (file.size > 10 * 1024 * 1024) { setError('Cue MP3 must be under 10 MB.');    return }
+
+    setUploading(true); setError('')
+    try {
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+      const path     = `${orgId}/cues/${Date.now()}_${safeName}`
+
+      const { error: upErr } = await supabase.storage
+        .from('music')
+        .upload(path, file, { cacheControl: '3600', contentType: 'audio/mpeg', upsert: false })
+
+      if (upErr) {
+        setError(`Upload failed: ${upErr.message ?? 'unknown error'}`)
+        return
+      }
+
+      const { data: urlData } = supabase.storage.from('music').getPublicUrl(path)
+      const publicUrl = urlData?.publicUrl
+      if (!publicUrl) { setError('Could not get cue URL.'); return }
+
+      // Cache-bust the URL so a re-upload to the same path (after remove +
+      // re-add) doesn't serve a stale cached audio file.
+      onChange(`${publicUrl}?v=${Date.now()}`)
+    } catch (err) {
+      setError(err.message ?? 'Upload failed.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  function handleRemove() {
+    stopCue()
+    onChange('')
+    setError('')
+  }
+
+  function handlePreview() {
+    if (cueUrl) playCue(cueUrl)
+  }
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <input
+        ref={inputRef}
+        type="file"
+        accept="audio/mpeg,.mp3"
+        onChange={handleFile}
+        className="hidden"
+      />
+      {!cueUrl ? (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={uploading}
+          className="text-xs font-semibold px-2.5 py-1 rounded-lg disabled:opacity-50"
+          style={{ border: '1px dashed #3a0000', color: '#9a8080', backgroundColor: 'transparent' }}
+        >
+          {uploading ? '⟳ Uploading…' : '🎵 Add cue'}
+        </button>
+      ) : (
+        <>
+          <span className="text-xs px-2 py-1 rounded-md max-w-[180px] truncate"
+            style={{ backgroundColor: `${orgColor}22`, color: orgColor, border: `1px solid ${orgColor}44` }}
+            title={filename}>
+            🎵 {filename || 'cue'}
+          </span>
+          <button type="button" onClick={handlePreview}
+            className="text-xs px-2 py-1 rounded-md"
+            style={{ border: '1px solid #2a0000', color: '#9a8080', backgroundColor: 'transparent' }}
+            title="Preview cue">
+            ▶
+          </button>
+          <button type="button" onClick={() => inputRef.current?.click()}
+            disabled={uploading}
+            className="text-xs px-2 py-1 rounded-md"
+            style={{ border: '1px solid #2a0000', color: '#9a8080', backgroundColor: 'transparent' }}
+            title="Replace cue">
+            {uploading ? '⟳' : '↻'}
+          </button>
+          <button type="button" onClick={handleRemove}
+            className="text-xs px-2 py-1 rounded-md"
+            style={{ border: '1px solid #2a0000', color: '#6a3030', backgroundColor: 'transparent' }}
+            title="Remove cue">
+            ✕
+          </button>
+        </>
+      )}
+      {error && (
+        <p className="text-xs w-full px-2 py-1 rounded-md"
+          style={{ backgroundColor: '#2a0000', color: '#ff6666' }}>
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
 // ── AddDrillForm ──────────────────────────────────────────────────────────────
 // Persistent form at the bottom of the drill list. Owns its own state,
 // reads values on Add click, calls onAdd(fields), then clears itself.
 const DURATION_PRESETS = [5, 10, 15, 20]
 
-function AddDrillForm({ orgColor, onAdd }) {
+function AddDrillForm({ orgColor, orgId, isGuest, onAdd }) {
   const [name,      setName]      = useState('')
   const [mins,      setMins]      = useState('')
   const [secs,      setSecs]      = useState('')
   const [notes,     setNotes]     = useState('')
   const [showNotes, setShowNotes] = useState(false)
+  const [cueUrl,    setCueUrl]    = useState('')
 
   const activePreset = (m) =>
     Number(mins) === m && (secs === '' || secs === '0' || Number(secs) === 0)
@@ -496,16 +633,18 @@ function AddDrillForm({ orgColor, onAdd }) {
     const duration  = Number(mins || 0) * 60 + Number(secs || 0)
     console.log('[AddDrill] name:', JSON.stringify(drillName), 'mins:', mins, 'secs:', secs, '→ duration (s):', duration)
     onAdd({
-      name:       drillName,
+      name:        drillName,
       duration,
-      notes:      notes.trim(),
-      show_notes: effectiveShowNotes,
+      notes:       notes.trim(),
+      show_notes:  effectiveShowNotes,
+      cue_mp3_url: cueUrl,
     })
     setName('')
     setMins('')
     setSecs('')
     setNotes('')
     setShowNotes(false)
+    setCueUrl('')
   }
 
   return (
@@ -573,6 +712,14 @@ function AddDrillForm({ orgColor, onAdd }) {
         Show on practice screen
       </label>
 
+      <CueControl
+        cueUrl={cueUrl}
+        onChange={setCueUrl}
+        orgColor={orgColor}
+        orgId={orgId}
+        isGuest={isGuest}
+      />
+
       <button onClick={handleAdd} disabled={!name.trim()}
         className="w-full py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-40"
         style={{ backgroundColor: orgColor }}>
@@ -584,13 +731,14 @@ function AddDrillForm({ orgColor, onAdd }) {
 
 // ── DrillRow ──────────────────────────────────────────────────────────────────
 
-function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
+function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId, isGuest,
   rowRef, onStartDrag, onEditStart, onEditSave, onEditCancel, onDelete }) {
   const [editName,      setEditName]      = useState(drill.name ?? '')
   const [editMins,      setEditMins]      = useState(drill.duration ? String(Math.floor(drill.duration / 60)) : '')
   const [editSecs,      setEditSecs]      = useState(drill.duration ? String(drill.duration % 60) : '')
   const [editNotes,     setEditNotes]     = useState(drill.notes ?? '')
   const [editShowNotes, setEditShowNotes] = useState(!!drill.show_notes)
+  const [editCueUrl,    setEditCueUrl]    = useState(drill.cue_mp3_url ?? '')
 
   // Sync edit fields when editing starts
   useEffect(() => {
@@ -600,6 +748,7 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
       setEditSecs(drill.duration ? String(drill.duration % 60) : '')
       setEditNotes(drill.notes ?? '')
       setEditShowNotes(!!drill.show_notes)
+      setEditCueUrl(drill.cue_mp3_url ?? '')
     }
   }, [isEditing, drill])
 
@@ -677,6 +826,15 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
             />
             Show on practice screen
           </label>
+
+          <CueControl
+            cueUrl={editCueUrl}
+            onChange={setEditCueUrl}
+            orgColor={orgColor}
+            orgId={orgId}
+            isGuest={isGuest}
+          />
+
           <div className="flex gap-2 justify-end">
             <button onClick={onEditCancel}
               className="px-3 py-2 rounded-lg text-xs font-semibold"
@@ -685,10 +843,11 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
             </button>
             <button
               onClick={() => onEditSave(index, {
-                name:       editName.trim(),
-                duration:   Number(editMins || 0) * 60 + Number(editSecs || 0),
-                notes:      editNotes.trim(),
-                show_notes: editEffectiveShowNotes,
+                name:        editName.trim(),
+                duration:    Number(editMins || 0) * 60 + Number(editSecs || 0),
+                notes:       editNotes.trim(),
+                show_notes:  editEffectiveShowNotes,
+                cue_mp3_url: editCueUrl,
               })}
               className="px-3 py-2 rounded-lg text-xs font-bold text-white"
               style={{ backgroundColor: orgColor }}>
@@ -713,6 +872,18 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
             <span className="flex-1 text-base font-bold text-white truncate">
               {drill.name || <span style={{ color: '#4a2020', fontStyle: 'italic', fontWeight: 400 }}>Untitled drill</span>}
             </span>
+            {/* Cue attached indicator — clickable to preview without entering edit mode */}
+            {drill.cue_mp3_url && (
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); playCue(drill.cue_mp3_url) }}
+                className="text-xs shrink-0 px-2 py-1 rounded-md"
+                style={{ color: orgColor, border: `1px solid ${orgColor}55`, backgroundColor: 'transparent' }}
+                title="Preview cue"
+              >
+                🎵
+              </button>
+            )}
             <span className="text-sm font-mono shrink-0 px-2" style={{ color: '#9a8080' }}>
               {drill.duration ? fmt(drill.duration) : '—'}
             </span>
@@ -763,15 +934,18 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
     const payload = {
       name:   nextName.trim()  || 'Untitled Script',
       sport:  nextSport.toLowerCase(),
-      // Each drill carries its own `notes` (string) and `show_notes` (boolean
-      // — controls whether the practice screen renders the note under the
-      // current drill name). Missing/undefined show_notes is treated as
-      // false. notes is empty string when not set.
+      // Each drill carries its own `notes` (string), `show_notes` (boolean —
+      // controls whether the practice screen renders the note under the
+      // current drill name), and `cue_mp3_url` (optional public URL to a
+      // one-shot MP3 that interrupts the main playlist when the drill
+      // becomes active). Missing/undefined for any of these is treated as
+      // empty/false.
       drills: nextDrills.map(d => ({
-        name:       d.name.trim(),
-        duration:   Number(d.duration) || 0,
-        notes:      typeof d.notes === 'string' ? d.notes.trim() : '',
-        show_notes: !!d.show_notes,
+        name:        d.name.trim(),
+        duration:    Number(d.duration) || 0,
+        notes:       typeof d.notes === 'string' ? d.notes.trim() : '',
+        show_notes:  !!d.show_notes,
+        cue_mp3_url: typeof d.cue_mp3_url === 'string' ? d.cue_mp3_url : '',
       })),
     }
 
@@ -824,10 +998,11 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
     const next = [
       ...drills,
       {
-        name:       fields.name,
-        duration:   fields.duration,
-        notes:      fields.notes ?? '',
-        show_notes: !!fields.show_notes,
+        name:        fields.name,
+        duration:    fields.duration,
+        notes:       fields.notes ?? '',
+        show_notes:  !!fields.show_notes,
+        cue_mp3_url: fields.cue_mp3_url ?? '',
       },
     ]
     setDrills(next)
@@ -981,6 +1156,8 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
               isDragging={dragging === i}
               isOver={over === i && dragging !== null && dragging !== i}
               orgColor={orgColor}
+              orgId={orgId}
+              isGuest={isGuest}
               rowRef={el => { rowRefs.current[i] = el }}
               onStartDrag={startDrag}
               onEditStart={idx => setEditingIndex(idx === editingIndex ? null : idx)}
@@ -991,7 +1168,7 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
           ))}
 
           {/* ── Add drill form ──────────────────────────────────────────── */}
-          <AddDrillForm orgColor={orgColor} onAdd={addDrill} />
+          <AddDrillForm orgColor={orgColor} orgId={orgId} isGuest={isGuest} onAdd={addDrill} />
         </div>
       </div>
     </div>
