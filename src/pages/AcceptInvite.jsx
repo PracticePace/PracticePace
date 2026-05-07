@@ -54,10 +54,11 @@ export default function AcceptInvite() {
     const token_hash = params.get('token_hash')
     const otpType    = params.get('type')
     if (token_hash) {
+      console.log('[AcceptInvite] verifyOtp start, type=', otpType ?? 'invite')
       supabase.auth.verifyOtp({
         type:       otpType ?? 'invite',
         token_hash,
-      }).then(({ error }) => {
+      }).then(({ data, error }) => {
         if (error) {
           console.error('[AcceptInvite] verifyOtp error:', error.message)
           setAuthLoading(false)
@@ -66,6 +67,7 @@ export default function AcceptInvite() {
             'Ask your admin to send a fresh invite.'
           )
         } else {
+          console.log('[AcceptInvite] verifyOtp ok, session userId=', data?.session?.user?.id ?? null)
           // Strip token_hash + type from the URL — leaves /invite clean.
           window.history.replaceState({}, '', window.location.pathname)
         }
@@ -78,6 +80,7 @@ export default function AcceptInvite() {
     // which path produced the session.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        console.log('[AcceptInvite] onAuthStateChange', event, 'userId=', session?.user?.id ?? null)
         if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
           if (session?.user) {
             const u = session.user
@@ -137,12 +140,18 @@ export default function AcceptInvite() {
   // ── Set password + create profile + finish ─────────────────────────────────
   async function handleSetPassword(e) {
     e.preventDefault()
+    console.log('[AcceptInvite] handleSetPassword fired',
+      { hasAuthUser: !!authUser, authUserId: authUser?.id ?? null,
+        passwordSet: passwordSet.current, passwordLen: password.length })
+
     if (!authUser?.id) {
+      console.warn('[AcceptInvite] guard: authUser missing — bailing')
       setSubmitErr('Session lost — reload the invite link from your email.')
       return
     }
     // First-attempt validation only (after password is set we skip this on retry).
     if (!passwordSet.current && (!password || password.length < 8)) {
+      console.warn('[AcceptInvite] guard: password too short')
       setSubmitErr('Password must be at least 8 characters.')
       return
     }
@@ -152,24 +161,48 @@ export default function AcceptInvite() {
       // Step 1: set the password (skipped on retry once password is set).
       if (!passwordSet.current) {
         setStage('saving-password')
+
+        // Preflight: confirm the auth client actually has a session it can
+        // attach to PUT /user. The token_hash flow has previously emitted
+        // SIGNED_IN, but if the session got nuked between then and now (lock
+        // contention, token expiry, etc) updateUser would either hang on the
+        // navigator.locks acquire or throw AuthSessionMissingError. We need
+        // to see this in the logs either way.
+        const { data: { session: pfSession }, error: pfErr } =
+          await supabase.auth.getSession()
+        console.log('[AcceptInvite] preflight getSession',
+          { hasSession:    !!pfSession,
+            sessionUserId: pfSession?.user?.id ?? null,
+            error:         pfErr?.message ?? null })
+        if (!pfSession) {
+          throw new Error('Your invite session expired. Reload the invite link from your email.')
+        }
+
         const updates = { password }
         if (fullName.trim()) updates.data = { full_name: fullName.trim() }
-        const { error: pwErr } = await supabase.auth.updateUser(updates)
+
+        console.log('[AcceptInvite] calling supabase.auth.updateUser')
+        const { data: upData, error: pwErr } = await supabase.auth.updateUser(updates)
+        console.log('[AcceptInvite] updateUser returned',
+          { hasUser: !!upData?.user, error: pwErr?.message ?? null })
         if (pwErr) throw new Error(pwErr.message)
         passwordSet.current = true
       }
 
-      // Step 2: create the profile server-side. This is the new RLS-bypass
-      // call. If it fails, the password is still set on the auth user, so
-      // a retry will skip step 1 and only repeat this.
+      // Step 2: create the profile server-side. This is the RLS-bypass call.
+      // If it fails, the password is still set on the auth user, so a retry
+      // will skip step 1 and only repeat this.
       setStage('creating-profile')
-      await createProfileServerSide(authUser.id)
+      console.log('[AcceptInvite] calling /api/accept-invite')
+      const apiData = await createProfileServerSide(authUser.id)
+      console.log('[AcceptInvite] /api/accept-invite ok', apiData)
 
       // Step 3: announce success and redirect.
       setStage('done')
       setDone(true)
       setTimeout(() => navigate('/dashboard', { replace: true }), 1500)
     } catch (err) {
+      console.error('[AcceptInvite] handleSetPassword error:', err?.message ?? err)
       setSubmitErr(err.message ?? 'Something went wrong. Please try again.')
       setStage('idle')
     } finally {
