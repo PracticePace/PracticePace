@@ -408,14 +408,23 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     {/* ── CONTROLS STRIP ────────────────────────────────────────────────────
         Lives just above the bottom tab bar. Solid #080000, no background
         image, hard 1px top edge — so coaches can crop the display zone above
-        for ProPresenter / AirPlay and keep these controls private on iPad. */}
+        for ProPresenter / AirPlay and keep these controls private on iPad.
+
+        One horizontal band with three regions, all vertically centered:
+          [ MusicMiniControls ]  [ transport + toggle (stacked) ]  [ Crowd ]   */}
     <div
-      className="shrink-0 flex flex-col gap-1 px-4 pt-2 pb-2"
+      className="shrink-0 flex items-center justify-between gap-3 px-4 py-2"
       style={{ backgroundColor: '#080000', borderTop: '1px solid #1a0000' }}
     >
 
+      {/* LEFT — music mini-controls (unchanged styling) */}
+      <MusicMiniControls orgColor={orgColor} />
+
+      {/* CENTER — transport row above toggle row, tight stack */}
+      <div className="flex-1 min-w-0 flex flex-col items-center gap-1">
+
         {/* ── 6 & 7. Control row ───────────────────────────────────────────── */}
-        <div className="shrink-0 flex items-center justify-center gap-2 pt-1 pb-0.5 flex-wrap">
+        <div className="flex items-center justify-center gap-2 flex-wrap">
 
           {/* Prev */}
           <button
@@ -511,7 +520,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
         </div>
 
         {/* ── 8. Coach toggles ─────────────────────────────────────────────── */}
-        <div className="shrink-0 flex items-center justify-center gap-3 pb-1 flex-wrap">
+        <div className="flex items-center justify-center gap-3 flex-wrap">
           <ToggleBtn
             label="Auto-Advance"
             active={autoAdvance}
@@ -538,13 +547,11 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
           />
         </div>
 
-        {/* ── Bottom quick-reach row ───────────────────────────────────────
-            Music mini-controls on the left, stadium-noise toggle on the right
-            (mirrors the music widget's bottom-left position).            */}
-        <div className="shrink-0 mt-1 flex items-center justify-between gap-2">
-          <MusicMiniControls orgColor={orgColor} />
-          <StadiumNoiseToggle orgColor={orgColor} />
-        </div>
+      </div>
+      {/* end CENTER */}
+
+      {/* RIGHT — crowd noise toggle (unchanged styling + label) */}
+      <StadiumNoiseToggle orgColor={orgColor} />
 
     </div>
     {/* ─ end CONTROLS STRIP ─ */}
