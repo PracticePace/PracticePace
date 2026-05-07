@@ -207,6 +207,22 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     setActiveScript(activeScript)
   }, [activeScript])
 
+  // Derive display values from snapshot — declared HERE (before the cue
+  // orchestration useEffects below) because those effects' dependency
+  // arrays read `hasStarted`, `currentDrillIdx`, and `drills`. Dep arrays
+  // are evaluated synchronously during render, so the names they reference
+  // must already be initialized — otherwise we hit a temporal-dead-zone
+  // ReferenceError ("Cannot access 'X' before initialization") in
+  // production minified builds where variable names are mangled.
+  const {
+    isRunning, hasStarted,
+    secondsLeft, totalSeconds,
+    currentDrillIdx,
+    isOverrun, overrunSeconds,
+    autoAdvance, allowOverrun, hornOnEnd, whistleAt60,
+  } = snap
+  const drills = snap.activeScript?.drills ?? []
+
   // ── Per-drill cue MP3 orchestration ────────────────────────────────────────
   // When a drill becomes active and has cue_mp3_url set:
   //   1. Capture whether the main playlist was playing.
@@ -288,16 +304,10 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     })
   }, [hasStarted, currentDrillIdx, drills])
 
-  // Derive display values from snapshot
-  const {
-    isRunning, hasStarted,
-    secondsLeft, totalSeconds,
-    currentDrillIdx,
-    isOverrun, overrunSeconds,
-    autoAdvance, allowOverrun, hornOnEnd, whistleAt60,
-  } = snap
-
-  const drills      = snap.activeScript?.drills ?? []
+  // (Display-value destructure for `snap` and `drills` lives above the cue
+  // orchestration effects so their dep arrays can read those names without
+  // hitting the temporal dead zone in production builds. The remaining
+  // derivations only used in render stay below.)
   const currentDrill = drills[currentDrillIdx]
   const nextDrill    = drills[currentDrillIdx + 1]
   const isLastDrill  = currentDrillIdx >= drills.length - 1
