@@ -520,14 +520,28 @@ export function subtractMinute() {
 /**
  * Called by Dashboard / PracticeSection when the active script changes.
  * Only resets the timer if the script actually changed (by id).
+ *
+ * Same-id case still REFRESHES s.activeScript to the new reference. The
+ * caller may be passing an updated copy of the same script (e.g. a drill
+ * was edited in the Scripts editor — added cue_mp3_url, notes,
+ * show_notes — and then re-loaded to Practice). If we kept the stale
+ * reference, PracticeSection would read pre-edit drill data and miss the
+ * new fields. Timer-state fields (isRunning, currentDrillIdx, etc.) are
+ * still preserved across same-id calls so a running practice isn't
+ * disturbed.
  */
 export function setActiveScript(script) {
   const newId = script?.id ?? null
   const curId = s.activeScript?.id ?? null
   console.log('[ACTIVE] practiceTimer.setActiveScript called — newId:', newId, 'curId:', curId, 'name:', script?.name ?? null)
   if (newId === curId) {
-    console.log('[ACTIVE] practiceTimer.setActiveScript: same id, no-op')
-    return    // same script — don't disturb a running timer
+    // Refresh drills/name/sport/etc. without disturbing the running timer.
+    // (Even on same-id we update the reference — caller may be handing us
+    // an edited copy with new cue_mp3_url / notes / show_notes fields.)
+    console.log('[ACTIVE] practiceTimer.setActiveScript: same id — refreshing reference, preserving timer state')
+    s.activeScript = script ?? null
+    emit()
+    return
   }
 
   s.activeScript    = script ?? null

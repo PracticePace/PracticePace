@@ -221,7 +221,18 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     isOverrun, overrunSeconds,
     autoAdvance, allowOverrun, hornOnEnd, whistleAt60,
   } = snap
-  const drills = snap.activeScript?.drills ?? []
+  // Normalize drill shape defensively: legacy seeded scripts (and any drill
+  // that pre-dates the per-drill notes / cue features) may only carry
+  // { name, duration }. Spread defaults FIRST then the raw drill so any
+  // explicit value wins. Guarantees `notes`, `show_notes`, and
+  // `cue_mp3_url` are always present at the read site, regardless of
+  // origin.
+  const drills = (snap.activeScript?.drills ?? []).map(d => ({
+    notes:       '',
+    show_notes:  false,
+    cue_mp3_url: '',
+    ...d,
+  }))
 
   // ── Per-drill cue MP3 orchestration ────────────────────────────────────────
   // When a drill becomes active and has cue_mp3_url set:
@@ -247,18 +258,15 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     return subscribeAudio((type, payload) => {
       if (type !== 'state') return
       if (!isCuePlaying()) return
-      console.log('[Cue] manual main-player state change during cue, isPlaying=', payload.isPlaying)
       // The orchestrator's own audioPause / audioResume calls happen BEFORE
       // a cue starts and AFTER it ends — neither is during cue playback —
       // so anything we observe here is the user's manual interaction.
       if (payload.isPlaying) {
         // User manually resumed main → stop cue, don't auto-resume after.
-        console.log('[Cue] → user resumed main during cue, stopping cue, clearing wasPlayingMain')
         stopCue()
         cueWasPlayingMainRef.current = false
       } else {
         // User manually paused main → don't auto-resume after the cue.
-        console.log('[Cue] → user paused main during cue, clearing wasPlayingMain')
         cueWasPlayingMainRef.current = false
       }
     })
@@ -266,35 +274,18 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
 
   // (b) Trigger the cue when the active drill changes.
   useEffect(() => {
-    const drillAtIdx = drills[currentDrillIdx]
-    console.log('[Cue] orchestrator effect fired',
-      { hasStarted,
-        currentDrillIdx,
-        lastFiredIdx:    cueLastFiredIdxRef.current,
-        nDrills:         drills.length,
-        drillAtIdxKeys:  drillAtIdx ? Object.keys(drillAtIdx) : null,
-        cueUrl:          drillAtIdx?.cue_mp3_url ?? null,
-        cueIsPlaying:    isCuePlaying(),
-        wasPlayingMain:  cueWasPlayingMainRef.current,
-      })
-
     // Practice hasn't started → reset the "last fired" memo and bail. Any
     // in-flight cue from a prior session is also stopped.
     if (!hasStarted) {
-      console.log('[Cue] → !hasStarted, resetting lastFiredIdx and bailing')
       cueLastFiredIdxRef.current = null
       if (isCuePlaying()) {
-        console.log('[Cue] → in-flight cue from prior session, stopping')
         stopCue()
         if (cueWasPlayingMainRef.current) audioResume()
         cueWasPlayingMainRef.current = false
       }
       return
     }
-    if (cueLastFiredIdxRef.current === currentDrillIdx) {
-      console.log('[Cue] → already fired for this drill index, skipping')
-      return
-    }
+    if (cueLastFiredIdxRef.current === currentDrillIdx) return
     cueLastFiredIdxRef.current = currentDrillIdx
 
     const drill = drills[currentDrillIdx]
@@ -303,38 +294,22 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     // Drill changed → if a previous cue is still playing, abort it cleanly
     // and resume the main if we paused it for that prior cue.
     if (isCuePlaying()) {
-      console.log('[Cue] → previous cue still playing, stopping')
       stopCue()
       if (cueWasPlayingMainRef.current) audioResume()
       cueWasPlayingMainRef.current = false
     }
 
-    if (!cueUrl) {
-      console.log('[Cue] → drill has no cue_mp3_url, bailing (drill keys:', drill ? Object.keys(drill) : null, ')')
-      return
-    }
+    if (!cueUrl) return
 
     // Capture main-player state BEFORE pausing (snapshot is sync).
     const mainSnap = getAudioSnapshot()
     cueWasPlayingMainRef.current = !!mainSnap.isPlaying && mainSnap.currentIndex >= 0
-    console.log('[Cue] → captured main state',
-      { isPlaying:    mainSnap.isPlaying,
-        currentIndex: mainSnap.currentIndex,
-        wasPlaying:   cueWasPlayingMainRef.current })
-    if (cueWasPlayingMainRef.current) {
-      console.log('[Cue] → calling audioPause() to pause main playlist')
-      audioPause()
-    }
+    if (cueWasPlayingMainRef.current) audioPause()
 
     // Fire the cue. onEnded only runs on natural completion / load error.
-    console.log('[Cue] → calling playCue() with url:', cueUrl)
     playCue(cueUrl, {
       onEnded: () => {
-        console.log('[Cue] cue ended (natural or error), wasPlayingMain=', cueWasPlayingMainRef.current)
-        if (cueWasPlayingMainRef.current) {
-          console.log('[Cue] → resuming main playlist')
-          audioResume()
-        }
+        if (cueWasPlayingMainRef.current) audioResume()
         cueWasPlayingMainRef.current = false
       },
     })
