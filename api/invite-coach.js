@@ -7,7 +7,7 @@
 //   SUPABASE_SERVICE_ROLE_KEY — from Supabase → Settings → API → service_role key
 //
 // SUPABASE AUTH REQUIRED (Authentication → URL Configuration → Redirect URLs):
-//   Add:  https://practicepace.app/invite
+//   Add:  https://www.practicepace.app/invite
 
 export const config = { runtime: 'edge' }
 
@@ -67,9 +67,10 @@ export default async function handler(req) {
           role:      role      ?? 'coach',
           full_name: name?.trim() ?? '',
         },
-        // Coach lands here after clicking the email link.
-        // Must be listed in Supabase → Auth → URL Configuration → Redirect URLs.
-        redirect_to: 'https://practicepace.app/invite',
+        // Coach lands here after clicking the email link. www domain matches
+        // the Site URL the rest of the app uses (password reset, login flow);
+        // must be in Supabase → Auth → URL Configuration → Redirect URLs.
+        redirect_to: 'https://www.practicepace.app/invite',
       }),
     })
   } catch (err) {

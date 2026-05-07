@@ -34,9 +34,11 @@ export default function AcceptInvite() {
   const [password,   setPassword]   = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submitErr,  setSubmitErr]  = useState('')
+  // Stages: 'idle' | 'saving-password' | 'creating-profile' | 'done'
+  const [stage,      setStage]      = useState('idle')
   const [done,       setDone]       = useState(false)
-
-  const profileCreated = useRef(false)  // guard against double-create
+  // Once the password is set we don't want a retry to update it again.
+  const passwordSet = useRef(false)
 
   // ── Detect session from invite link ────────────────────────────────────────
   useEffect(() => {
@@ -50,7 +52,9 @@ export default function AcceptInvite() {
             setAuthUser(u)
             setFullName(u.user_metadata?.full_name ?? '')
             setAuthLoading(false)
-            await ensureProfile(u)
+            // We no longer create the profile here — it's done server-side
+            // (via /api/accept-invite, which uses service_role to bypass
+            // profiles RLS) AFTER the user sets their password.
           }
         } else if (event === 'SIGNED_OUT') {
           setAuthLoading(false)
@@ -65,7 +69,6 @@ export default function AcceptInvite() {
         setAuthUser(session.user)
         setFullName(session.user.user_metadata?.full_name ?? '')
         setAuthLoading(false)
-        ensureProfile(session.user)
       } else {
         // Give onAuthStateChange a moment to fire before declaring failure.
         // If the URL has tokens, the client needs ~500ms to exchange them.
@@ -85,64 +88,58 @@ export default function AcceptInvite() {
     return () => subscription.unsubscribe()
   }, [])
 
-  // ── Create profile row from invite metadata ────────────────────────────────
-  async function ensureProfile(user) {
-    if (profileCreated.current) return
-    profileCreated.current = true
-
-    const meta   = user.user_metadata ?? {}
-    const org_id = meta.org_id
-    const role   = meta.role   ?? 'coach'
-    const name   = meta.full_name ?? ''
-
-    if (!org_id) {
-      // Metadata missing — invite wasn't sent via our Edge Function.
-      // Still let them in; they can be linked to an org by an admin later.
-      console.warn('[AcceptInvite] No org_id in user metadata — profile not linked to org')
-      return
+  // ── Server-side profile creation (bypasses profiles RLS) ───────────────────
+  async function createProfileServerSide(userId) {
+    const res = await fetch('/api/accept-invite', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ userId }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      throw new Error(data.error ?? `Profile setup failed (${res.status}).`)
     }
-
-    const { error } = await supabase.from('profiles').upsert({
-      id:        user.id,
-      org_id,
-      email:     user.email ?? '',
-      full_name: name,
-      role,
-    }, { onConflict: 'id' })
-
-    if (error) {
-      console.error('[AcceptInvite] profile upsert error:', error.message)
-    }
+    return data
   }
 
-  // ── Set password + finish ──────────────────────────────────────────────────
+  // ── Set password + create profile + finish ─────────────────────────────────
   async function handleSetPassword(e) {
     e.preventDefault()
-    if (!password || password.length < 8) {
+    if (!authUser?.id) {
+      setSubmitErr('Session lost — reload the invite link from your email.')
+      return
+    }
+    // First-attempt validation only (after password is set we skip this on retry).
+    if (!passwordSet.current && (!password || password.length < 8)) {
       setSubmitErr('Password must be at least 8 characters.')
       return
     }
     setSubmitting(true); setSubmitErr('')
 
     try {
-      const updates = { password }
-      if (fullName.trim()) updates.data = { full_name: fullName.trim() }
-
-      const { error } = await supabase.auth.updateUser(updates)
-      if (error) throw new Error(error.message)
-
-      // Also keep profile full_name in sync if the user edited it
-      if (fullName.trim() && authUser) {
-        await supabase
-          .from('profiles')
-          .update({ full_name: fullName.trim() })
-          .eq('id', authUser.id)
+      // Step 1: set the password (skipped on retry once password is set).
+      if (!passwordSet.current) {
+        setStage('saving-password')
+        const updates = { password }
+        if (fullName.trim()) updates.data = { full_name: fullName.trim() }
+        const { error: pwErr } = await supabase.auth.updateUser(updates)
+        if (pwErr) throw new Error(pwErr.message)
+        passwordSet.current = true
       }
 
+      // Step 2: create the profile server-side. This is the new RLS-bypass
+      // call. If it fails, the password is still set on the auth user, so
+      // a retry will skip step 1 and only repeat this.
+      setStage('creating-profile')
+      await createProfileServerSide(authUser.id)
+
+      // Step 3: announce success and redirect.
+      setStage('done')
       setDone(true)
       setTimeout(() => navigate('/dashboard', { replace: true }), 1500)
     } catch (err) {
       setSubmitErr(err.message ?? 'Something went wrong. Please try again.')
+      setStage('idle')
     } finally {
       setSubmitting(false)
     }
@@ -282,20 +279,42 @@ export default function AcceptInvite() {
                 />
               </div>
 
-              {submitErr && (
-                <p className="text-xs rounded-lg px-3 py-2"
-                  style={{ backgroundColor: '#2a0000', color: '#ff6666' }}>
-                  {submitErr}
+              {/* Inline loading state for the post-password "creating profile"
+                  step so the user always sees what's happening. */}
+              {submitting && stage === 'creating-profile' && (
+                <p className="text-xs rounded-lg px-3 py-2 flex items-center gap-2"
+                  style={{ backgroundColor: '#0d0800', color: '#9a8080', border: '1px solid #2a0000' }}>
+                  <span className="inline-block w-3 h-3 rounded-full border-2 animate-spin shrink-0"
+                    style={{ borderColor: '#cc1111', borderTopColor: 'transparent' }} />
+                  Setting up your account…
                 </p>
+              )}
+
+              {submitErr && (
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs rounded-lg px-3 py-2"
+                    style={{ backgroundColor: '#2a0000', color: '#ff6666' }}>
+                    {submitErr}
+                  </p>
+                  <p className="text-xs" style={{ color: '#9a8080' }}>
+                    Need help? Email{' '}
+                    <a href="mailto:practicepace@gmail.com" className="underline" style={{ color: '#cc1111' }}>
+                      practicepace@gmail.com
+                    </a>
+                  </p>
+                </div>
               )}
 
               <button
                 type="submit"
-                disabled={submitting || !password}
+                disabled={submitting || (!passwordSet.current && !password)}
                 className="py-3 rounded-lg text-sm font-bold text-white disabled:opacity-50 transition-opacity"
                 style={{ backgroundColor: '#cc1111' }}
               >
-                {submitting ? 'Saving…' : 'Set Password & Enter App'}
+                {submitting && stage === 'saving-password'   ? 'Saving password…'
+                : submitting && stage === 'creating-profile' ? 'Setting up your account…'
+                : submitErr && passwordSet.current           ? 'Try Again'
+                : 'Set Password & Enter App'}
               </button>
             </form>
           </>
