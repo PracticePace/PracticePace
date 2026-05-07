@@ -246,8 +246,13 @@ export default function AcceptInvite() {
       console.log('[AcceptInvite] state → stage="done", done=true')
       setStage('done')
       setDone(true)
-      console.log('[AcceptInvite] navigating to /dashboard in 1500ms')
-      setTimeout(() => navigate('/dashboard', { replace: true }), 1500)
+      console.log('[AcceptInvite] hard-reloading to /dashboard in 1500ms')
+      // Full page reload required: AuthContext's profile state is stale (null) at this
+      // point because its fetchProfile ran before /api/accept-invite created the row.
+      // Hard reload forces AuthContext to re-init and pick up the now-existing profile,
+      // so ProtectedRoute won't re-route to /onboarding. Mirrors the signOut pattern
+      // in AuthContext.jsx that uses window.location.replace for the same reason.
+      setTimeout(() => window.location.replace('/dashboard'), 1500)
     } catch (err) {
       console.error('[AcceptInvite] handleSetPassword error:', err?.message ?? err)
       setSubmitErr(err.message ?? 'Something went wrong. Please try again.')
