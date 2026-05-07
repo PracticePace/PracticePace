@@ -13,6 +13,11 @@ import {
   playNext as audioPlayNext,
   playPrev as audioPlayPrev,
 } from '../../lib/audioPlayer'
+import {
+  subscribe as subscribeStadium,
+  getSnapshot as getStadiumSnapshot,
+  toggle as toggleStadium,
+} from '../../lib/stadiumNoise'
 
 function pad(n) { return String(n).padStart(2, '0') }
 function fmt(s) { return `${pad(Math.floor(Math.abs(s) / 60))}:${pad(Math.abs(s) % 60)}` }
@@ -101,6 +106,54 @@ function MusicMiniControls({ orgColor }) {
         <MusicSkipFwd />
       </button>
     </div>
+  )
+}
+
+// ── Stadium noise toggle (bottom-right of practice tab) ──────────────────────
+// Standalone single-button widget. Wires to the stadiumNoise singleton — does
+// NOT participate in horn/voice ducking or the music player. Looped playback
+// at full volume; tap to start, tap again to stop.
+const Volume2Icon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+  </svg>
+)
+const VolumeXIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+    <line x1="22" y1="9" x2="16" y2="15" />
+    <line x1="16" y1="9" x2="22" y2="15" />
+  </svg>
+)
+
+function StadiumNoiseToggle({ orgColor }) {
+  const [snap, setSnap] = useState(() => getStadiumSnapshot())
+  useEffect(() => subscribeStadium(setSnap), [])
+  const isOn = !!snap.isPlaying
+
+  return (
+    <button
+      type="button"
+      onClick={() => toggleStadium().catch(() => {})}
+      aria-label={isOn ? 'Stop stadium noise' : 'Play stadium noise'}
+      // Same 44x44 touch-target language as the music mini-controls. Visual
+      // emphasis flips with state: filled in orgColor + glow when ON, dim
+      // outline when OFF.
+      className="shrink-0 w-11 h-11 rounded-2xl flex items-center justify-center transition-all active:scale-95"
+      style={{
+        backgroundColor: isOn ? orgColor : 'rgba(13,8,0,0.85)',
+        border:          `1px solid ${isOn ? orgColor : `${orgColor}33`}`,
+        color:           isOn ? '#ffffff' : '#9a8080',
+        boxShadow:       isOn ? `0 0 12px ${orgColor}66` : 'none',
+        backdropFilter:  'blur(6px)',
+      }}
+    >
+      {isOn ? <Volume2Icon /> : <VolumeXIcon />}
+    </button>
   )
 }
 
@@ -459,8 +512,13 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
           />
         </div>
 
-        {/* ── Music quick-reach controls (bottom-left of practice tab) ────── */}
-        <MusicMiniControls orgColor={orgColor} />
+        {/* ── Bottom quick-reach row ───────────────────────────────────────
+            Music mini-controls on the left, stadium-noise toggle on the right
+            (mirrors the music widget's bottom-left position).            */}
+        <div className="shrink-0 mt-1 flex items-center justify-between gap-2">
+          <MusicMiniControls orgColor={orgColor} />
+          <StadiumNoiseToggle orgColor={orgColor} />
+        </div>
 
       </div>
     </div>
