@@ -5,7 +5,7 @@ const SECTIONS = [
   {
     id: 'getting-started',
     title: 'Getting Started',
-    icon: '🏈',
+    icon: '⚡',
     items: [
       'Best viewed on an iPad running Safari as a PWA — tap Share → Add to Home Screen for the full experience.',
       'Sign in and set up your program in Settings before your first practice.',
