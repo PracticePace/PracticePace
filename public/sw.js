@@ -5,7 +5,13 @@
 //   • API calls to Supabase, Stripe, Spotify — network-only (never cached)
 //   • Everything else — network-first with cache fallback
 
-const CACHE_NAME = 'practicepace-v1'
+// Bumping CACHE_NAME forces the SW activate handler below to delete every
+// cache that doesn't match — which evicts the cached app shell HTML and
+// stale Vite-hashed JS bundles. Bump this version on any deploy whose
+// behavior change must reach already-installed clients (e.g. the invite
+// flow fix in 90fcf89, which clients with the v1 cache never picked up
+// because the cached '/' HTML kept loading the old bundle).
+const CACHE_NAME = 'practicepace-v2'
 
 // URLs that must ALWAYS go to the network (auth-sensitive or payment APIs)
 const NETWORK_ONLY_ORIGINS = [

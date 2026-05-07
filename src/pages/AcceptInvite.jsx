@@ -155,11 +155,14 @@ export default function AcceptInvite() {
       setSubmitErr('Password must be at least 8 characters.')
       return
     }
+    console.log('[AcceptInvite] state → submitting=true')
     setSubmitting(true); setSubmitErr('')
+    console.log('[AcceptInvite] entering try block')
 
     try {
       // Step 1: set the password (skipped on retry once password is set).
       if (!passwordSet.current) {
+        console.log('[AcceptInvite] state → stage="saving-password"')
         setStage('saving-password')
 
         // Preflight: confirm the auth client actually has a session it can
@@ -167,6 +170,7 @@ export default function AcceptInvite() {
         // SIGNED_IN, but if the session got nuked between then and now (lock
         // contention, token expiry, etc) the call would never even reach
         // the server. We need to see this in the logs either way.
+        console.log('[AcceptInvite] await supabase.auth.getSession() …')
         const { data: { session: pfSession }, error: pfErr } =
           await supabase.auth.getSession()
         console.log('[AcceptInvite] preflight getSession',
@@ -209,6 +213,7 @@ export default function AcceptInvite() {
           console.error('[AcceptInvite] updateUser threw:', err?.message ?? err)
         })
 
+        console.log('[AcceptInvite] await Promise.race([passwordSaved, 10s timeout]) …')
         try {
           await Promise.race([
             passwordSaved,
@@ -224,26 +229,32 @@ export default function AcceptInvite() {
           cleanupListener()
         }
         console.log('[AcceptInvite] password save confirmed via USER_UPDATED')
+        console.log('[AcceptInvite] state → passwordSet.current=true')
         passwordSet.current = true
       }
 
       // Step 2: create the profile server-side. This is the RLS-bypass call.
       // If it fails, the password is still set on the auth user, so a retry
       // will skip step 1 and only repeat this.
+      console.log('[AcceptInvite] state → stage="creating-profile"')
       setStage('creating-profile')
       console.log('[AcceptInvite] calling /api/accept-invite')
       const apiData = await createProfileServerSide(authUser.id)
       console.log('[AcceptInvite] /api/accept-invite ok', apiData)
 
       // Step 3: announce success and redirect.
+      console.log('[AcceptInvite] state → stage="done", done=true')
       setStage('done')
       setDone(true)
+      console.log('[AcceptInvite] navigating to /dashboard in 1500ms')
       setTimeout(() => navigate('/dashboard', { replace: true }), 1500)
     } catch (err) {
       console.error('[AcceptInvite] handleSetPassword error:', err?.message ?? err)
       setSubmitErr(err.message ?? 'Something went wrong. Please try again.')
+      console.log('[AcceptInvite] state → stage="idle" (after error)')
       setStage('idle')
     } finally {
+      console.log('[AcceptInvite] state → submitting=false (finally)')
       setSubmitting(false)
     }
   }
