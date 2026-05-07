@@ -35,8 +35,34 @@ export default function ResetPassword() {
 
   // ── Detect recovery session from URL ───────────────────────────────────────
   useEffect(() => {
-    // The Supabase client processes recovery tokens from the URL automatically.
-    // We listen for the resulting PASSWORD_RECOVERY (or SIGNED_IN) event.
+    // Modern reset-link flow: the email points directly at this page with
+    //   ?token_hash=<hash>&type=recovery
+    // We exchange the hash for a session via verifyOtp inside the user's
+    // browser so Gmail's link-safety prefetcher can't consume the token via
+    // GET. verifyOtp emits PASSWORD_RECOVERY / SIGNED_IN on success, which
+    // the onAuthStateChange handler below picks up. We strip the params
+    // from the URL afterwards so a reload doesn't re-use a consumed token.
+    const params     = new URLSearchParams(window.location.search)
+    const token_hash = params.get('token_hash')
+    const otpType    = params.get('type')
+    if (token_hash) {
+      supabase.auth.verifyOtp({
+        type:       otpType ?? 'recovery',
+        token_hash,
+      }).then(({ error }) => {
+        if (error) {
+          console.error('[ResetPassword] verifyOtp error:', error.message)
+          setAuthError(
+            'This password reset link has already been used or expired. Request a new one from the sign-in page.'
+          )
+        } else {
+          window.history.replaceState({}, '', window.location.pathname)
+        }
+      })
+    }
+
+    // The Supabase client also processes legacy hash-fragment tokens from
+    // the URL automatically (older reset links still in flight).
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if ((event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session?.user) {

@@ -42,8 +42,40 @@ export default function AcceptInvite() {
 
   // ── Detect session from invite link ────────────────────────────────────────
   useEffect(() => {
-    // The Supabase client processes auth tokens from the URL automatically.
-    // We listen for the resulting SIGNED_IN / INITIAL_SESSION event.
+    // Modern email-link flow: the email points directly at this page with
+    //   ?token_hash=<hash>&type=invite
+    // We exchange the hash for a session via verifyOtp INSIDE the user's
+    // browser (a POST), so Gmail's link-safety prefetcher can't consume the
+    // token by GET'ing the URL ahead of the user. verifyOtp emits a
+    // SIGNED_IN event on success, which the onAuthStateChange handler below
+    // picks up. We strip the params from the URL afterwards so a reload
+    // doesn't try to re-use a consumed token.
+    const params     = new URLSearchParams(window.location.search)
+    const token_hash = params.get('token_hash')
+    const otpType    = params.get('type')
+    if (token_hash) {
+      supabase.auth.verifyOtp({
+        type:       otpType ?? 'invite',
+        token_hash,
+      }).then(({ error }) => {
+        if (error) {
+          console.error('[AcceptInvite] verifyOtp error:', error.message)
+          setAuthLoading(false)
+          setAuthError(
+            'Your invite link has already been used or expired. ' +
+            'Ask your admin to send a fresh invite.'
+          )
+        } else {
+          // Strip token_hash + type from the URL — leaves /invite clean.
+          window.history.replaceState({}, '', window.location.pathname)
+        }
+      })
+    }
+
+    // The Supabase client also processes any legacy hash-fragment tokens
+    // from the URL automatically (older invites still in flight). We listen
+    // for the resulting SIGNED_IN / INITIAL_SESSION event regardless of
+    // which path produced the session.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {

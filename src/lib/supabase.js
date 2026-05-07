@@ -12,7 +12,13 @@ if (!supabaseUrl || !supabaseAnonKey) {
   )
 }
 
+// flowType: 'pkce' is recommended for SPAs and is required by the new
+// email-link pattern (token_hash + verifyOtp on the receiving page) we use
+// for invites and password resets. The default in @supabase/auth-js 2.x is
+// 'implicit', which produces emails that hit /auth/v1/verify on first GET —
+// Gmail's link-safety prefetcher eats those tokens before the user clicks.
 export const supabase = createClient(
   supabaseUrl     ?? 'https://placeholder.supabase.co',
-  supabaseAnonKey ?? 'placeholder'
+  supabaseAnonKey ?? 'placeholder',
+  { auth: { flowType: 'pkce' } }
 )
