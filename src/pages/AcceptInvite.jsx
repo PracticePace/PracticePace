@@ -165,9 +165,8 @@ export default function AcceptInvite() {
         // Preflight: confirm the auth client actually has a session it can
         // attach to PUT /user. The token_hash flow has previously emitted
         // SIGNED_IN, but if the session got nuked between then and now (lock
-        // contention, token expiry, etc) updateUser would either hang on the
-        // navigator.locks acquire or throw AuthSessionMissingError. We need
-        // to see this in the logs either way.
+        // contention, token expiry, etc) the call would never even reach
+        // the server. We need to see this in the logs either way.
         const { data: { session: pfSession }, error: pfErr } =
           await supabase.auth.getSession()
         console.log('[AcceptInvite] preflight getSession',
@@ -181,11 +180,50 @@ export default function AcceptInvite() {
         const updates = { password }
         if (fullName.trim()) updates.data = { full_name: fullName.trim() }
 
-        console.log('[AcceptInvite] calling supabase.auth.updateUser')
-        const { data: upData, error: pwErr } = await supabase.auth.updateUser(updates)
-        console.log('[AcceptInvite] updateUser returned',
-          { hasUser: !!upData?.user, error: pwErr?.message ?? null })
-        if (pwErr) throw new Error(pwErr.message)
+        // ── Why we don't `await supabase.auth.updateUser(...)` ──────────────
+        // updateUser's Promise resolves only after _notifyAllSubscribers
+        // finishes Promise.all-ing every onAuthStateChange callback. The
+        // AuthProvider in src/context/AuthContext.jsx awaits a PostgREST
+        // fetchProfile() with no timeout when USER_UPDATED fires, and on
+        // the post-invite path that await never settles — even though the
+        // PUT /user request has already succeeded server-side.
+        //
+        // We sidestep that by listening for USER_UPDATED directly and
+        // awaiting the proof event with a 10s timeout. updateUser is
+        // fire-and-forget — its rejection (if any) is logged but does not
+        // block the flow.
+        let cleanupListener = () => {}
+        const passwordSaved = new Promise(resolve => {
+          const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+            if (event === 'USER_UPDATED') {
+              console.log('[AcceptInvite] USER_UPDATED received — password saved')
+              subscription.unsubscribe()
+              resolve()
+            }
+          })
+          cleanupListener = () => subscription.unsubscribe()
+        })
+
+        console.log('[AcceptInvite] calling supabase.auth.updateUser (fire-and-forget)')
+        supabase.auth.updateUser(updates).catch(err => {
+          console.error('[AcceptInvite] updateUser threw:', err?.message ?? err)
+        })
+
+        try {
+          await Promise.race([
+            passwordSaved,
+            new Promise((_, reject) =>
+              setTimeout(
+                () => reject(new Error('Password save timed out. Please try again.')),
+                10000
+              )
+            ),
+          ])
+        } finally {
+          // Idempotent — safe even if the listener already self-unsubscribed.
+          cleanupListener()
+        }
+        console.log('[AcceptInvite] password save confirmed via USER_UPDATED')
         passwordSet.current = true
       }
 
