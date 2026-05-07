@@ -301,9 +301,9 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
                 {currentDrill.name}
               </h1>
               {/* Drill note — small secondary text under the name, only when
-                  the parent script's show_notes_on_practice toggle is ON and
-                  the current drill actually has a non-empty note. */}
-              {snap.activeScript?.show_notes_on_practice
+                  THIS drill's own show_notes flag is ON and the note is
+                  non-empty. Each drill is opt-in independently. */}
+              {currentDrill.show_notes
                 && currentDrill.notes
                 && currentDrill.notes.trim() && (
                   <p

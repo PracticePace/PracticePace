@@ -311,7 +311,10 @@ function buildPrintHtml({ scriptName, drills, programName, programNameColor, pro
     object-fit: contain;
     justify-self: end;
   }
-  table { width: 100%; border-collapse: collapse; font-size: 12pt; }
+  /* table-layout: fixed makes the column widths below authoritative.
+     The Notes column is left without an explicit width so it consumes
+     all remaining horizontal space — coaches handwrite there. */
+  table { width: 100%; border-collapse: collapse; font-size: 12pt; table-layout: fixed; }
   thead th {
     text-align: left;
     background: #1a1a1a;
@@ -327,14 +330,19 @@ function buildPrintHtml({ scriptName, drills, programName, programNameColor, pro
     padding: 10px 12px;
     vertical-align: top;
     page-break-inside: avoid;
+    /* Tall rows so the Notes column has vertical room for handwriting. */
+    height: 0.7in;
   }
   tbody tr { page-break-inside: avoid; }
   tbody tr:nth-child(even) td { background: #f6f6f6; }
-  .num   { width: 56px; text-align: center; font-weight: 700; }
-  .time  { width: 96px; white-space: nowrap; font-weight: 700; }
-  .dur   { width: 80px; white-space: nowrap; }
-  .drill { font-weight: 700; }
-  .notes { color: #444; font-size: 11pt; }
+  /* Narrow fixed widths on the metadata columns, leaving Notes to absorb
+     all remaining horizontal space via table-layout: fixed. */
+  .num   { width:  5%; text-align: center; font-weight: 700; }
+  .time  { width: 10%; white-space: nowrap; font-weight: 700; }
+  .dur   { width: 10%; white-space: nowrap; }
+  .drill { width: 25%; font-weight: 700; word-wrap: break-word; }
+  .notes { /* width: auto — takes the remaining ~50% */
+           color: #444; font-size: 11pt; word-wrap: break-word; }
   @media print {
     .toolbar { display: none; }
     .sheet { padding: 0; }
@@ -361,8 +369,8 @@ function buildPrintHtml({ scriptName, drills, programName, programNameColor, pro
           <th class="num">Period</th>
           <th class="time">Time</th>
           <th class="dur">Duration</th>
-          <th>Drill</th>
-          <th>Notes</th>
+          <th class="drill">Drill</th>
+          <th class="notes">Notes</th>
         </tr>
       </thead>
       <tbody>
@@ -469,23 +477,35 @@ function PrintScriptDialog({ scriptName, drills, orgColor,
 const DURATION_PRESETS = [5, 10, 15, 20]
 
 function AddDrillForm({ orgColor, onAdd }) {
-  const [name,  setName]  = useState('')
-  const [mins,  setMins]  = useState('')
-  const [secs,  setSecs]  = useState('')
-  const [notes, setNotes] = useState('')
+  const [name,      setName]      = useState('')
+  const [mins,      setMins]      = useState('')
+  const [secs,      setSecs]      = useState('')
+  const [notes,     setNotes]     = useState('')
+  const [showNotes, setShowNotes] = useState(false)
 
   const activePreset = (m) =>
     Number(mins) === m && (secs === '' || secs === '0' || Number(secs) === 0)
+
+  // The "Show on practice screen" checkbox only makes sense when there's a
+  // note to show; force it off whenever the notes field is empty.
+  const hasNotes = notes.trim().length > 0
+  const effectiveShowNotes = hasNotes && showNotes
 
   function handleAdd() {
     const drillName = name.trim()
     const duration  = Number(mins || 0) * 60 + Number(secs || 0)
     console.log('[AddDrill] name:', JSON.stringify(drillName), 'mins:', mins, 'secs:', secs, '→ duration (s):', duration)
-    onAdd({ name: drillName, duration, notes: notes.trim() })
+    onAdd({
+      name:       drillName,
+      duration,
+      notes:      notes.trim(),
+      show_notes: effectiveShowNotes,
+    })
     setName('')
     setMins('')
     setSecs('')
     setNotes('')
+    setShowNotes(false)
   }
 
   return (
@@ -536,6 +556,23 @@ function AddDrillForm({ orgColor, onAdd }) {
         style={{ backgroundColor: '#1a0000', border: '1px solid #3a0000', color: '#fff', minHeight: 48 }}
       />
 
+      {/* Per-drill "show on practice screen" toggle. Only meaningful when
+          there's a note; disabled (and visually muted) when notes is empty. */}
+      <label
+        className="flex items-center gap-2 text-xs select-none"
+        style={{ color: hasNotes ? '#c8a0a0' : '#4a2020', cursor: hasNotes ? 'pointer' : 'not-allowed' }}
+      >
+        <input
+          type="checkbox"
+          checked={effectiveShowNotes}
+          onChange={e => setShowNotes(e.target.checked)}
+          disabled={!hasNotes}
+          className="w-3.5 h-3.5"
+          style={{ accentColor: orgColor }}
+        />
+        Show on practice screen
+      </label>
+
       <button onClick={handleAdd} disabled={!name.trim()}
         className="w-full py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-40"
         style={{ backgroundColor: orgColor }}>
@@ -549,10 +586,11 @@ function AddDrillForm({ orgColor, onAdd }) {
 
 function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
   rowRef, onStartDrag, onEditStart, onEditSave, onEditCancel, onDelete }) {
-  const [editName,  setEditName]  = useState(drill.name ?? '')
-  const [editMins,  setEditMins]  = useState(drill.duration ? String(Math.floor(drill.duration / 60)) : '')
-  const [editSecs,  setEditSecs]  = useState(drill.duration ? String(drill.duration % 60) : '')
-  const [editNotes, setEditNotes] = useState(drill.notes ?? '')
+  const [editName,      setEditName]      = useState(drill.name ?? '')
+  const [editMins,      setEditMins]      = useState(drill.duration ? String(Math.floor(drill.duration / 60)) : '')
+  const [editSecs,      setEditSecs]      = useState(drill.duration ? String(drill.duration % 60) : '')
+  const [editNotes,     setEditNotes]     = useState(drill.notes ?? '')
+  const [editShowNotes, setEditShowNotes] = useState(!!drill.show_notes)
 
   // Sync edit fields when editing starts
   useEffect(() => {
@@ -561,8 +599,12 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
       setEditMins(drill.duration ? String(Math.floor(drill.duration / 60)) : '')
       setEditSecs(drill.duration ? String(drill.duration % 60) : '')
       setEditNotes(drill.notes ?? '')
+      setEditShowNotes(!!drill.show_notes)
     }
   }, [isEditing, drill])
+
+  const editHasNotes = editNotes.trim().length > 0
+  const editEffectiveShowNotes = editHasNotes && editShowNotes
 
   const rowStyle = {
     backgroundColor: isDragging ? '#2a0808' : '#1a0000',
@@ -619,6 +661,22 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
             className="rounded-lg px-3 py-2 text-xs outline-none w-full resize-y"
             style={{ backgroundColor: '#0d0000', border: '1px solid #3a0000', color: '#fff', minHeight: 48 }}
           />
+          {/* Per-drill "show on practice screen" toggle. Only meaningful when
+              there's a note; disabled (and visually muted) when notes is empty. */}
+          <label
+            className="flex items-center gap-2 text-xs select-none"
+            style={{ color: editHasNotes ? '#c8a0a0' : '#4a2020', cursor: editHasNotes ? 'pointer' : 'not-allowed' }}
+          >
+            <input
+              type="checkbox"
+              checked={editEffectiveShowNotes}
+              onChange={e => setEditShowNotes(e.target.checked)}
+              disabled={!editHasNotes}
+              className="w-3.5 h-3.5"
+              style={{ accentColor: orgColor }}
+            />
+            Show on practice screen
+          </label>
           <div className="flex gap-2 justify-end">
             <button onClick={onEditCancel}
               className="px-3 py-2 rounded-lg text-xs font-semibold"
@@ -627,9 +685,10 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor,
             </button>
             <button
               onClick={() => onEditSave(index, {
-                name:     editName.trim(),
-                duration: Number(editMins || 0) * 60 + Number(editSecs || 0),
-                notes:    editNotes.trim(),
+                name:       editName.trim(),
+                duration:   Number(editMins || 0) * 60 + Number(editSecs || 0),
+                notes:      editNotes.trim(),
+                show_notes: editEffectiveShowNotes,
               })}
               className="px-3 py-2 rounded-lg text-xs font-bold text-white"
               style={{ backgroundColor: orgColor }}>
@@ -690,7 +749,6 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
   const [name,   setName]   = useState(script.name  ?? '')
   const [sport,  setSport]  = useState(script.sport ?? 'football')
   const [drills, setDrills] = useState(script.drills ?? [])
-  const [showNotesOnPractice, setShowNotesOnPractice] = useState(!!script.show_notes_on_practice)
   const [editingIndex,  setEditingIndex]  = useState(null)
   const [saving,  setSaving]  = useState(false)
   const [saveMsg, setSaveMsg] = useState('')  // '' | 'saving' | 'saved' | error string
@@ -699,19 +757,22 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
   const scriptId  = useRef(script.id)
 
   // ── Save (debounced) ────────────────────────────────────────────────────────
-  const save = useCallback(async (nextName, nextSport, nextDrills, nextShowNotes) => {
+  const save = useCallback(async (nextName, nextSport, nextDrills) => {
     setSaveMsg('saving')
     setSaving(true)
     const payload = {
       name:   nextName.trim()  || 'Untitled Script',
       sport:  nextSport.toLowerCase(),
-      // Each drill gets `notes` (string) preserved alongside name + duration.
+      // Each drill carries its own `notes` (string) and `show_notes` (boolean
+      // — controls whether the practice screen renders the note under the
+      // current drill name). Missing/undefined show_notes is treated as
+      // false. notes is empty string when not set.
       drills: nextDrills.map(d => ({
-        name:     d.name.trim(),
-        duration: Number(d.duration) || 0,
-        notes:    typeof d.notes === 'string' ? d.notes.trim() : '',
+        name:       d.name.trim(),
+        duration:   Number(d.duration) || 0,
+        notes:      typeof d.notes === 'string' ? d.notes.trim() : '',
+        show_notes: !!d.show_notes,
       })),
-      show_notes_on_practice: !!nextShowNotes,
     }
 
     try {
@@ -746,24 +807,31 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
   }, [isGuest, orgId, userId, onReload])
 
   // Debounce saves by 600ms after any change
-  function schedSave(nextName, nextSport, nextDrills, nextShowNotes) {
+  function schedSave(nextName, nextSport, nextDrills) {
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
-      save(nextName, nextSport, nextDrills, nextShowNotes)
+      save(nextName, nextSport, nextDrills)
     }, 600)
   }
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current) }, [])
 
-  function updateName(v)   { setName(v);  schedSave(v,    sport,  drills, showNotesOnPractice) }
-  function updateSport(v)  { setSport(v); schedSave(name, v,      drills, showNotesOnPractice) }
-  function updateDrills(d) { setDrills(d); schedSave(name, sport,  d,      showNotesOnPractice) }
-  function updateShowNotes(v) { setShowNotesOnPractice(v); schedSave(name, sport, drills, v) }
+  function updateName(v)   { setName(v);  schedSave(v,    sport,  drills) }
+  function updateSport(v)  { setSport(v); schedSave(name, v,      drills) }
+  function updateDrills(d) { setDrills(d); schedSave(name, sport,  d) }
 
   // ── Drill mutations ─────────────────────────────────────────────────────────
   function addDrill(fields) {
-    const next = [...drills, { name: fields.name, duration: fields.duration, notes: fields.notes ?? '' }]
+    const next = [
+      ...drills,
+      {
+        name:       fields.name,
+        duration:   fields.duration,
+        notes:      fields.notes ?? '',
+        show_notes: !!fields.show_notes,
+      },
+    ]
     setDrills(next)
-    schedSave(name, sport, next, showNotesOnPractice)
+    schedSave(name, sport, next)
   }
 
   function saveDrill(index, updates) {
@@ -793,14 +861,13 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
     const isUnsaved  = !scriptId.current
     if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null }
     if (hasPending || isUnsaved) {
-      await save(name, sport, drills, showNotesOnPractice)
+      await save(name, sport, drills)
     }
     const scriptObj = {
       id:     scriptId.current,
       name,
       sport,
       drills,
-      show_notes_on_practice: showNotesOnPractice,
     }
     onSetActive(scriptObj)
     if (onSwitchTab) onSwitchTab('practice')
@@ -866,22 +933,9 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
           {fmt(sec)} total
         </span>
 
-        {/* Show-notes-on-practice toggle (per script). */}
-        <label className="ml-auto flex items-center gap-2 cursor-pointer select-none text-xs"
-          style={{ color: '#9a8080' }}>
-          <input
-            type="checkbox"
-            checked={showNotesOnPractice}
-            onChange={e => updateShowNotes(e.target.checked)}
-            className="w-3.5 h-3.5 cursor-pointer"
-            style={{ accentColor: orgColor }}
-          />
-          Show notes on practice screen
-        </label>
-
         {/* Print script — opens a dialog asking for the practice start time. */}
         <button onClick={() => setShowPrint(true)}
-          className="text-xs font-bold px-3 py-1.5 rounded-lg"
+          className="ml-auto text-xs font-bold px-3 py-1.5 rounded-lg"
           style={{ border: `1px solid ${orgColor}66`, color: orgColor, backgroundColor: 'transparent' }}>
           🖨 Print Script
         </button>
