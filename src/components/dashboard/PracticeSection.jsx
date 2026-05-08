@@ -713,7 +713,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
         className="w-full flex flex-row items-center justify-center select-none relative"
         style={{
           height:          44,
-          gap:             8,
+          gap:             10,
           // Gradient fades the panel chrome into the display zone — dark
           // at the bottom, semi-transparent at the top — so the handle
           // reads as "the bottom of the screen" rather than a hard band.
@@ -755,21 +755,28 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
         />
 
         {/* CONTROLS label — sits to the RIGHT of the pill, vertically
-            centered with it. Only shown when the panel is closed; would
-            be redundant noise once the controls strip itself is visible.
-            The pill+label flexbox is `justify-center` so the GROUP is
-            centered as a unit (pill drifts left of true center, label
-            right) — reads more obviously than an asymmetric layout. */}
+            centered with it on the same horizontal line (NOT above, NOT
+            below — keeps clear of the "Next Up" duration text below).
+            Only shown when the panel is closed; redundant noise once the
+            controls strip itself is visible. The pill+label flexbox is
+            `justify-center` so the GROUP centers as a unit (pill drifts
+            left of true center, label right) — reads as one coherent
+            affordance. */}
         {!panelOpen && (
           <span
             aria-hidden="true"
             style={{
-              fontSize:      11,
+              fontSize:      12,
               lineHeight:    1,
               fontWeight:    700,
-              letterSpacing: '0.12em',
+              // Literal 1 px letter-spacing per spec — equivalent to
+              // about 0.083em at 12 px font, slightly tighter than the
+              // previous 0.12em which was overly airy at this size.
+              letterSpacing: '1px',
               textTransform: 'uppercase',
-              color:         'rgba(255,255,255,0.6)',
+              // Match the pill's ~70% white so the affordance reads as
+              // one unified group rather than pill-then-faint-text.
+              color:         'rgba(255,255,255,0.7)',
               textShadow:    '0 1px 2px rgba(0,0,0,0.7)',
             }}
           >
