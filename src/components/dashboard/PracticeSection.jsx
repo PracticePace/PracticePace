@@ -428,7 +428,16 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
           the controls panel slides up OVER the bottom slice when opened.
           Tap-to-close handler is here so any tap on the display closes an
           open panel — period dot taps still bubble through and fire jumpTo
-          first via React's normal event order. */}
+          first via React's normal event order.
+
+          paddingBottom reserves space for the absolutely-positioned peek
+          handle strip below so the inner content (esp. the "Next Up /
+          drill-name / mm:ss" block at the bottom) is never rendered
+          behind the handle. The reserved height = handle bottom-offset
+          (10) + handle strip height (44) + breathing room (10) = 64 px.
+          The background image and dark overlay still fill the full box,
+          so the handle visually sits on the same backdrop as the rest
+          of the display. */}
       <div
         className="relative flex-1 flex flex-col overflow-hidden"
         onClick={panelOpen ? closePanel : undefined}
@@ -436,6 +445,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
           backgroundImage:    backgroundUrl ? `url(${backgroundUrl})` : undefined,
           backgroundSize:     'cover',
           backgroundPosition: 'center',
+          paddingBottom:      64,
         }}
       >
       {backgroundUrl && (
@@ -649,18 +659,13 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
         open. */}
 
     {/* Custom keyframes for the first-use pulse on the peek handle.
-        We pulse the GRABBER PILL specifically (not the whole strip) with a
-        scale animation 1.0 → 1.15 → 1.0 — the universal sheet-handle
-        "breathing" cue users recognize from iOS modal sheets. The whole
-        strip gets a subtle border glow so the entire affordance reads. */}
+        We pulse the GRABBER PILL only — scale 1.0 → 1.15 → 1.0 over
+        1.5 s. That's the universal sheet-handle "breathing" cue users
+        recognize from iOS modal sheets. */}
     <style>{`
       @keyframes pp-handle-pill-pulse {
         0%, 100% { transform: scale(1);    }
         50%      { transform: scale(1.15); }
-      }
-      @keyframes pp-handle-strip-glow {
-        0%, 100% { border-top-color: ${orgColor}44; }
-        50%      { border-top-color: ${orgColor}cc; }
       }
     `}</style>
 
@@ -675,7 +680,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
         bottom:        10,
         // CSS var: how far to slide down so only the handle peeks out.
         // Matches the controls strip height (estimated 132px — two stacked
-        // rows of ~44 + ~28 + py-2 padding). The 48px peek handle stays
+        // rows of ~44 + ~28 + py-2 padding). The 44px peek handle stays
         // visible below it. Tweakable without breaking the open state
         // because the open state translates to 0.
         '--ctrls-h':   '132px',
@@ -692,22 +697,23 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
       onWheel={pokePanel}
       onKeyDown={pokePanel}
     >
-      {/* PEEK HANDLE — full-width tap target, 48 px tall (above Apple's
-          44 px HIG minimum). Visual affordance stack from top to bottom:
-            • CONTROLS label (10 px uppercase, ~50% white)
-            • Chevron-up SVG (~18×10, ~70% white) — flips to ChevronDown
-              when the panel is open
-            • Grabber pill (48×5 px, ~70% white, fully rounded)
-          The whole strip is the hit target; the visual is centered. */}
+      {/* PEEK HANDLE — full-width tap target on its OWN dedicated row,
+          44 px tall (Apple HIG minimum touch target). Single horizontal
+          row centered as a unit:
+            [ Grabber pill (64×6 fully rounded, ~70% white) ] [ 8 px gap ]
+            [ "CONTROLS" label (uppercase, ~60% white, ~1 px letterspace) ]
+          Display zone above reserves 64 px of bottom padding so the
+          "Next Up / drill / mm:ss" content never collides with this
+          strip. */}
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); togglePanel() }}
         aria-label={panelOpen ? 'Hide controls' : 'Show controls'}
         aria-expanded={panelOpen}
-        className="w-full flex flex-col items-center justify-center select-none relative"
+        className="w-full flex flex-row items-center justify-center select-none relative"
         style={{
-          height:          48,
-          gap:             3,
+          height:          44,
+          gap:             8,
           // Gradient fades the panel chrome into the display zone — dark
           // at the bottom, semi-transparent at the top — so the handle
           // reads as "the bottom of the screen" rather than a hard band.
@@ -720,71 +726,26 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
             ? '1px solid #1a0000'
             : `1px solid ${orgColor}44`,
           cursor:          'pointer',
-          // Subtle border-color pulse on the strip while the first-use
-          // hint is active so the entire affordance — not just the pill —
-          // reads as "alive". Stops with the rest of the pulse stack.
-          animation:       (showHandlePulse && !panelOpen)
-            ? 'pp-handle-strip-glow 1.5s ease-in-out infinite'
-            : 'none',
         }}
       >
-        {/* CONTROLS label — tiny uppercase letterspaced, ~50% white. Only
-            shown when the panel is closed; would be redundant noise once
-            the controls strip itself is visible. */}
-        {!panelOpen && (
-          <span
-            aria-hidden="true"
-            style={{
-              fontSize:      9,
-              lineHeight:    1,
-              fontWeight:    700,
-              letterSpacing: '0.2em',
-              textTransform: 'uppercase',
-              color:         'rgba(255,255,255,0.55)',
-              textShadow:    '0 1px 2px rgba(0,0,0,0.7)',
-            }}
-          >
-            Controls
-          </span>
-        )}
-
-        {/* Chevron — points up when closed (tap to reveal), flips down
-            when open (tap to hide). Inline SVG matches the existing
-            convention (MegaphoneIcon, MusicPlayIcon). */}
-        <svg
-          width="18" height="10" viewBox="0 0 18 10"
-          fill="none" stroke="currentColor"
-          strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
-          aria-hidden="true"
-          style={{
-            color:      'rgba(255,255,255,0.7)',
-            transform:  panelOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-            transition: 'transform 240ms ease-out',
-            // Drop shadow keeps it visible against the lighter top of
-            // the gradient.
-            filter:     'drop-shadow(0 1px 2px rgba(0,0,0,0.7))',
-          }}
-        >
-          <polyline points="2 8 9 2 16 8" />
-        </svg>
-
-        {/* Grabber pill — universal iOS-sheet handle. 48×5 fully rounded,
-            ~70% white. Scale-pulses 1.0 → 1.15 → 1.0 over 1.5 s while the
+        {/* Grabber pill — universal iOS-sheet handle. Bumped to 64×6 px
+            (was 48×5) so it reads from across a gym. Fully rounded, ~70%
+            white. Scale-pulses 1.0 → 1.15 → 1.0 over 1.5 s while the
             first-use hint is active; halts permanently on first tap (or
             after the 8 s fallback). */}
         <span
           style={{
-            width:           48,
-            height:          5,
+            width:           64,
+            height:          6,
             borderRadius:    9999,
             backgroundColor: 'rgba(255,255,255,0.7)',
             boxShadow:       (showHandlePulse && !panelOpen)
               ? `0 0 12px ${orgColor}cc, 0 0 4px rgba(255,255,255,0.6)`
               : '0 1px 2px rgba(0,0,0,0.6)',
             // Pulse the pill itself — the universally recognized "tap
-            // me" cue on a sheet handle. Transform-origin defaults to
-            // center so the pill scales symmetrically and doesn't shift
-            // its neighbors (transforms are layout-neutral).
+            // me" cue on a sheet handle. Transform-origin centered so
+            // the pill scales symmetrically; transforms are layout-
+            // neutral so the label next to it doesn't shift.
             animation:       (showHandlePulse && !panelOpen)
               ? 'pp-handle-pill-pulse 1.5s ease-in-out infinite'
               : 'none',
@@ -792,6 +753,29 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
             transition:      'box-shadow 200ms',
           }}
         />
+
+        {/* CONTROLS label — sits to the RIGHT of the pill, vertically
+            centered with it. Only shown when the panel is closed; would
+            be redundant noise once the controls strip itself is visible.
+            The pill+label flexbox is `justify-center` so the GROUP is
+            centered as a unit (pill drifts left of true center, label
+            right) — reads more obviously than an asymmetric layout. */}
+        {!panelOpen && (
+          <span
+            aria-hidden="true"
+            style={{
+              fontSize:      11,
+              lineHeight:    1,
+              fontWeight:    700,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              color:         'rgba(255,255,255,0.6)',
+              textShadow:    '0 1px 2px rgba(0,0,0,0.7)',
+            }}
+          >
+            Controls
+          </span>
+        )}
       </button>
 
       {/* CONTROLS STRIP ─ original content, now the body of the slide panel.
