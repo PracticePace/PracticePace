@@ -354,6 +354,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     setPanelOpen(false)
   }
   function togglePanel() {
+    markHandleSeen()
     if (panelOpen) closePanel()
     else openPanel()
   }
@@ -365,6 +366,38 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
   }
   // Cleanup on unmount so a stale timer doesn't fire after navigation.
   useEffect(() => () => clearHideTimer(), [])
+
+  // ── First-use pulse animation for the peek handle ─────────────────────────
+  // Stage mode is a brand-new affordance — without a hint, coaches couldn't
+  // figure out how to bring controls back. The handle "breathes" until the
+  // user has interacted with it once, then stops permanently (per browser /
+  // device, via localStorage). If localStorage is unavailable (private
+  // browsing, Safari ITP edge cases), we fall back to a 5-second timed
+  // pulse on every load — strictly better than no hint at all.
+  const HANDLE_SEEN_KEY = 'pp_stage_mode_handle_seen'
+  const [showHandlePulse, setShowHandlePulse] = useState(() => {
+    try {
+      return localStorage.getItem(HANDLE_SEEN_KEY) !== '1'
+    } catch {
+      // localStorage blocked — pulse anyway; the timed fallback below
+      // ensures we don't pulse forever.
+      return true
+    }
+  })
+  // Mark the handle as seen the first time the panel is interacted with.
+  // Survives reloads via localStorage. Idempotent — safe to call again.
+  function markHandleSeen() {
+    setShowHandlePulse(false)
+    try { localStorage.setItem(HANDLE_SEEN_KEY, '1') } catch {}
+  }
+  // Defensive timed fallback: kill the pulse after 5 s on every mount even
+  // if the user never interacts. Guarantees the pulse is never permanent
+  // (e.g. coach mounts the practice screen briefly while doing other work).
+  useEffect(() => {
+    if (!showHandlePulse) return
+    const t = setTimeout(() => setShowHandlePulse(false), 5000)
+    return () => clearTimeout(t)
+  }, [showHandlePulse])
 
   // (Display-value destructure for `snap` and `drills` lives above the cue
   // orchestration effects so their dep arrays can read those names without
@@ -603,60 +636,122 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
 
     {/* ── CONTROLS PANEL (stage-mode slide-up) ──────────────────────────────
         Absolutely positioned at the bottom of the practice section. The
-        panel = peek handle (always visible, ~22px tall) + controls strip
-        (the rest). When closed we translateY by the controls strip's
-        height, leaving only the peek handle showing at the bottom edge.
-        When open the whole panel slides into view.
+        panel = peek handle (always visible, 44px tall — Apple's minimum
+        touch target) + controls strip (the rest). When closed we
+        translateY by the controls strip's height, leaving only the
+        handle showing. When open the whole panel slides into view.
 
         The peek handle is the tap target for toggling. Pointer-down events
         anywhere in the panel reset the auto-hide timer, so a coach
         actively pressing buttons / toggling preferences keeps the panel
         open. */}
+
+    {/* Custom keyframes for the first-use pulse on the peek handle.
+        Tailwind's animate-pulse only modulates opacity; we want a glowing
+        halo + scale breath that reads as "tap me" across a field/gym. */}
+    <style>{`
+      @keyframes pp-handle-breathe {
+        0%, 100% {
+          box-shadow: 0 -2px 0 0 ${orgColor}00, 0 0 0 0 ${orgColor}00;
+          transform: translateY(0);
+        }
+        50% {
+          box-shadow: 0 -2px 14px 2px ${orgColor}aa, 0 0 22px 4px ${orgColor}66;
+          transform: translateY(-1px);
+        }
+      }
+    `}</style>
+
     <div
       className="absolute left-0 right-0 bottom-0 z-20"
       style={{
         // CSS var: how far to slide down so only the handle peeks out.
         // Matches the controls strip height (estimated 132px — two stacked
-        // rows of ~44 + ~28 + py-2 padding). Tweakable without breaking
-        // the open state because the open state translates to 0.
+        // rows of ~44 + ~28 + py-2 padding). The 44px peek handle stays
+        // visible below it. Tweakable without breaking the open state
+        // because the open state translates to 0.
         '--ctrls-h':  '132px',
         transform:    panelOpen ? 'translateY(0)' : 'translateY(var(--ctrls-h))',
         transition:   'transform 240ms ease-out',
-        // Soft drop shadow above the panel when open so it visually
-        // separates from the display zone behind it.
+        // Drop shadow above the panel when open so it visually separates
+        // from the display zone behind it.
         boxShadow:    panelOpen ? '0 -10px 30px rgba(0,0,0,0.5)' : 'none',
+        // iOS PWA safe-area: extend the panel below the visual bottom so
+        // the home-indicator zone gets the panel's background color
+        // rather than an unstyled void if the tab bar ever shifts.
+        paddingBottom: 'env(safe-area-inset-bottom)',
       }}
       onPointerDown={pokePanel}
       onWheel={pokePanel}
       onKeyDown={pokePanel}
     >
-      {/* PEEK HANDLE — always visible. Tap to toggle the panel. */}
+      {/* PEEK HANDLE — always visible. 44px tall (Apple HIG min touch
+          target). Visible affordance: white pill + chevron + subtle
+          gradient background + first-use breathing pulse. */}
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); togglePanel() }}
         aria-label={panelOpen ? 'Hide controls' : 'Show controls'}
         aria-expanded={panelOpen}
-        className="w-full flex items-center justify-center gap-1.5 select-none"
+        className="w-full flex flex-col items-center justify-center gap-1 select-none relative"
         style={{
-          height:          22,
-          backgroundColor: '#080000',
-          borderTop:       '1px solid #1a0000',
+          height:          44,
+          // Gradient that fades the panel chrome into the display zone —
+          // dark at the bottom, semi-transparent at the top — so the
+          // handle reads as "the bottom of the screen" rather than a
+          // hard band. When the panel is open the gradient flips to a
+          // solid #080000 so it visually "joins" the controls strip.
+          background:      panelOpen
+            ? '#080000'
+            : `linear-gradient(to top, rgba(8,0,0,0.96) 0%, rgba(8,0,0,0.78) 60%, rgba(8,0,0,0.45) 100%)`,
+          borderTop:       panelOpen
+            ? '1px solid #1a0000'
+            : `1px solid ${orgColor}44`,
           cursor:          'pointer',
-          // Larger hit-target than the visible bar via a small invisible
-          // padding zone above it would be ideal, but we're constrained by
-          // overflow and absolute positioning. 22px tall + full width is
-          // already a generous tap target.
+          // Apply the breathing keyframe ONLY while pulse is active and
+          // the panel is closed (no point pulsing when controls are
+          // already up). Stops permanently on first interaction; also
+          // auto-stops after 5 s as a defensive timed fallback.
+          animation:       (showHandlePulse && !panelOpen)
+            ? 'pp-handle-breathe 1.6s ease-in-out infinite'
+            : 'none',
         }}
       >
-        <span
-          // iOS-sheet-style grabber: short pill, slightly transparent in
-          // the org color so it reads as "interactive" without screaming.
+        {/* Chevron — points up when closed (tap to reveal), flips to point
+            down when open (tap to hide). Single inline SVG matches the
+            project convention (see MegaphoneIcon, MusicPlayIcon). */}
+        <svg
+          width="14" height="8" viewBox="0 0 14 8"
+          fill="none" stroke="currentColor"
+          strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+          aria-hidden="true"
           style={{
-            width:           42,
+            color:      'rgba(255,255,255,0.92)',
+            transform:  panelOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+            transition: 'transform 240ms ease-out',
+            // Subtle drop shadow on the chevron so it stays visible
+            // against the lighter top of the gradient.
+            filter:     'drop-shadow(0 1px 2px rgba(0,0,0,0.7))',
+          }}
+        >
+          <polyline points="2 6 7 2 12 6" />
+        </svg>
+
+        {/* Grabber pill — wider, taller, brighter than the previous
+            ${orgColor}66. White at 70% alpha reads against any
+            background-image the coach has set. */}
+        <span
+          style={{
+            width:           44,
             height:          5,
             borderRadius:    3,
-            backgroundColor: panelOpen ? `${orgColor}aa` : `${orgColor}66`,
-            transition:      'background-color 200ms',
+            backgroundColor: 'rgba(255,255,255,0.78)',
+            // Soft glow while pulsing draws the eye further; falls off
+            // once the user has interacted.
+            boxShadow:       (showHandlePulse && !panelOpen)
+              ? `0 0 10px ${orgColor}cc, 0 0 4px rgba(255,255,255,0.5)`
+              : '0 1px 2px rgba(0,0,0,0.6)',
+            transition:      'box-shadow 200ms',
           }}
         />
       </button>
