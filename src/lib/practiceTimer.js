@@ -7,6 +7,7 @@
 
 import { playAirHorn, playBell, playPeriodEnd, loadHorn, getAutoSounds, setAutoSound } from './sounds'
 import { duckForHorn, duckNow, releaseDuck } from './audioPlayer'
+import { speakViaAudio } from './ttsViaAudio'
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = 'pp_practice_timer'
@@ -93,50 +94,70 @@ function _getEnglishVoice() {
  * Speak the announcement immediately.
  * The music duck is a fresh independent duck — by the time this runs
  * (3 s after the horn), the horn's 3-second duck has just about restored.
+ *
+ * Delegates to speakViaAudio() which attempts to capture the synthesized
+ * speech into an audio buffer and play it through an HTMLAudioElement
+ * (so iOS Safari routes it through AirPlay — see ttsViaAudio.js for the
+ * full theory and caveats). On any failure, speakViaAudio() falls back
+ * to a regular window.speechSynthesis.speak() so this announcement
+ * always plays — even if it remains stuck on the local iPad speaker.
+ *
+ * Voice / rate / pitch / volume preserved exactly from the prior direct-
+ * speechSynthesis path:
+ *   text  = "Next up. ${name}."
+ *   rate  = 0.95   (slightly slower — authoritative, easier at distance)
+ *   pitch = 0.9    (slightly lower — sounds more masculine)
+ *   volume= 1.0
+ *   voice = Daniel → Alex → male/en → en → browser default
+ *
+ * Ducking orchestration is unchanged: duckNow() on speech start,
+ * releaseDuck() on speech end (whether captured-blob path or fallback
+ * path). Always exactly one onStart / onEnd pair per call.
  */
 function speakDrillName(name) {
   if (!name) return
   if (typeof window === 'undefined' || !window.speechSynthesis) return
 
   const text = `Next up. ${name}.`
-  console.log('[TTS] 3s elapsed, calling speak() with:', text)
+  console.log('[TTS] 3s elapsed, calling speakViaAudio() with:', text)
   console.log('[TTS] synth state — speaking:', window.speechSynthesis.speaking,
     'pending:', window.speechSynthesis.pending,
     'paused:', window.speechSynthesis.paused)
 
-  // Step 1: resume then cancel — iOS sometimes suspends the synth between uses
-  window.speechSynthesis.resume()
-  window.speechSynthesis.cancel()
+  // iOS quirk: resume in case the synth got suspended between uses
+  try { window.speechSynthesis.resume() } catch {}
 
-  // Step 2: build utterance and hold a module-level reference (prevents GC on iOS)
-  const utterance  = new SpeechSynthesisUtterance(text)
-  utterance.rate   = 0.95   // slightly slower — authoritative, easier to hear at distance
-  utterance.pitch  = 0.9    // slightly lower — sounds more masculine on most voices
-  utterance.volume = 1.0
+  const voice = _getEnglishVoice() // may be null — that's fine, helper passes null through
 
-  const voice = _getEnglishVoice()
-  if (voice) utterance.voice = voice
-
-  // Fresh duck for the utterance — independent of the horn duck
-  utterance.onstart = () => {
-    console.log('[TTS] utterance.onstart fired')
-    try { duckNow() } catch (e) { console.warn('[TTS] duckNow error:', e) }
-  }
-  utterance.onend = () => {
-    console.log('[TTS] utterance.onend fired')
+  // Hold the in-flight promise on the module-level ref so the captured
+  // <audio> element (or fallback utterance, depending on path) isn't
+  // GC'd mid-playback on iOS. Same protective intent as the previous
+  // _currentUtterance ref.
+  const promise = speakViaAudio(text, {
+    rate:   0.95,
+    pitch:  0.9,
+    volume: 1.0,
+    voice,
+    onStart: () => {
+      console.log('[TTS] speech started')
+      try { duckNow() } catch (e) { console.warn('[TTS] duckNow error:', e) }
+    },
+    onEnd: () => {
+      console.log('[TTS] speech ended')
+      _currentUtterance = null
+      try { releaseDuck() } catch (e) { console.warn('[TTS] releaseDuck error:', e) }
+    },
+  })
+  // Repurpose the GC-protection slot to hold the in-flight promise. Same
+  // role as before — keeps a strong reference until completion.
+  _currentUtterance = promise
+  promise.catch(err => {
+    // speakViaAudio() is designed never to reject, but defend against it
+    // anyway so a rogue rejection doesn't leave the music ducked forever.
+    console.error('[TTS] speakViaAudio rejected (should not happen):', err)
     _currentUtterance = null
-    try { releaseDuck() } catch (e) { console.warn('[TTS] releaseDuck error:', e) }
-  }
-  utterance.onerror = (e) => {
-    console.log('[TTS] utterance.onerror fired:', e?.error ?? e)
-    _currentUtterance = null
-    try { releaseDuck() } catch (err) { console.warn('[TTS] releaseDuck error:', err) }
-  }
-
-  _currentUtterance = utterance
-
-  // Step 3: tiny delay after cancel() so iOS actually clears the queue
-  setTimeout(() => { window.speechSynthesis.speak(utterance) }, 50)
+    try { releaseDuck() } catch {}
+  })
 }
 
 /**
