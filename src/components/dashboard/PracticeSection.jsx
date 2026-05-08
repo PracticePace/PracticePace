@@ -461,7 +461,13 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
           backgroundImage:    backgroundUrl ? `url(${backgroundUrl})` : undefined,
           backgroundSize:     'cover',
           backgroundPosition: 'center',
-          paddingBottom:      64,
+          // Reserve enough room at the bottom that the inner content
+          // (esp. "Next Up / drill / mm:ss") never collides with the
+          // peek handle below. Reservation = handle bottom-offset
+          // (32 CSS px to clear the 68 px tab bar with breathing) +
+          // handle strip height (44) + breathing room (10) +
+          // safe-area-inset on iPads/iPhones with a home indicator.
+          paddingBottom:      'calc(env(safe-area-inset-bottom, 0px) + 86px)',
         }}
       >
       {backgroundUrl && (
@@ -688,12 +694,15 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     <div
       className="absolute left-0 right-0 z-20"
       style={{
-        // 10 px breathing room above the bottom tab bar so the handle
-        // doesn't visually crowd the Practice/Scripts/Scoreboard/Video/
-        // Music/Settings/Playbook nav. Open and closed states both float
-        // 10 px above PracticeSection's bottom edge — open state's
-        // controls strip likewise sits 10 px above the nav.
-        bottom:        10,
+        // Bottom offset = breathing-gap above the tab bar (32 CSS px) +
+        // env(safe-area-inset-bottom) for iPads/iPhones with home
+        // indicator. The previous 10 px gap was too small on iPads in
+        // PWA mode — confirmed via the b327360 magenta-strip diagnostic
+        // which showed the handle's lower ~20 px clipped behind the
+        // 68 px Dashboard nav. The Dashboard <nav> at fixed bottom-0
+        // doesn't add safe-area padding itself, so we have to clear it
+        // here on the panel side.
+        bottom:        'calc(env(safe-area-inset-bottom, 0px) + 32px)',
         // CSS var: how far to slide down so only the handle peeks out.
         // Matches the controls strip height (estimated 132px — two stacked
         // rows of ~44 + ~28 + py-2 padding). The 44px peek handle stays
@@ -705,9 +714,6 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
         // Drop shadow above the panel when open so it visually separates
         // from the display zone behind it.
         boxShadow:     panelOpen ? '0 -10px 30px rgba(0,0,0,0.5)' : 'none',
-        // iOS PWA safe-area: defensive padding so the home-indicator zone
-        // gets the panel's background color if the tab bar ever shifts.
-        paddingBottom: 'env(safe-area-inset-bottom)',
       }}
       onPointerDown={pokePanel}
       onWheel={pokePanel}
@@ -721,11 +727,14 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
           Display zone above reserves 64 px of bottom padding so the
           "Next Up / drill / mm:ss" content never collides with this
           strip. */}
-      {/* [DEBUG] High-contrast diagnostic styling — magenta strip with a
-          1 px lime border, pure-white opaque pill, white opaque label.
-          Intentionally ugly. The goal is a yes/no answer to "is this
-          element actually rendering on iPad?". Once we confirm
-          rendering, we'll revert to the subtle production styling. */}
+      {/* PEEK HANDLE — full-width tap target on its own dedicated row,
+          44 px tall (Apple HIG minimum touch target). Single horizontal
+          row centered as a unit:
+            [ Grabber pill (64×6 fully rounded, ~70% white) ] [ 10 px gap ]
+            [ "CONTROLS" label (uppercase, ~70% white, 1 px letter-space) ]
+          The display zone above reserves 86 px + safe-area-inset of
+          bottom padding so the "Next Up / drill / mm:ss" content never
+          collides with this strip. */}
       <button
         ref={stripRef}
         type="button"
@@ -734,46 +743,63 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
         aria-expanded={panelOpen}
         className="w-full flex flex-row items-center justify-center select-none relative"
         style={{
-          // [DEBUG] 56 px tall with bright magenta background + 1 px
-          // lime border so the strip's bounds are unmistakable.
-          height:          56,
-          gap:             12,
-          backgroundColor: '#FF00FF',
-          border:          '1px solid #00FF00',
+          height:          44,
+          gap:             10,
+          // Gradient fades the panel chrome into the display zone — dark
+          // at the bottom, semi-transparent at the top — so the handle
+          // reads as "the bottom of the screen" rather than a hard band.
+          // When the panel is open the gradient flips to a solid #080000
+          // so it visually joins the controls strip below.
+          background:      panelOpen
+            ? '#080000'
+            : `linear-gradient(to top, rgba(8,0,0,0.96) 0%, rgba(8,0,0,0.78) 60%, rgba(8,0,0,0.45) 100%)`,
+          borderTop:       panelOpen
+            ? '1px solid #1a0000'
+            : `1px solid ${orgColor}44`,
           cursor:          'pointer',
         }}
       >
-        {/* [DEBUG] Pill: 100×10 pure white opaque, fully rounded. The
-            scale-pulse animation is preserved so we can verify both
-            visibility AND that the animation is firing. */}
+        {/* Grabber pill — universal iOS-sheet handle. 64×6 fully rounded,
+            ~70% white. Scale-pulses 1.0 → 1.15 → 1.0 over 1.5 s while the
+            first-use hint is active; halts permanently on first tap (or
+            after the 8 s fallback). */}
         <span
           style={{
-            width:           100,
-            height:          10,
+            width:           64,
+            height:          6,
             borderRadius:    9999,
-            backgroundColor: '#FFFFFF',
+            backgroundColor: 'rgba(255,255,255,0.7)',
+            boxShadow:       (showHandlePulse && !panelOpen)
+              ? `0 0 12px ${orgColor}cc, 0 0 4px rgba(255,255,255,0.6)`
+              : '0 1px 2px rgba(0,0,0,0.6)',
             animation:       (showHandlePulse && !panelOpen)
               ? 'pp-handle-pill-pulse 1.5s ease-in-out infinite'
               : 'none',
             transformOrigin: 'center',
+            transition:      'box-shadow 200ms',
           }}
         />
 
-        {/* [DEBUG] CONTROLS label — UNCONDITIONALLY rendered (no
-            !panelOpen guard) so we can confirm it's in the DOM
-            regardless of state. White, 16 px, bold, fully opaque. */}
-        <span
-          style={{
-            fontSize:      16,
-            lineHeight:    1,
-            fontWeight:    700,
-            letterSpacing: '1px',
-            textTransform: 'uppercase',
-            color:         '#FFFFFF',
-          }}
-        >
-          Controls
-        </span>
+        {/* CONTROLS label — sits to the RIGHT of the pill, vertically
+            centered with it on the same horizontal line (NOT above, NOT
+            below). Only shown when the panel is closed; redundant noise
+            once the controls strip itself is visible. */}
+        {!panelOpen && (
+          <span
+            aria-hidden="true"
+            style={{
+              fontSize:      12,
+              lineHeight:    1,
+              fontWeight:    700,
+              letterSpacing: '1px',
+              textTransform: 'uppercase',
+              color:         'rgba(255,255,255,0.7)',
+              textShadow:    '0 1px 2px rgba(0,0,0,0.7)',
+            }}
+          >
+            Controls
+          </span>
+        )}
       </button>
 
       {/* CONTROLS STRIP ─ original content, now the body of the slide panel.
