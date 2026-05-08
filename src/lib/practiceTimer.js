@@ -6,8 +6,7 @@
 // Pattern matches audioPlayer.js: subscribe(fn) / getSnapshot() / actions.
 
 import { playAirHorn, playBell, playPeriodEnd, loadHorn, getAutoSounds, setAutoSound } from './sounds'
-import { duckForHorn, duckNow, releaseDuck } from './audioPlayer'
-import { speakViaAudio } from './ttsViaAudio'
+import { duckForHorn } from './audioPlayer'
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = 'pp_practice_timer'
@@ -20,184 +19,11 @@ function savePrefs(patch) {
   try { localStorage.setItem(PREFS_KEY, JSON.stringify({ ...loadPrefs(), ...patch })) } catch {}
 }
 
-// ── Text-to-speech ────────────────────────────────────────────────────────────
-// Voice is resolved once and cached.  On some browsers (Firefox, iOS Safari)
-// the voices list is empty until the 'voiceschanged' event fires.
-//
-// iOS Safari reliability fixes applied:
-//   • Re-resolve voice at speak-time if cache is still null (race at startup)
-//   • Both synchronous getVoices() AND onvoiceschanged listener registered
-//   • cancel() + 50 ms pause before speak() to clear stuck synth queue
-//   • Utterance held in module-level var to prevent GC mid-speech
-//   • Duck/restore calls wrapped in try/catch inside utterance handlers
-
-let _cachedVoice             = undefined   // undefined = unresolved, null = use browser default
-let _voicesChangedRegistered = false
-let _pendingSpeechTimer      = null        // setTimeout id for the 3-second announcement delay
-let _currentUtterance        = null        // held in module scope — prevents GC on iOS Safari
-let _speechUnlocked          = false       // iOS requires a gesture-context speak() before async calls work
-
-// Voice priority: Daniel (iOS/macOS male) → Alex (macOS male) →
-//   any voice with "male" in name → any English → browser default
-function _resolveVoice(voices) {
-  return voices.find(v => v.name?.includes('Daniel') && v.lang?.startsWith('en'))
-    ?? voices.find(v => v.name?.includes('Alex')     && v.lang?.startsWith('en'))
-    ?? voices.find(v => /male/i.test(v.name)          && v.lang?.startsWith('en'))
-    ?? voices.find(v => v.lang?.startsWith('en'))
-    ?? null
-}
-
-function _initVoices() {
-  if (typeof window === 'undefined' || !window.speechSynthesis) return
-
-  // Try synchronously first (Chromium, and sometimes iOS after first load)
-  const voices = window.speechSynthesis.getVoices()
-  if (voices.length > 0) {
-    _cachedVoice = _resolveVoice(voices)
-    console.log('[TTS] selected voice:', _cachedVoice?.name ?? '(browser default)')
-    return
-  }
-
-  // Also register onvoiceschanged — some browsers only fire the event, not sync
-  if (!_voicesChangedRegistered) {
-    _voicesChangedRegistered = true
-    window.speechSynthesis.onvoiceschanged = () => {
-      const v = window.speechSynthesis.getVoices()
-      console.log('[TTS] voiceschanged fired,', v.length, 'voices available')
-      _cachedVoice = _resolveVoice(v)
-      console.log('[TTS] selected voice:', _cachedVoice?.name ?? '(browser default)')
-      window.speechSynthesis.onvoiceschanged = null
-    }
-  }
-}
-
-// Kick off voice resolution at module load
-_initVoices()
-
-function _getEnglishVoice() {
-  // If still undefined, try once more synchronously (voices may have loaded
-  // since module init without firing onvoiceschanged, e.g. on iOS after unlock)
-  if (_cachedVoice === undefined) {
-    const voices = window.speechSynthesis?.getVoices() ?? []
-    if (voices.length > 0) {
-      _cachedVoice = _resolveVoice(voices)
-      console.log('[TTS] selected voice (late resolve):', _cachedVoice?.name ?? '(browser default)')
-    } else {
-      // Still not ready — fall back to null (browser picks default)
-      return null
-    }
-  }
-  return _cachedVoice   // may be null — that's fine, means browser default
-}
-
-/**
- * Speak the announcement immediately.
- * The music duck is a fresh independent duck — by the time this runs
- * (3 s after the horn), the horn's 3-second duck has just about restored.
- *
- * Delegates to speakViaAudio() which attempts to capture the synthesized
- * speech into an audio buffer and play it through an HTMLAudioElement
- * (so iOS Safari routes it through AirPlay — see ttsViaAudio.js for the
- * full theory and caveats). On any failure, speakViaAudio() falls back
- * to a regular window.speechSynthesis.speak() so this announcement
- * always plays — even if it remains stuck on the local iPad speaker.
- *
- * Voice / rate / pitch / volume preserved exactly from the prior direct-
- * speechSynthesis path:
- *   text  = "Next up. ${name}."
- *   rate  = 0.95   (slightly slower — authoritative, easier at distance)
- *   pitch = 0.9    (slightly lower — sounds more masculine)
- *   volume= 1.0
- *   voice = Daniel → Alex → male/en → en → browser default
- *
- * Ducking orchestration is unchanged: duckNow() on speech start,
- * releaseDuck() on speech end (whether captured-blob path or fallback
- * path). Always exactly one onStart / onEnd pair per call.
- */
-function speakDrillName(name) {
-  if (!name) return
-  if (typeof window === 'undefined' || !window.speechSynthesis) return
-
-  const text = `Next up. ${name}.`
-  console.log('[TTS] 3s elapsed, calling speakViaAudio() with:', text)
-  console.log('[TTS] synth state — speaking:', window.speechSynthesis.speaking,
-    'pending:', window.speechSynthesis.pending,
-    'paused:', window.speechSynthesis.paused)
-
-  // iOS quirk: resume in case the synth got suspended between uses
-  try { window.speechSynthesis.resume() } catch {}
-
-  const voice = _getEnglishVoice() // may be null — that's fine, helper passes null through
-
-  // Hold the in-flight promise on the module-level ref so the captured
-  // <audio> element (or fallback utterance, depending on path) isn't
-  // GC'd mid-playback on iOS. Same protective intent as the previous
-  // _currentUtterance ref.
-  const promise = speakViaAudio(text, {
-    rate:   0.95,
-    pitch:  0.9,
-    volume: 1.0,
-    voice,
-    onStart: () => {
-      console.log('[TTS] speech started')
-      try { duckNow() } catch (e) { console.warn('[TTS] duckNow error:', e) }
-    },
-    onEnd: () => {
-      console.log('[TTS] speech ended')
-      _currentUtterance = null
-      try { releaseDuck() } catch (e) { console.warn('[TTS] releaseDuck error:', e) }
-    },
-  })
-  // Repurpose the GC-protection slot to hold the in-flight promise. Same
-  // role as before — keeps a strong reference until completion.
-  _currentUtterance = promise
-  promise.catch(err => {
-    // speakViaAudio() is designed never to reject, but defend against it
-    // anyway so a rogue rejection doesn't leave the music ducked forever.
-    console.error('[TTS] speakViaAudio rejected (should not happen):', err)
-    _currentUtterance = null
-    try { releaseDuck() } catch {}
-  })
-}
-
-/**
- * Cancel any pending announcement and schedule a new one 3 s from now.
- * Storing the timer id lets us cancel if the coach manually advances,
- * resets, or pauses before the announcement fires.
- */
-function _scheduleSpeech(name) {
-  if (_pendingSpeechTimer) { clearTimeout(_pendingSpeechTimer); _pendingSpeechTimer = null }
-  console.log('[TTS] drill ended, scheduling announcement in 3s for:', name)
-  _pendingSpeechTimer = setTimeout(() => {
-    _pendingSpeechTimer = null
-    speakDrillName(name)
-  }, 3000)
-}
-
-/** Cancel any pending announcement (no-op if none is pending). */
-function _cancelSpeech() {
-  if (_pendingSpeechTimer) {
-    console.log('[TTS] cancelling pending announcement (manual next or stop)')
-    clearTimeout(_pendingSpeechTimer)
-    _pendingSpeechTimer = null
-  }
-}
-
-/**
- * iOS Safari requires speechSynthesis.speak() to be called synchronously
- * inside a user-gesture handler at least once before async calls (setTimeout)
- * will work.  Call this from every button handler that could lead to speech.
- * The silent utterance grants permission without making a sound.
- */
-function _unlockSpeech() {
-  if (_speechUnlocked) return
-  if (typeof window === 'undefined' || !window.speechSynthesis) return
-  _speechUnlocked = true
-  const u = new SpeechSynthesisUtterance('')
-  u.volume = 0
-  window.speechSynthesis.speak(u)
-  console.log('[TTS] speechSynthesis unlocked via user gesture')
-}
+// (Drill-announcement TTS removed: iOS Safari can't AirPlay
+// speechSynthesis to a mirrored Apple TV, and practices are always
+// run mirrored, so the announcement only played on the iPad — not
+// useful. Visual cues — drill name, "Next Up", timer — still convey
+// drill transitions on the screen.)
 
 // Also pull from getAutoSounds() so horn/whistle toggles stay in sync with
 // the Audio tab's sound settings (they use the same underlying key).
@@ -397,10 +223,6 @@ function tick() {
         s.totalSeconds    = dur
         s.isOverrun       = false
         s.overrunSeconds  = 0
-        // Speak the next drill name 200 ms after the horn fires so the two
-        // don't overlap audibly.  Music stays ducked until speech finishes.
-        const nextName = drills[nxt].name
-        _scheduleSpeech(nextName)
         emit()
         return
       }
@@ -433,21 +255,18 @@ function tick() {
 /** Toggle play / pause. */
 export function startPause() {
   loadHorn()         // preload audio on first interaction
-  _unlockSpeech()    // grant iOS permission for later async speak() calls
   s.isRunning  = !s.isRunning
   s.hasStarted = true
   if (s.isRunning) {
     startInterval()
   } else {
     stopInterval()
-    _cancelSpeech()   // cancel pending announcement if paused
   }
   emit()
 }
 
 /** Reset to beginning of current script (or manual duration). */
 export function reset() {
-  _cancelSpeech()
   stopInterval()
   s.isRunning       = false
   s.hasStarted      = false
@@ -464,7 +283,6 @@ export function reset() {
 export function jumpTo(i) {
   const drills = s.activeScript?.drills ?? []
   if (i < 0 || i >= drills.length) return
-  _cancelSpeech()
   stopInterval()
   s.isRunning       = false
   s.isOverrun       = false
@@ -482,7 +300,6 @@ export function jumpTo(i) {
  * starts without requiring another press of Start.
  */
 export function next() {
-  _unlockSpeech()            // grant iOS permission for the upcoming async speak()
   duckForHorn(playAirHorn)   // horn fires immediately
 
   const drills = s.activeScript?.drills ?? []
@@ -497,13 +314,9 @@ export function next() {
     s.totalSeconds = dur
     s.isRunning    = true    // ← auto-start
     s.hasStarted   = true
-    // Speak the next drill name 200 ms after the horn fires.
-    // Music stays ducked until speech finishes (same as auto-advance).
-    const nextName = drills[nxt].name
-    _scheduleSpeech(nextName)
     startInterval()
   } else {
-    // Already at last drill — no speech, just stop
+    // Already at last drill — just stop
     stopInterval()
     s.isRunning = false
   }

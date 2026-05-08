@@ -237,7 +237,11 @@ export function setPlaylist(songs) {
   emit('state', getSnapshot())
 }
 
-// ── Volume ducking (air horn + speech chaining) ───────────────────────────────
+// ── Volume ducking (air horn) ─────────────────────────────────────────────────
+// Lowers the music to 20% while the horn fires, then auto-restores 3 s
+// later. Previously this also coordinated with the drill-announcement TTS
+// (holdDuck / releaseDuck / duckNow exports) — that feature was removed
+// because iOS Safari couldn't AirPlay the speech to a mirrored Apple TV.
 let duckTimer  = null   // pending auto-restore setTimeout id
 let duckedFrom = null   // volume% to restore to; null = not currently ducked
 
@@ -262,41 +266,9 @@ export async function duckForHorn(hornFn) {
   try { await hornFn() } catch {}
 
   if (shouldDuck) {
-    // Schedule auto-restore; speakDrillName will cancel this via holdDuck()
-    // and take over restoration via releaseDuck() when speech ends.
+    // Auto-restore 3 s after the horn fires.
     duckTimer = setTimeout(() => { duckTimer = null; doRestore() }, 3000)
   }
-}
-
-/**
- * Cancel the pending auto-restore timer so the duck stays open.
- * Called by speakDrillName() on utterance.onstart — prevents the horn's
- * 3-second timer from popping music back up mid-sentence.
- */
-export function holdDuck() {
-  if (duckTimer) { clearTimeout(duckTimer); duckTimer = null }
-}
-
-/**
- * Restore music volume immediately.
- * Called by speakDrillName() on utterance.onend / utterance.onerror.
- */
-export function releaseDuck() {
-  if (duckTimer) { clearTimeout(duckTimer); duckTimer = null }
-  doRestore()
-}
-
-/**
- * Start a fresh duck right now.
- * Called on utterance.onstart when the speech fires 10 s after the horn —
- * the horn's 3-second duck will have long since restored, so we need a
- * brand-new duck rather than extending an existing one.
- */
-export function duckNow() {
-  if (!isPlaying || volume <= 25) return
-  if (duckTimer) { clearTimeout(duckTimer); duckTimer = null }
-  duckedFrom = volume
-  if (audio) audio.volume = 0   // silence music completely during speech announcement
 }
 
 // ── Stop & reset ──────────────────────────────────────────────────────────────
