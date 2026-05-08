@@ -5,7 +5,7 @@
 //
 // Pattern matches audioPlayer.js: subscribe(fn) / getSnapshot() / actions.
 
-import { playAirHorn, playBell, playPeriodEnd, loadHorn, getAutoSounds, setAutoSound } from './sounds'
+import { playAirHorn, playBell, playPeriodEnd, loadHorn, loadBell, getAutoSounds, setAutoSound } from './sounds'
 import { duckForHorn } from './audioPlayer'
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
@@ -255,6 +255,7 @@ function tick() {
 /** Toggle play / pause. */
 export function startPause() {
   loadHorn()         // preload audio on first interaction
+  loadBell()         // bell now plays from /audio/bell.mp3 — preload too
   s.isRunning  = !s.isRunning
   s.hasStarted = true
   if (s.isRunning) {

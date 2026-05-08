@@ -3,6 +3,7 @@
 
 let _ctx = null
 let _hornBuffer = null
+let _bellBuffer = null
 
 export function getCtx() {
   if (!_ctx) _ctx = new (window.AudioContext || window.webkitAudioContext)()
@@ -41,40 +42,39 @@ export async function playAirHorn() {
   } catch (e) { /* ignore */ }
 }
 
-// ── Bell (synthesized) ────────────────────────────────────────────────────────
-// Single-strike attention bell — clean ringing tone with inharmonic partials
-// for that "ding" timbre, exponential decay over ~1.5 s. Used as the 0:30
-// drill-end warning (replaces the old 1:00 whistle). Loud enough to cut
-// through typical practice ambient noise.
+// ── Bell (MP3 file) ───────────────────────────────────────────────────────────
+// Boxing-style opening-bell sample at /audio/bell.mp3. Used as the 0:30
+// drill-end warning (replaces the old 1:00 whistle). Mirrors the
+// loadHorn / playAirHorn pattern — fetch + decode once, cache the
+// AudioBuffer, then play through a fresh BufferSourceNode each time.
+// Previous implementation synthesized the bell via inharmonic
+// oscillator partials; coaches preferred the warmer real recording.
+export async function loadBell() {
+  try {
+    const ctx = await resumeCtx()
+    if (_bellBuffer) return
+    const res = await fetch('/audio/bell.mp3')
+    const ab  = await res.arrayBuffer()
+    _bellBuffer = await ctx.decodeAudioData(ab)
+  } catch (e) { /* ignore */ }
+}
+
 export async function playBell() {
   try {
-    const ctx  = await resumeCtx()
-    const t0   = ctx.currentTime
-    const dur  = 1.6
-    // Inharmonic partials for bell-like timbre. Fundamental ~880 Hz (A5)
-    // sits in the most attention-grabbing range without being shrill.
-    const fundamental = 880
-    const partials = [
-      { ratio: 1.0,  gain: 1.0,  decay: 1.4 },  // strike fundamental
-      { ratio: 2.0,  gain: 0.55, decay: 1.2 },
-      { ratio: 2.76, gain: 0.40, decay: 0.9 },  // inharmonic — bell signature
-      { ratio: 4.07, gain: 0.25, decay: 0.7 },
-      { ratio: 5.42, gain: 0.18, decay: 0.5 },
-    ]
-    partials.forEach(({ ratio, gain: g, decay }) => {
-      const osc  = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.type = 'sine'
-      osc.frequency.setValueAtTime(fundamental * ratio, t0)
-      // Sharp attack, exponential decay — characteristic struck-bell envelope.
-      gain.gain.setValueAtTime(0.0001, t0)
-      gain.gain.exponentialRampToValueAtTime(2.4 * g, t0 + 0.005)
-      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + decay)
-      osc.connect(gain)
-      gain.connect(ctx.destination)
-      osc.start(t0)
-      osc.stop(t0 + dur)
-    })
+    const ctx = await resumeCtx()
+    if (!_bellBuffer) { await loadBell() }
+    if (!_bellBuffer) return
+    const src  = ctx.createBufferSource()
+    const gain = ctx.createGain()
+    // 2.4× matches the previous synthesized bell's peak loudness so the
+    // toggle behaviour is unchanged for coaches who already had it on.
+    // Lower than the air horn's 4.0× because the bell is just a warning
+    // cue, not the end-of-period blast.
+    gain.gain.value = 2.4
+    src.buffer = _bellBuffer
+    src.connect(gain)
+    gain.connect(ctx.destination)
+    src.start(0)
   } catch (e) { /* ignore */ }
 }
 
