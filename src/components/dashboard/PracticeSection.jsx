@@ -4,7 +4,7 @@ import {
   startPause, reset, jumpTo, next,
   setTimeTo, addMinute, subtractMinute,
   setActiveScript,
-  setAutoAdvance, setAllowOverrun, setHornOnEnd, setWhistleAt60,
+  setAutoAdvance, setAllowOverrun, setHornOnEnd, setBellAt30,
 } from '../../lib/practiceTimer'
 import {
   subscribe as subscribeAudio,
@@ -219,7 +219,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     secondsLeft, totalSeconds,
     currentDrillIdx,
     isOverrun, overrunSeconds,
-    autoAdvance, allowOverrun, hornOnEnd, whistleAt60,
+    autoAdvance, allowOverrun, hornOnEnd, bellAt30,
   } = snap
   // Normalize drill shape defensively: legacy seeded scripts (and any drill
   // that pre-dates the per-drill notes / cue features) may only carry
@@ -315,6 +315,57 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     })
   }, [hasStarted, currentDrillIdx, drills])
 
+  // ── Stage-mode controls panel (peek-handle slide-up) ──────────────────────
+  // Default behavior: control panel is HIDDEN to maximize timer / drill-name
+  // readability across the field/gym. A small grab-bar peeks at the bottom
+  // edge — tap it (or drag up) to slide the panel up over the bottom of the
+  // display zone. Auto-hide after 5 s of no panel interaction. Tap outside
+  // the panel to close immediately.
+  //
+  // The panel itself is absolutely positioned at the bottom of the practice
+  // section so it overlays the display zone when open. The display zone
+  // stays full-height (flex-1) at all times — when the panel is closed the
+  // display is unobstructed; when the panel is open it slides over the
+  // bottom slice. We bump clock + drill-name font sizes when the panel is
+  // closed because the clamp()-based sizes don't grow when the container
+  // gets taller (clamp is viewport-relative, not container-relative).
+  const [panelOpen, setPanelOpen] = useState(false)
+  const hideTimerRef = useRef(null)
+
+  function clearHideTimer() {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current)
+      hideTimerRef.current = null
+    }
+  }
+  function armHideTimer() {
+    clearHideTimer()
+    hideTimerRef.current = setTimeout(() => {
+      hideTimerRef.current = null
+      setPanelOpen(false)
+    }, 5000)
+  }
+  function openPanel() {
+    setPanelOpen(true)
+    armHideTimer()
+  }
+  function closePanel() {
+    clearHideTimer()
+    setPanelOpen(false)
+  }
+  function togglePanel() {
+    if (panelOpen) closePanel()
+    else openPanel()
+  }
+  // Any pointer/wheel/key event inside the panel resets the auto-hide clock.
+  // Covers button taps, scrolls, drag-gestures, key presses — anything that
+  // signals the operator is mid-interaction.
+  function pokePanel() {
+    if (panelOpen) armHideTimer()
+  }
+  // Cleanup on unmount so a stale timer doesn't fire after navigation.
+  useEffect(() => () => clearHideTimer(), [])
+
   // (Display-value destructure for `snap` and `drills` lives above the cue
   // orchestration effects so their dep arrays can read those names without
   // hitting the temporal dead zone in production builds. The remaining
@@ -329,18 +380,23 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
   const clockDisplay = isOverrun ? `+${fmt(overrunSeconds)}` : fmt(secondsLeft)
 
   // ── Render ──────────────────────────────────────────────────────────────────
-  // Two-zone layout (display zone above, controls strip below) so coaches can
-  // crop the display zone for ProPresenter / AirPlay while keeping the operator
-  // controls private on the iPad. Hard horizontal edge between the two zones,
-  // no gradient, no fade.
+  // Stage-mode layout. The DISPLAY ZONE fills the entire practice section so
+  // the timer + drill names read across the field/gym. The CONTROLS PANEL is
+  // absolutely positioned at the bottom and slides up/down over the display
+  // zone via a CSS transform on a peek-handle tap. Auto-hides after 5 s.
+  // Tapping the display zone while the panel is open closes the panel.
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden relative">
 
       {/* ── DISPLAY ZONE ────────────────────────────────────────────────────
-          Background image lives here only. Stops cleanly at the controls
-          strip below. */}
+          Background image lives here. Now fills the whole practice section;
+          the controls panel slides up OVER the bottom slice when opened.
+          Tap-to-close handler is here so any tap on the display closes an
+          open panel — period dot taps still bubble through and fire jumpTo
+          first via React's normal event order. */}
       <div
         className="relative flex-1 flex flex-col overflow-hidden"
+        onClick={panelOpen ? closePanel : undefined}
         style={{
           backgroundImage:    backgroundUrl ? `url(${backgroundUrl})` : undefined,
           backgroundSize:     'cover',
@@ -401,10 +457,16 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
                 className="text-center leading-none tracking-wide"
                 style={{
                   fontFamily: "'Bebas Neue', sans-serif",
-                  fontSize:   'clamp(2.8rem, 6.5vw, 5rem)',
+                  // Stage-mode bump: when the controls panel is hidden, drill
+                  // name reads from across the room. clamp() is viewport-
+                  // relative so we explicitly enlarge it here.
+                  fontSize:   panelOpen
+                    ? 'clamp(2.8rem, 6.5vw, 5rem)'
+                    : 'clamp(3.5rem, 8.5vw, 6.5rem)',
                   color:      '#ffffff',
                   letterSpacing: '0.04em',
                   textShadow: '0 2px 24px rgba(0,0,0,0.8)',
+                  transition: 'font-size 220ms ease-out',
                 }}
               >
                 {currentDrill.name}
@@ -455,10 +517,15 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
           <span
             className="font-mono font-black leading-none select-none"
             style={{
-              fontSize:           'clamp(5.5rem, 20vw, 13rem)',
+              // Stage-mode bump: when the panel is hidden, the clock fills
+              // the freed vertical real estate so it reads from the back of
+              // a gym. The smaller size mirrors the pre-stage-mode default.
+              fontSize:           panelOpen
+                ? 'clamp(5.5rem, 20vw, 13rem)'
+                : 'clamp(7rem, 26vw, 17rem)',
               color,
               textShadow:         `0 0 100px ${color}88`,
-              transition:         'color 0.6s, text-shadow 0.6s',
+              transition:         'color 0.6s, text-shadow 0.6s, font-size 220ms ease-out',
               fontVariantNumeric: 'tabular-nums',
             }}
           >
@@ -534,15 +601,72 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     </div>
     {/* ─ end DISPLAY ZONE ─ */}
 
-    {/* ── CONTROLS STRIP ────────────────────────────────────────────────────
-        Lives just above the bottom tab bar. Solid #080000, no background
-        image, hard 1px top edge — so coaches can crop the display zone above
-        for ProPresenter / AirPlay and keep these controls private on iPad.
+    {/* ── CONTROLS PANEL (stage-mode slide-up) ──────────────────────────────
+        Absolutely positioned at the bottom of the practice section. The
+        panel = peek handle (always visible, ~22px tall) + controls strip
+        (the rest). When closed we translateY by the controls strip's
+        height, leaving only the peek handle showing at the bottom edge.
+        When open the whole panel slides into view.
 
-        One horizontal band with three regions, all vertically centered:
-          [ MusicMiniControls ]  [ transport + toggle (stacked) ]  [ Crowd ]   */}
+        The peek handle is the tap target for toggling. Pointer-down events
+        anywhere in the panel reset the auto-hide timer, so a coach
+        actively pressing buttons / toggling preferences keeps the panel
+        open. */}
     <div
-      className="shrink-0 flex items-center justify-between gap-3 px-4 py-2"
+      className="absolute left-0 right-0 bottom-0 z-20"
+      style={{
+        // CSS var: how far to slide down so only the handle peeks out.
+        // Matches the controls strip height (estimated 132px — two stacked
+        // rows of ~44 + ~28 + py-2 padding). Tweakable without breaking
+        // the open state because the open state translates to 0.
+        '--ctrls-h':  '132px',
+        transform:    panelOpen ? 'translateY(0)' : 'translateY(var(--ctrls-h))',
+        transition:   'transform 240ms ease-out',
+        // Soft drop shadow above the panel when open so it visually
+        // separates from the display zone behind it.
+        boxShadow:    panelOpen ? '0 -10px 30px rgba(0,0,0,0.5)' : 'none',
+      }}
+      onPointerDown={pokePanel}
+      onWheel={pokePanel}
+      onKeyDown={pokePanel}
+    >
+      {/* PEEK HANDLE — always visible. Tap to toggle the panel. */}
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); togglePanel() }}
+        aria-label={panelOpen ? 'Hide controls' : 'Show controls'}
+        aria-expanded={panelOpen}
+        className="w-full flex items-center justify-center gap-1.5 select-none"
+        style={{
+          height:          22,
+          backgroundColor: '#080000',
+          borderTop:       '1px solid #1a0000',
+          cursor:          'pointer',
+          // Larger hit-target than the visible bar via a small invisible
+          // padding zone above it would be ideal, but we're constrained by
+          // overflow and absolute positioning. 22px tall + full width is
+          // already a generous tap target.
+        }}
+      >
+        <span
+          // iOS-sheet-style grabber: short pill, slightly transparent in
+          // the org color so it reads as "interactive" without screaming.
+          style={{
+            width:           42,
+            height:          5,
+            borderRadius:    3,
+            backgroundColor: panelOpen ? `${orgColor}aa` : `${orgColor}66`,
+            transition:      'background-color 200ms',
+          }}
+        />
+      </button>
+
+      {/* CONTROLS STRIP ─ original content, now the body of the slide panel.
+          Solid #080000 background and hard top edge same as before, so
+          coaches can still crop the display zone above for ProPresenter /
+          AirPlay when the panel is open. */}
+    <div
+      className="flex items-center justify-between gap-3 px-4 py-2"
       style={{ backgroundColor: '#080000', borderTop: '1px solid #1a0000' }}
     >
 
@@ -669,10 +793,10 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
             onClick={() => setHornOnEnd(!hornOnEnd)}
           />
           <ToggleBtn
-            label="Whistle 1:00"
-            active={whistleAt60}
+            label="Bell 0:30"
+            active={bellAt30}
             onColor={orgColor}
-            onClick={() => setWhistleAt60(!whistleAt60)}
+            onClick={() => setBellAt30(!bellAt30)}
           />
         </div>
 
@@ -684,6 +808,9 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
 
     </div>
     {/* ─ end CONTROLS STRIP ─ */}
+
+    </div>
+    {/* ─ end CONTROLS PANEL (slide wrapper) ─ */}
 
     </div>
   )

@@ -5,7 +5,7 @@
 //
 // Pattern matches audioPlayer.js: subscribe(fn) / getSnapshot() / actions.
 
-import { playAirHorn, playWhistle, playPeriodEnd, loadHorn, getAutoSounds, setAutoSound } from './sounds'
+import { playAirHorn, playBell, playPeriodEnd, loadHorn, getAutoSounds, setAutoSound } from './sounds'
 import { duckForHorn, duckNow, releaseDuck } from './audioPlayer'
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
@@ -199,7 +199,11 @@ let s = {
   autoAdvance:      savedPrefs.autoAdvance  ?? true,
   allowOverrun:     savedPrefs.allowOverrun ?? false,
   hornOnEnd:        savedAutoSounds.hornOnEnd    ?? true,
-  whistleAt60:      savedAutoSounds.whistleAt60  ?? true,
+  // bellAt30 replaced the legacy whistleAt60 trigger. Migration: if a coach
+  // previously toggled whistleAt60 off, carry that disabled state forward
+  // — the semantic ("alert near end of drill") is the same, only the sound
+  // and threshold changed. New installs default to true.
+  bellAt30:         savedAutoSounds.bellAt30 ?? savedAutoSounds.whistleAt60 ?? true,
 }
 
 // ── Restore persisted timer snapshot (handles page refresh) ───────────────────
@@ -349,10 +353,11 @@ function tick() {
     return
   }
 
-  // ── Whistle at 60s remaining ───────────────────────────────────────────────
-  // Check at 61 so the whistle fires as the display changes to 1:00
-  if (s.secondsLeft === 61 && s.whistleAt60) {
-    playWhistle()
+  // ── Bell at 30s remaining ──────────────────────────────────────────────────
+  // Check at 31 so the bell fires as the display changes to 0:30. Replaces
+  // the previous 1:00 whistle — coaches asked for a later, less-jarring cue.
+  if (s.secondsLeft === 31 && s.bellAt30) {
+    playBell()
   }
 
   // ── Time's up ─────────────────────────────────────────────────────────────
@@ -577,8 +582,8 @@ export function setHornOnEnd(val) {
   emit()
 }
 
-export function setWhistleAt60(val) {
-  s.whistleAt60 = val
-  setAutoSound('whistleAt60', val)
+export function setBellAt30(val) {
+  s.bellAt30 = val
+  setAutoSound('bellAt30', val)
   emit()
 }
