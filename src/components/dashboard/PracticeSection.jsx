@@ -390,12 +390,14 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     setShowHandlePulse(false)
     try { localStorage.setItem(HANDLE_SEEN_KEY, '1') } catch {}
   }
-  // Defensive timed fallback: kill the pulse after 5 s on every mount even
+  // Defensive timed fallback: kill the pulse after 8 s on every mount even
   // if the user never interacts. Guarantees the pulse is never permanent
   // (e.g. coach mounts the practice screen briefly while doing other work).
+  // 8 s is long enough that a coach glancing at the screen will catch the
+  // hint without being annoyed by indefinite motion.
   useEffect(() => {
     if (!showHandlePulse) return
-    const t = setTimeout(() => setShowHandlePulse(false), 5000)
+    const t = setTimeout(() => setShowHandlePulse(false), 8000)
     return () => clearTimeout(t)
   }, [showHandlePulse])
 
@@ -647,60 +649,70 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
         open. */}
 
     {/* Custom keyframes for the first-use pulse on the peek handle.
-        Tailwind's animate-pulse only modulates opacity; we want a glowing
-        halo + scale breath that reads as "tap me" across a field/gym. */}
+        We pulse the GRABBER PILL specifically (not the whole strip) with a
+        scale animation 1.0 → 1.15 → 1.0 — the universal sheet-handle
+        "breathing" cue users recognize from iOS modal sheets. The whole
+        strip gets a subtle border glow so the entire affordance reads. */}
     <style>{`
-      @keyframes pp-handle-breathe {
-        0%, 100% {
-          box-shadow: 0 -2px 0 0 ${orgColor}00, 0 0 0 0 ${orgColor}00;
-          transform: translateY(0);
-        }
-        50% {
-          box-shadow: 0 -2px 14px 2px ${orgColor}aa, 0 0 22px 4px ${orgColor}66;
-          transform: translateY(-1px);
-        }
+      @keyframes pp-handle-pill-pulse {
+        0%, 100% { transform: scale(1);    }
+        50%      { transform: scale(1.15); }
+      }
+      @keyframes pp-handle-strip-glow {
+        0%, 100% { border-top-color: ${orgColor}44; }
+        50%      { border-top-color: ${orgColor}cc; }
       }
     `}</style>
 
     <div
-      className="absolute left-0 right-0 bottom-0 z-20"
+      className="absolute left-0 right-0 z-20"
       style={{
+        // 10 px breathing room above the bottom tab bar so the handle
+        // doesn't visually crowd the Practice/Scripts/Scoreboard/Video/
+        // Music/Settings/Playbook nav. Open and closed states both float
+        // 10 px above PracticeSection's bottom edge — open state's
+        // controls strip likewise sits 10 px above the nav.
+        bottom:        10,
         // CSS var: how far to slide down so only the handle peeks out.
         // Matches the controls strip height (estimated 132px — two stacked
-        // rows of ~44 + ~28 + py-2 padding). The 44px peek handle stays
+        // rows of ~44 + ~28 + py-2 padding). The 48px peek handle stays
         // visible below it. Tweakable without breaking the open state
         // because the open state translates to 0.
-        '--ctrls-h':  '132px',
-        transform:    panelOpen ? 'translateY(0)' : 'translateY(var(--ctrls-h))',
-        transition:   'transform 240ms ease-out',
+        '--ctrls-h':   '132px',
+        transform:     panelOpen ? 'translateY(0)' : 'translateY(var(--ctrls-h))',
+        transition:    'transform 240ms ease-out',
         // Drop shadow above the panel when open so it visually separates
         // from the display zone behind it.
-        boxShadow:    panelOpen ? '0 -10px 30px rgba(0,0,0,0.5)' : 'none',
-        // iOS PWA safe-area: extend the panel below the visual bottom so
-        // the home-indicator zone gets the panel's background color
-        // rather than an unstyled void if the tab bar ever shifts.
+        boxShadow:     panelOpen ? '0 -10px 30px rgba(0,0,0,0.5)' : 'none',
+        // iOS PWA safe-area: defensive padding so the home-indicator zone
+        // gets the panel's background color if the tab bar ever shifts.
         paddingBottom: 'env(safe-area-inset-bottom)',
       }}
       onPointerDown={pokePanel}
       onWheel={pokePanel}
       onKeyDown={pokePanel}
     >
-      {/* PEEK HANDLE — always visible. 44px tall (Apple HIG min touch
-          target). Visible affordance: white pill + chevron + subtle
-          gradient background + first-use breathing pulse. */}
+      {/* PEEK HANDLE — full-width tap target, 48 px tall (above Apple's
+          44 px HIG minimum). Visual affordance stack from top to bottom:
+            • CONTROLS label (10 px uppercase, ~50% white)
+            • Chevron-up SVG (~18×10, ~70% white) — flips to ChevronDown
+              when the panel is open
+            • Grabber pill (48×5 px, ~70% white, fully rounded)
+          The whole strip is the hit target; the visual is centered. */}
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); togglePanel() }}
         aria-label={panelOpen ? 'Hide controls' : 'Show controls'}
         aria-expanded={panelOpen}
-        className="w-full flex flex-col items-center justify-center gap-1 select-none relative"
+        className="w-full flex flex-col items-center justify-center select-none relative"
         style={{
-          height:          44,
-          // Gradient that fades the panel chrome into the display zone —
-          // dark at the bottom, semi-transparent at the top — so the
-          // handle reads as "the bottom of the screen" rather than a
-          // hard band. When the panel is open the gradient flips to a
-          // solid #080000 so it visually "joins" the controls strip.
+          height:          48,
+          gap:             3,
+          // Gradient fades the panel chrome into the display zone — dark
+          // at the bottom, semi-transparent at the top — so the handle
+          // reads as "the bottom of the screen" rather than a hard band.
+          // When the panel is open the gradient flips to a solid #080000
+          // so it visually joins the controls strip.
           background:      panelOpen
             ? '#080000'
             : `linear-gradient(to top, rgba(8,0,0,0.96) 0%, rgba(8,0,0,0.78) 60%, rgba(8,0,0,0.45) 100%)`,
@@ -708,49 +720,75 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
             ? '1px solid #1a0000'
             : `1px solid ${orgColor}44`,
           cursor:          'pointer',
-          // Apply the breathing keyframe ONLY while pulse is active and
-          // the panel is closed (no point pulsing when controls are
-          // already up). Stops permanently on first interaction; also
-          // auto-stops after 5 s as a defensive timed fallback.
+          // Subtle border-color pulse on the strip while the first-use
+          // hint is active so the entire affordance — not just the pill —
+          // reads as "alive". Stops with the rest of the pulse stack.
           animation:       (showHandlePulse && !panelOpen)
-            ? 'pp-handle-breathe 1.6s ease-in-out infinite'
+            ? 'pp-handle-strip-glow 1.5s ease-in-out infinite'
             : 'none',
         }}
       >
-        {/* Chevron — points up when closed (tap to reveal), flips to point
-            down when open (tap to hide). Single inline SVG matches the
-            project convention (see MegaphoneIcon, MusicPlayIcon). */}
+        {/* CONTROLS label — tiny uppercase letterspaced, ~50% white. Only
+            shown when the panel is closed; would be redundant noise once
+            the controls strip itself is visible. */}
+        {!panelOpen && (
+          <span
+            aria-hidden="true"
+            style={{
+              fontSize:      9,
+              lineHeight:    1,
+              fontWeight:    700,
+              letterSpacing: '0.2em',
+              textTransform: 'uppercase',
+              color:         'rgba(255,255,255,0.55)',
+              textShadow:    '0 1px 2px rgba(0,0,0,0.7)',
+            }}
+          >
+            Controls
+          </span>
+        )}
+
+        {/* Chevron — points up when closed (tap to reveal), flips down
+            when open (tap to hide). Inline SVG matches the existing
+            convention (MegaphoneIcon, MusicPlayIcon). */}
         <svg
-          width="14" height="8" viewBox="0 0 14 8"
+          width="18" height="10" viewBox="0 0 18 10"
           fill="none" stroke="currentColor"
           strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
           aria-hidden="true"
           style={{
-            color:      'rgba(255,255,255,0.92)',
+            color:      'rgba(255,255,255,0.7)',
             transform:  panelOpen ? 'rotate(180deg)' : 'rotate(0deg)',
             transition: 'transform 240ms ease-out',
-            // Subtle drop shadow on the chevron so it stays visible
-            // against the lighter top of the gradient.
+            // Drop shadow keeps it visible against the lighter top of
+            // the gradient.
             filter:     'drop-shadow(0 1px 2px rgba(0,0,0,0.7))',
           }}
         >
-          <polyline points="2 6 7 2 12 6" />
+          <polyline points="2 8 9 2 16 8" />
         </svg>
 
-        {/* Grabber pill — wider, taller, brighter than the previous
-            ${orgColor}66. White at 70% alpha reads against any
-            background-image the coach has set. */}
+        {/* Grabber pill — universal iOS-sheet handle. 48×5 fully rounded,
+            ~70% white. Scale-pulses 1.0 → 1.15 → 1.0 over 1.5 s while the
+            first-use hint is active; halts permanently on first tap (or
+            after the 8 s fallback). */}
         <span
           style={{
-            width:           44,
+            width:           48,
             height:          5,
-            borderRadius:    3,
-            backgroundColor: 'rgba(255,255,255,0.78)',
-            // Soft glow while pulsing draws the eye further; falls off
-            // once the user has interacted.
+            borderRadius:    9999,
+            backgroundColor: 'rgba(255,255,255,0.7)',
             boxShadow:       (showHandlePulse && !panelOpen)
-              ? `0 0 10px ${orgColor}cc, 0 0 4px rgba(255,255,255,0.5)`
+              ? `0 0 12px ${orgColor}cc, 0 0 4px rgba(255,255,255,0.6)`
               : '0 1px 2px rgba(0,0,0,0.6)',
+            // Pulse the pill itself — the universally recognized "tap
+            // me" cue on a sheet handle. Transform-origin defaults to
+            // center so the pill scales symmetrically and doesn't shift
+            // its neighbors (transforms are layout-neutral).
+            animation:       (showHandlePulse && !panelOpen)
+              ? 'pp-handle-pill-pulse 1.5s ease-in-out infinite'
+              : 'none',
+            transformOrigin: 'center',
             transition:      'box-shadow 200ms',
           }}
         />
