@@ -331,6 +331,9 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
   // gets taller (clamp is viewport-relative, not container-relative).
   const [panelOpen, setPanelOpen] = useState(false)
   const hideTimerRef = useRef(null)
+  // [DEBUG] Ref on the handle <button> so we can probe its bounding rect
+  // at commit time. Used together with the console logs further down.
+  const stripRef = useRef(null)
 
   function clearHideTimer() {
     if (hideTimerRef.current) {
@@ -400,6 +403,19 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     const t = setTimeout(() => setShowHandlePulse(false), 8000)
     return () => clearTimeout(t)
   }, [showHandlePulse])
+
+  // [DEBUG] Diagnostics for the missing-on-iPad handle bug. Render-time
+  // log of panelOpen + showHandlePulse so we can correlate symptom
+  // (handle invisible) with state. Post-commit useEffect logs the
+  // strip's bounding rect so we can see whether the element is in the
+  // DOM, where it sits, and what dimensions the browser computes for
+  // it. No deps array — runs after every render so we catch any
+  // re-render that mutates the rect.
+  console.log('[StageHandle] render — panelOpen:', panelOpen, 'showHandlePulse:', showHandlePulse)
+  useEffect(() => {
+    const rect = stripRef.current?.getBoundingClientRect()
+    console.log('[StageHandle] rendered, strip dims:', rect)
+  })
 
   // (Display-value destructure for `snap` and `drills` lives above the cue
   // orchestration effects so their dep arrays can read those names without
@@ -705,84 +721,59 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
           Display zone above reserves 64 px of bottom padding so the
           "Next Up / drill / mm:ss" content never collides with this
           strip. */}
+      {/* [DEBUG] High-contrast diagnostic styling — magenta strip with a
+          1 px lime border, pure-white opaque pill, white opaque label.
+          Intentionally ugly. The goal is a yes/no answer to "is this
+          element actually rendering on iPad?". Once we confirm
+          rendering, we'll revert to the subtle production styling. */}
       <button
+        ref={stripRef}
         type="button"
         onClick={(e) => { e.stopPropagation(); togglePanel() }}
         aria-label={panelOpen ? 'Hide controls' : 'Show controls'}
         aria-expanded={panelOpen}
         className="w-full flex flex-row items-center justify-center select-none relative"
         style={{
-          height:          44,
-          gap:             10,
-          // Gradient fades the panel chrome into the display zone — dark
-          // at the bottom, semi-transparent at the top — so the handle
-          // reads as "the bottom of the screen" rather than a hard band.
-          // When the panel is open the gradient flips to a solid #080000
-          // so it visually joins the controls strip.
-          background:      panelOpen
-            ? '#080000'
-            : `linear-gradient(to top, rgba(8,0,0,0.96) 0%, rgba(8,0,0,0.78) 60%, rgba(8,0,0,0.45) 100%)`,
-          borderTop:       panelOpen
-            ? '1px solid #1a0000'
-            : `1px solid ${orgColor}44`,
+          // [DEBUG] 56 px tall with bright magenta background + 1 px
+          // lime border so the strip's bounds are unmistakable.
+          height:          56,
+          gap:             12,
+          backgroundColor: '#FF00FF',
+          border:          '1px solid #00FF00',
           cursor:          'pointer',
         }}
       >
-        {/* Grabber pill — universal iOS-sheet handle. Bumped to 64×6 px
-            (was 48×5) so it reads from across a gym. Fully rounded, ~70%
-            white. Scale-pulses 1.0 → 1.15 → 1.0 over 1.5 s while the
-            first-use hint is active; halts permanently on first tap (or
-            after the 8 s fallback). */}
+        {/* [DEBUG] Pill: 100×10 pure white opaque, fully rounded. The
+            scale-pulse animation is preserved so we can verify both
+            visibility AND that the animation is firing. */}
         <span
           style={{
-            width:           64,
-            height:          6,
+            width:           100,
+            height:          10,
             borderRadius:    9999,
-            backgroundColor: 'rgba(255,255,255,0.7)',
-            boxShadow:       (showHandlePulse && !panelOpen)
-              ? `0 0 12px ${orgColor}cc, 0 0 4px rgba(255,255,255,0.6)`
-              : '0 1px 2px rgba(0,0,0,0.6)',
-            // Pulse the pill itself — the universally recognized "tap
-            // me" cue on a sheet handle. Transform-origin centered so
-            // the pill scales symmetrically; transforms are layout-
-            // neutral so the label next to it doesn't shift.
+            backgroundColor: '#FFFFFF',
             animation:       (showHandlePulse && !panelOpen)
               ? 'pp-handle-pill-pulse 1.5s ease-in-out infinite'
               : 'none',
             transformOrigin: 'center',
-            transition:      'box-shadow 200ms',
           }}
         />
 
-        {/* CONTROLS label — sits to the RIGHT of the pill, vertically
-            centered with it on the same horizontal line (NOT above, NOT
-            below — keeps clear of the "Next Up" duration text below).
-            Only shown when the panel is closed; redundant noise once the
-            controls strip itself is visible. The pill+label flexbox is
-            `justify-center` so the GROUP centers as a unit (pill drifts
-            left of true center, label right) — reads as one coherent
-            affordance. */}
-        {!panelOpen && (
-          <span
-            aria-hidden="true"
-            style={{
-              fontSize:      12,
-              lineHeight:    1,
-              fontWeight:    700,
-              // Literal 1 px letter-spacing per spec — equivalent to
-              // about 0.083em at 12 px font, slightly tighter than the
-              // previous 0.12em which was overly airy at this size.
-              letterSpacing: '1px',
-              textTransform: 'uppercase',
-              // Match the pill's ~70% white so the affordance reads as
-              // one unified group rather than pill-then-faint-text.
-              color:         'rgba(255,255,255,0.7)',
-              textShadow:    '0 1px 2px rgba(0,0,0,0.7)',
-            }}
-          >
-            Controls
-          </span>
-        )}
+        {/* [DEBUG] CONTROLS label — UNCONDITIONALLY rendered (no
+            !panelOpen guard) so we can confirm it's in the DOM
+            regardless of state. White, 16 px, bold, fully opaque. */}
+        <span
+          style={{
+            fontSize:      16,
+            lineHeight:    1,
+            fontWeight:    700,
+            letterSpacing: '1px',
+            textTransform: 'uppercase',
+            color:         '#FFFFFF',
+          }}
+        >
+          Controls
+        </span>
       </button>
 
       {/* CONTROLS STRIP ─ original content, now the body of the slide panel.
