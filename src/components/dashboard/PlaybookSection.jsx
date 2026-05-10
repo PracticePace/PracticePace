@@ -91,6 +91,19 @@ const SECTIONS = [
     ],
   },
   {
+    id: 'whiteboard',
+    title: 'Whiteboard',
+    icon: '✏️',
+    items: [
+      'Tap the Whiteboard tab to draw plays with your finger or Apple Pencil. Whatever you draw shows on the AirPlay-mirrored jumbotron in real time.',
+      'Choose a background to draw on: Blank (white), Football field, Basketball court, Soccer pitch, and more — pick whichever surface fits the play.',
+      'Color picker, thickness options, and eraser tool let you sketch in detail.',
+      'Use Undo and Redo to step back and forward through your strokes.',
+      'Tap Clear to wipe the whole board and start fresh.',
+      'Drawings persist until you manually clear them — switch tabs, close the app, come back later, your board is still there.',
+    ],
+  },
+  {
     id: 'scripts',
     title: 'Scripts & Drills',
     icon: '📝',
@@ -99,18 +112,9 @@ const SECTIONS = [
       'Each drill has a name, duration, optional notes, and an optional cue MP3.',
       'Toggle "Show on practice screen" per drill to display its note under the drill name during practice.',
       'Reorder drills with drag-and-drop, edit any drill inline, or delete with the X.',
+      'When you tap Add Drill, the cursor lands in the drill name field automatically — start typing right away.',
+      'Drill names display in ALL CAPS on the practice screen and on the printed script, no matter how you type them.',
       'Tap "🖨 Print Script" to get a printable practice plan with auto-calculated times and a Notes column wide enough for handwriting — just enter your practice start time when prompted.',
-    ],
-  },
-  {
-    id: 'whiteboard',
-    title: 'Whiteboard',
-    icon: '✏️',
-    items: [
-      'Open the Whiteboard tab to draw plays, diagram routes, or sketch coverages with your finger or Apple Pencil.',
-      'Mirror to the Apple TV / jumbotron the same way as the practice timer — the whiteboard fills the screen so everyone can see.',
-      'Pick a color, thickness, or the eraser. The Football background draws a regulation field with yard lines and hash marks.',
-      'Undo / Redo for the last 50 strokes. The drawing saves automatically and persists across sessions until you tap Clear.',
     ],
   },
   {

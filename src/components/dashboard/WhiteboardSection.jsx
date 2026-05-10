@@ -25,13 +25,18 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
 
 // ── Constants ────────────────────────────────────────────────────────────────
+// Order matters here — first color is the default selection, and the
+// picker renders them left-to-right in this order. Black is first
+// because the Blank background is white (an actual whiteboard); white
+// moves to the end since it's now only useful on the dark sport
+// surfaces (football green, basketball wood, etc.).
 const COLORS = [
-  { name: 'white',  hex: '#ffffff' },
+  { name: 'black',  hex: '#000000' },
   { name: 'red',    hex: '#ef4444' },
   { name: 'blue',   hex: '#3b82f6' },
   { name: 'green',  hex: '#22c55e' },
   { name: 'yellow', hex: '#facc15' },
-  { name: 'black',  hex: '#000000' },
+  { name: 'white',  hex: '#ffffff' },
 ]
 
 const THICKNESSES = [
@@ -51,7 +56,11 @@ const POINTERMOVE_THROTTLE_MS = 12 // ~80 Hz — smoother than 60 Hz on Apple Pe
 // field scales to whatever size the viewport gives us.
 
 function drawBlank(ctx, w, h) {
-  ctx.fillStyle = '#0a1a0a'  // very dark green — easier on eyes than pure black
+  // Actual whiteboard: pure white surface. Coaches with sport-specific
+  // diagrams switch to a sport background; everything else is drawn on
+  // a real whiteboard. Default pen color is now black to match (see
+  // the COLORS array above).
+  ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, w, h)
 }
 
@@ -571,7 +580,9 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
 
   // ── State (UI mirrors) ─────────────────────────────────────────────────────
   const [tool,       setTool]       = useState('pen')      // 'pen' | 'eraser'
-  const [color,      setColor]      = useState('#ffffff')
+  // Default pen color is black — pairs with the white Blank background.
+  // Coaches on sport backgrounds will tap a different swatch.
+  const [color,      setColor]      = useState('#000000')
   const [thickness,  setThickness]  = useState(THICKNESSES[1].value)  // medium
   const [background, setBackground] = useState('blank')
   // Mirrored counts so the Undo / Redo buttons can disable themselves
@@ -1027,11 +1038,21 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
         )}
       </div>
 
-      {/* ── Canvas area ── */}
+      {/* ── Canvas area ──
+          Container background follows the canvas's Blank colour so the
+          eraser — which uses destination-out compositing and therefore
+          punches transparent holes through the canvas — doesn't reveal a
+          contrasting backdrop during the active stroke. On Blank (white)
+          the container is white. On sport backgrounds the canvas fills
+          the area completely so the container stays its existing dark
+          tone and is effectively invisible. */}
       <div
         ref={containerRef}
         className="flex-1 relative"
-        style={{ backgroundColor: '#0a1a0a', touchAction: 'none' }}
+        style={{
+          backgroundColor: background === 'blank' ? '#ffffff' : '#0a1a0a',
+          touchAction: 'none',
+        }}
       >
         <canvas
           ref={canvasRef}
@@ -1049,7 +1070,16 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
         />
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <p className="text-sm" style={{ color: '#9a8080' }}>Loading…</p>
+            <p
+              className="text-sm"
+              style={{
+                // Loading text needs a colour that reads against the
+                // current canvas background — white on white wouldn't.
+                color: background === 'blank' ? '#7a5050' : '#c8a0a0',
+              }}
+            >
+              Loading…
+            </p>
           </div>
         )}
 
