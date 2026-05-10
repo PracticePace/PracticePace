@@ -128,10 +128,425 @@ function drawFootballField(ctx, w, h) {
   ctx.restore()
 }
 
-const BACKGROUNDS = {
-  blank:    drawBlank,
-  football: drawFootballField,
+// Helper for backgrounds that are elongated rectangles (long axis ≫ short).
+// On portrait viewports we rotate the canvas 90 ° so the long axis of the
+// surface aligns with the long axis of the canvas — keeps proportions
+// readable on iPad portrait. `paint(ctx, long, short)` receives the
+// post-rotation dimensions (long ≥ short always).
+function paintLandscape(ctx, w, h, paint) {
+  const horizontal = w >= h
+  ctx.save()
+  if (!horizontal) {
+    ctx.translate(w, 0)
+    ctx.rotate(Math.PI / 2)
+  }
+  paint(ctx, horizontal ? w : h, horizontal ? h : w)
+  ctx.restore()
 }
+
+// ── Basketball half-court ─────────────────────────────────────────────────────
+// Roughly square (50 × 47 ft) so we don't rotate on portrait — just fit. The
+// baseline + basket sit on the RIGHT (offensive direction), the half-court
+// line on the LEFT.
+function drawBasketballHalfCourt(ctx, w, h) {
+  ctx.fillStyle = '#c89358' // hardwood
+  ctx.fillRect(0, 0, w, h)
+
+  const long  = Math.max(w, h)
+  const short = Math.min(w, h)
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = Math.max(1, long * 0.004)
+
+  const m  = long * 0.04
+  const cw = w - m * 2
+  const ch = h - m * 2
+  const midY = m + ch / 2
+
+  // Court boundary
+  ctx.strokeRect(m, m, cw, ch)
+
+  // Key (paint) on the right, from baseline extending left ~40 % of court width
+  const keyH = ch * 0.32
+  const keyW = cw * 0.4
+  const keyX = m + cw - keyW
+  const keyY = midY - keyH / 2
+  ctx.strokeRect(keyX, keyY, keyW, keyH)
+
+  // Free-throw arc (half-circle on the LEFT edge of the key, facing center)
+  const ftR = keyH * 0.55
+  ctx.beginPath()
+  ctx.arc(keyX, midY, ftR, -Math.PI / 2, Math.PI / 2)
+  ctx.stroke()
+
+  // Three-point arc — semicircle from corner to corner around the basket
+  const basketX = m + cw - cw * 0.04
+  const threePtR = ch * 0.45
+  ctx.beginPath()
+  ctx.arc(basketX, midY, threePtR, Math.PI / 2, 3 * Math.PI / 2)
+  ctx.stroke()
+
+  // Backboard (small vertical line on the baseline side of the basket)
+  ctx.beginPath()
+  ctx.moveTo(basketX + long * 0.012, midY - keyH * 0.18)
+  ctx.lineTo(basketX + long * 0.012, midY + keyH * 0.18)
+  ctx.stroke()
+
+  // Basket (orange dot)
+  ctx.fillStyle = '#ff8800'
+  ctx.beginPath()
+  ctx.arc(basketX, midY, long * 0.009, 0, Math.PI * 2)
+  ctx.fill()
+}
+
+// ── Basketball full-court ─────────────────────────────────────────────────────
+// Real-world ratio ~94 × 50 ft = 1.88 : 1. Long axis along the canvas's
+// longer dimension, rotated on portrait.
+function drawBasketballFullCourt(ctx, w, h) {
+  ctx.fillStyle = '#c89358'
+  ctx.fillRect(0, 0, w, h)
+
+  paintLandscape(ctx, w, h, (ctx, long, short) => {
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = Math.max(1, long * 0.003)
+
+    const m  = long * 0.04
+    const cw = long  - m * 2
+    const ch = short - m * 2
+    const midX = m + cw / 2
+    const midY = m + ch / 2
+
+    // Court boundary + center line + center circle
+    ctx.strokeRect(m, m, cw, ch)
+    ctx.beginPath(); ctx.moveTo(midX, m); ctx.lineTo(midX, m + ch); ctx.stroke()
+    ctx.beginPath(); ctx.arc(midX, midY, ch * 0.13, 0, Math.PI * 2); ctx.stroke()
+
+    // Helper for the per-end features (key, free-throw arc, three-point arc, basket)
+    function drawHalf(baselineX, dir /* +1 = baseline on right, -1 = on left */) {
+      const keyH = ch * 0.32
+      const keyW = cw * 0.18
+      const keyX = dir > 0 ? baselineX - keyW : baselineX
+      const keyY = midY - keyH / 2
+      ctx.strokeRect(keyX, keyY, keyW, keyH)
+
+      const ftR  = keyH * 0.55
+      const ftX  = dir > 0 ? baselineX - keyW : baselineX + keyW
+      ctx.beginPath()
+      if (dir > 0) ctx.arc(ftX, midY, ftR, -Math.PI / 2, Math.PI / 2)
+      else         ctx.arc(ftX, midY, ftR,  Math.PI / 2, 3 * Math.PI / 2)
+      ctx.stroke()
+
+      const basketX = dir > 0 ? baselineX - cw * 0.025 : baselineX + cw * 0.025
+      const tR = ch * 0.42
+      ctx.beginPath()
+      if (dir > 0) ctx.arc(basketX, midY, tR,  Math.PI / 2, 3 * Math.PI / 2)
+      else         ctx.arc(basketX, midY, tR, -Math.PI / 2,     Math.PI / 2)
+      ctx.stroke()
+
+      ctx.fillStyle = '#ff8800'
+      ctx.beginPath(); ctx.arc(basketX, midY, long * 0.006, 0, Math.PI * 2); ctx.fill()
+    }
+    drawHalf(m + cw, +1)
+    drawHalf(m, -1)
+  })
+}
+
+// ── Baseball / softball field ─────────────────────────────────────────────────
+// Diamond with home plate at bottom-center, 2nd base directly above, foul
+// lines extending out 45 ° from home. Outfield green, infield dirt brown.
+function drawBaseballField(ctx, w, h) {
+  ctx.fillStyle = '#2d8a3e' // outfield grass
+  ctx.fillRect(0, 0, w, h)
+
+  const cx = w / 2
+  const homeY = h * 0.88
+  // Base-to-base distance — limited by the shorter canvas dimension
+  const S = Math.min(w * 0.42, h * 0.55)
+  const inv = S / Math.sqrt(2)
+
+  const home   = { x: cx,         y: homeY }
+  const first  = { x: cx + inv,   y: homeY - inv }
+  const second = { x: cx,         y: homeY - 2 * inv }
+  const third  = { x: cx - inv,   y: homeY - inv }
+
+  // Infield dirt polygon through the four bases
+  ctx.fillStyle = '#a07840'
+  ctx.beginPath()
+  ctx.moveTo(home.x, home.y)
+  ctx.lineTo(first.x, first.y)
+  ctx.lineTo(second.x, second.y)
+  ctx.lineTo(third.x, third.y)
+  ctx.closePath()
+  ctx.fill()
+
+  // Foul lines — extend from home plate to the canvas edges at 45 °
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = Math.max(1, w * 0.003)
+  const lineLen = Math.max(w, h) * 1.5
+  ctx.beginPath()
+  ctx.moveTo(home.x, home.y); ctx.lineTo(home.x + lineLen, home.y - lineLen); ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(home.x, home.y); ctx.lineTo(home.x - lineLen, home.y - lineLen); ctx.stroke()
+
+  // Pitcher's mound — small dirt circle at the infield's geometric center
+  const moundY = homeY - inv  // midway between home and 2nd
+  ctx.fillStyle = '#a07840'
+  ctx.beginPath(); ctx.arc(cx, moundY, S * 0.05, 0, Math.PI * 2); ctx.fill()
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(cx - S * 0.02, moundY - S * 0.005, S * 0.04, S * 0.01)
+
+  // Bases — small white squares rotated 45 ° (diamond orientation)
+  function drawBase(x, y) {
+    ctx.save()
+    ctx.translate(x, y)
+    ctx.rotate(Math.PI / 4)
+    ctx.fillStyle = '#ffffff'
+    const bs = S * 0.04
+    ctx.fillRect(-bs / 2, -bs / 2, bs, bs)
+    ctx.restore()
+  }
+  drawBase(home.x,   home.y)
+  drawBase(first.x,  first.y)
+  drawBase(second.x, second.y)
+  drawBase(third.x,  third.y)
+}
+
+// ── Soccer pitch ──────────────────────────────────────────────────────────────
+// Standard FIFA proportions (100 m × 64 m, ~1.56 : 1). Long axis horizontal.
+function drawSoccerPitch(ctx, w, h) {
+  ctx.fillStyle = '#2d8a3e' // pitch green (slightly different from football to
+                            // help coaches tell them apart at a glance)
+  ctx.fillRect(0, 0, w, h)
+
+  paintLandscape(ctx, w, h, (ctx, long, short) => {
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = Math.max(1, long * 0.003)
+
+    const m  = long * 0.04
+    const fw = long  - m * 2
+    const fh = short - m * 2
+    const midX = m + fw / 2
+    const midY = m + fh / 2
+
+    // Touchlines + goal lines
+    ctx.strokeRect(m, m, fw, fh)
+
+    // Halfway line + center circle + center spot
+    ctx.beginPath(); ctx.moveTo(midX, m); ctx.lineTo(midX, m + fh); ctx.stroke()
+    ctx.beginPath(); ctx.arc(midX, midY, fh * 0.15, 0, Math.PI * 2); ctx.stroke()
+    ctx.fillStyle = '#ffffff'
+    ctx.beginPath(); ctx.arc(midX, midY, long * 0.004, 0, Math.PI * 2); ctx.fill()
+
+    // Penalty boxes (large) + goal areas (small) on each end
+    const pbW = fw * 0.14, pbH = fh * 0.6
+    const gaW = fw * 0.055, gaH = fh * 0.28
+    ctx.strokeRect(m,           midY - pbH / 2, pbW, pbH)
+    ctx.strokeRect(m + fw - pbW, midY - pbH / 2, pbW, pbH)
+    ctx.strokeRect(m,           midY - gaH / 2, gaW, gaH)
+    ctx.strokeRect(m + fw - gaW, midY - gaH / 2, gaW, gaH)
+
+    // Penalty spots
+    ctx.beginPath(); ctx.arc(m + fw * 0.11,        midY, long * 0.004, 0, Math.PI * 2); ctx.fill()
+    ctx.beginPath(); ctx.arc(m + fw - fw * 0.11,    midY, long * 0.004, 0, Math.PI * 2); ctx.fill()
+
+    // Corner arcs
+    const cr = fh * 0.02
+    ctx.beginPath(); ctx.arc(m,       m,       cr, 0,           Math.PI / 2); ctx.stroke()
+    ctx.beginPath(); ctx.arc(m + fw, m,       cr, Math.PI / 2,  Math.PI);     ctx.stroke()
+    ctx.beginPath(); ctx.arc(m,       m + fh, cr, -Math.PI / 2, 0);            ctx.stroke()
+    ctx.beginPath(); ctx.arc(m + fw, m + fh, cr, Math.PI,      3 * Math.PI / 2); ctx.stroke()
+
+    // Goals (outside the pitch, on each goal line)
+    const gW = fh * 0.12, gD = fw * 0.012
+    ctx.strokeRect(m - gD,  midY - gW / 2, gD, gW)
+    ctx.strokeRect(m + fw,  midY - gW / 2, gD, gW)
+  })
+}
+
+// ── Volleyball court ──────────────────────────────────────────────────────────
+// 18 × 9 m (2 : 1). Net runs PERPENDICULAR to the long axis at midpoint.
+function drawVolleyballCourt(ctx, w, h) {
+  ctx.fillStyle = '#d4a373' // light wood / sport floor
+  ctx.fillRect(0, 0, w, h)
+
+  paintLandscape(ctx, w, h, (ctx, long, short) => {
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = Math.max(1, long * 0.004)
+
+    const m  = long * 0.08  // generous margin (court is small)
+    const fw = long  - m * 2
+    const fh = short - m * 2
+    const midX = m + fw / 2
+
+    // Outer boundary + center line
+    ctx.strokeRect(m, m, fw, fh)
+    ctx.beginPath(); ctx.moveTo(midX, m); ctx.lineTo(midX, m + fh); ctx.stroke()
+
+    // Attack lines — 3 m from center on each side. 3 / 9 (half-court depth) = ⅓.
+    ctx.beginPath()
+    ctx.moveTo(midX - fw / 6, m); ctx.lineTo(midX - fw / 6, m + fh)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(midX + fw / 6, m); ctx.lineTo(midX + fw / 6, m + fh)
+    ctx.stroke()
+
+    // Net — dashed line directly over the center line, extends beyond the
+    // sidelines so it reads as "the net is here"
+    ctx.setLineDash([long * 0.012, long * 0.008])
+    ctx.lineWidth = Math.max(1, long * 0.005)
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)'
+    ctx.beginPath()
+    ctx.moveTo(midX, m - fh * 0.08)
+    ctx.lineTo(midX, m + fh + fh * 0.08)
+    ctx.stroke()
+    ctx.setLineDash([])
+  })
+}
+
+// ── Tennis court ──────────────────────────────────────────────────────────────
+// 23.77 × 10.97 m (~2.17 : 1) for doubles. Hard-court blue surface.
+function drawTennisCourt(ctx, w, h) {
+  ctx.fillStyle = '#3b7da8' // US Open–style hard-court blue
+  ctx.fillRect(0, 0, w, h)
+
+  paintLandscape(ctx, w, h, (ctx, long, short) => {
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = Math.max(1, long * 0.0035)
+
+    const m  = long * 0.06
+    const cw = long  - m * 2
+    const ch = short - m * 2
+    const midX = m + cw / 2
+    const midY = m + ch / 2
+
+    // Doubles court (full rectangle)
+    ctx.strokeRect(m, m, cw, ch)
+
+    // Singles sidelines — inset 1.37 / 10.97 ≈ 12.5 % of court height
+    const slInset = ch * 0.125
+    ctx.beginPath()
+    ctx.moveTo(m,       m + slInset); ctx.lineTo(m + cw, m + slInset); ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(m,       m + ch - slInset); ctx.lineTo(m + cw, m + ch - slInset); ctx.stroke()
+
+    // Service lines — 6.4 m from net, net at center. 6.4 / (23.77/2) ≈ 0.54
+    const svInset = (cw / 2) * 0.54
+    ctx.beginPath()
+    ctx.moveTo(midX - svInset, m + slInset); ctx.lineTo(midX - svInset, m + ch - slInset); ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(midX + svInset, m + slInset); ctx.lineTo(midX + svInset, m + ch - slInset); ctx.stroke()
+
+    // Center service line — between the two service lines
+    ctx.beginPath()
+    ctx.moveTo(midX - svInset, midY); ctx.lineTo(midX + svInset, midY); ctx.stroke()
+
+    // Net — dashed line down the middle, extends slightly beyond the doubles sidelines
+    ctx.setLineDash([long * 0.012, long * 0.008])
+    ctx.lineWidth = Math.max(1, long * 0.005)
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+    ctx.beginPath()
+    ctx.moveTo(midX, m - ch * 0.05)
+    ctx.lineTo(midX, m + ch + ch * 0.05)
+    ctx.stroke()
+    ctx.setLineDash([])
+  })
+}
+
+// ── Running track (oval, 8 lanes) ─────────────────────────────────────────────
+// "Stadium" shape: a rectangle with semicircular ends. 8 concentric lane
+// lines. Inner field green; track surface red-orange. Start/finish line at
+// the right straight.
+function drawTrack(ctx, w, h) {
+  // The "outside the track" area + inner field both share the same green —
+  // simpler and reads fine as "track on grass."
+  ctx.fillStyle = '#1f5d2a'
+  ctx.fillRect(0, 0, w, h)
+
+  paintLandscape(ctx, w, h, (ctx, long, short) => {
+    const m = long * 0.04
+    const oW = long  - m * 2 // outer width
+    const oH = short - m * 2 // outer height
+    const cx = m + oW / 2
+    const cy = m + oH / 2
+
+    // Lane count + width. Innermost lane sits oH * 0.55 / 2 from the centerline
+    // on the short axis; lanes step outward in equal increments to the outer
+    // boundary.
+    const lanes = 8
+    const outerR = oH / 2
+    const innerR = oH * 0.55 / 2 // inner edge of track (= outer edge of field)
+    const laneStep = (outerR - innerR) / lanes
+    const straight = oW - 2 * outerR // length of the straightaways
+
+    // Fill the track surface (the band between innerR and outerR)
+    ctx.fillStyle = '#c25b3f'
+    ctx.beginPath()
+    // Outer stadium-shape path
+    ctx.moveTo(cx - straight / 2, cy - outerR)
+    ctx.lineTo(cx + straight / 2, cy - outerR)
+    ctx.arc(cx + straight / 2, cy, outerR, -Math.PI / 2, Math.PI / 2)
+    ctx.lineTo(cx - straight / 2, cy + outerR)
+    ctx.arc(cx - straight / 2, cy, outerR, Math.PI / 2, 3 * Math.PI / 2)
+    ctx.closePath()
+    // Inner stadium-shape path (cuts a hole for the field)
+    ctx.moveTo(cx + straight / 2, cy - innerR)
+    ctx.lineTo(cx - straight / 2, cy - innerR)
+    ctx.arc(cx - straight / 2, cy, innerR, -Math.PI / 2, Math.PI / 2, true)
+    ctx.lineTo(cx + straight / 2, cy + innerR)
+    ctx.arc(cx + straight / 2, cy, innerR, Math.PI / 2, 3 * Math.PI / 2, true)
+    ctx.closePath()
+    ctx.fill('evenodd')
+
+    // Lane lines — one stadium shape per lane edge
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)'
+    ctx.lineWidth = Math.max(1, long * 0.0015)
+    for (let i = 0; i <= lanes; i++) {
+      const r = innerR + i * laneStep
+      ctx.beginPath()
+      ctx.moveTo(cx - straight / 2, cy - r)
+      ctx.lineTo(cx + straight / 2, cy - r)
+      ctx.arc(cx + straight / 2, cy, r, -Math.PI / 2, Math.PI / 2)
+      ctx.lineTo(cx - straight / 2, cy + r)
+      ctx.arc(cx - straight / 2, cy, r, Math.PI / 2, 3 * Math.PI / 2)
+      ctx.closePath()
+      ctx.stroke()
+    }
+
+    // Start/finish line — thick white line crossing all lanes at the top of
+    // the right straight (a stand-in for the typical 100 m / 200 m finish).
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = Math.max(2, long * 0.004)
+    ctx.beginPath()
+    ctx.moveTo(cx + straight / 2, cy - outerR)
+    ctx.lineTo(cx + straight / 2, cy - innerR)
+    ctx.stroke()
+  })
+}
+
+const BACKGROUNDS = {
+  blank:              drawBlank,
+  football:           drawFootballField,
+  basketball_half:    drawBasketballHalfCourt,
+  basketball_full:    drawBasketballFullCourt,
+  baseball:           drawBaseballField,
+  soccer:             drawSoccerPitch,
+  volleyball:         drawVolleyballCourt,
+  tennis:             drawTennisCourt,
+  track:              drawTrack,
+}
+
+// Toolbar dropdown options, in the order the user spec'd. All visible to all
+// users regardless of program sport — no filtering.
+const BACKGROUND_OPTIONS = [
+  { value: 'blank',           label: 'Blank' },
+  { value: 'football',        label: 'Football field' },
+  { value: 'basketball_half', label: 'Basketball half-court' },
+  { value: 'basketball_full', label: 'Basketball full-court' },
+  { value: 'baseball',        label: 'Baseball/softball field' },
+  { value: 'soccer',          label: 'Soccer pitch' },
+  { value: 'volleyball',      label: 'Volleyball court' },
+  { value: 'tennis',          label: 'Tennis court' },
+  { value: 'track',           label: 'Track (oval, 8 lanes)' },
+]
 
 // ── Toolbar icons (inline SVGs match the project convention) ─────────────────
 const PenIcon    = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
@@ -166,9 +581,9 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
   const [isLoading,  setIsLoading]  = useState(true)
   const [saveStatus, setSaveStatus] = useState('')  // '' | 'saving' | 'saved' | error string
 
-  // Whether the active org's sport offers a sport-specific background option.
-  // Only Football is implemented in this MVP.
-  const hasSportBg = (sport ?? '').toLowerCase() === 'football'
+  // (Background options are no longer filtered by program sport — the
+  // dropdown lists every surface and lets the coach pick. `sport` is still
+  // accepted as a prop for backwards-compat but no longer read here.)
 
   // ── Canvas sizing ──────────────────────────────────────────────────────────
   // Match the canvas's drawing-buffer size to its CSS pixel size, multiplied
@@ -497,35 +912,36 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
         className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2"
         style={{ backgroundColor: '#0d0000', borderBottom: '1px solid #1a0000' }}
       >
-        {/* Background picker */}
+        {/* Background dropdown — replaces the previous two-button toggle.
+            Native <select> on iOS opens the OS wheel picker, which is the
+            right UX for a longer option list on touch devices. The toolbar
+            container already uses flex-wrap so a wider dropdown wraps
+            cleanly on iPad portrait without pushing other tools off-screen. */}
         <div className="flex items-center gap-1.5 pr-2 mr-1" style={{ borderRight: '1px solid #2a0a0a' }}>
-          <span className="text-xs uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.55)' }}>
-            Bg
-          </span>
-          <button
-            onClick={() => setBackground('blank')}
-            className="px-2.5 h-10 rounded-lg text-xs font-semibold transition-colors"
+          <label
+            htmlFor="pp-wb-bg"
+            className="text-xs uppercase tracking-widest"
+            style={{ color: 'rgba(255,255,255,0.55)' }}
+          >
+            Background
+          </label>
+          <select
+            id="pp-wb-bg"
+            value={background}
+            onChange={e => setBackground(e.target.value)}
+            aria-label="Background"
+            className="rounded-lg px-2.5 h-10 text-xs font-semibold outline-none cursor-pointer transition-colors"
             style={{
-              backgroundColor: background === 'blank' ? orgColor : '#110000',
-              color:           background === 'blank' ? '#fff'   : 'rgba(255,255,255,0.75)',
-              border:          `1px solid ${background === 'blank' ? orgColor : '#3a1414'}`,
+              backgroundColor: '#110000',
+              color:           'rgba(255,255,255,0.9)',
+              border:          '1px solid #3a1414',
+              maxWidth:        180,
             }}
           >
-            Blank
-          </button>
-          {hasSportBg && (
-            <button
-              onClick={() => setBackground('football')}
-              className="px-2.5 h-10 rounded-lg text-xs font-semibold transition-colors"
-              style={{
-                backgroundColor: background === 'football' ? orgColor : '#110000',
-                color:           background === 'football' ? '#fff'   : 'rgba(255,255,255,0.75)',
-                border:          `1px solid ${background === 'football' ? orgColor : '#3a1414'}`,
-              }}
-            >
-              Football
-            </button>
-          )}
+            {BACKGROUND_OPTIONS.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
         </div>
 
         {/* Pen / Eraser */}
