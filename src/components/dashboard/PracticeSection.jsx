@@ -534,6 +534,13 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
                   letterSpacing: '0.04em',
                   textShadow: '0 2px 24px rgba(0,0,0,0.8)',
                   transition: 'font-size 220ms ease-out',
+                  // Drill name is rendered UPPERCASE everywhere it appears
+                  // (display-only — the stored value keeps the coach's
+                  // original casing). Bebas Neue is already a caps-only
+                  // typeface so visually nothing changes here today, but
+                  // the explicit text-transform protects against a future
+                  // font-family swap silently breaking the all-caps look.
+                  textTransform: 'uppercase',
                 }}
               >
                 {currentDrill.name}
@@ -633,6 +640,9 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
                   fontSize:      'clamp(1.8rem, 4vw, 3.2rem)',
                   color:         'rgba(255,255,255,0.85)',
                   letterSpacing: '0.04em',
+                  // UPPERCASE display, same rationale as the current-drill
+                  // name above — defensive against a future font swap.
+                  textTransform: 'uppercase',
                 }}
               >
                 {nextDrill.name}

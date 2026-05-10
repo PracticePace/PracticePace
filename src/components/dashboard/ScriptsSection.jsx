@@ -341,7 +341,12 @@ function buildPrintHtml({ scriptName, drills, programName, programNameColor, pro
   .num   { width:  5%; text-align: center; font-weight: 700; }
   .time  { width: 10%; white-space: nowrap; font-weight: 700; }
   .dur   { width: 10%; white-space: nowrap; }
-  .drill { width: 25%; font-weight: 700; word-wrap: break-word; }
+  /* Drill column displays UPPERCASE to match the rest of the app's
+     drill-name treatment (the script editor list and the practice
+     screen both show drill names in all caps regardless of how the
+     coach typed them). text-transform is display-only — the underlying
+     stored value is preserved exactly as entered. */
+  .drill { width: 25%; font-weight: 700; word-wrap: break-word; text-transform: uppercase; letter-spacing: 0.5px; }
   .notes { /* width: auto — takes the remaining ~50% */
            color: #444; font-size: 11pt; word-wrap: break-word; }
   @media print {
@@ -619,6 +624,17 @@ function AddDrillForm({ orgColor, orgId, isGuest, onAdd }) {
   const [notes,     setNotes]     = useState('')
   const [showNotes, setShowNotes] = useState(false)
   const [cueUrl,    setCueUrl]    = useState('')
+  // Ref on the drill-name input so we can auto-focus on mount AND after
+  // each add. On iPad, calling .focus() also raises the on-screen
+  // keyboard. Means the coach can open the editor and immediately start
+  // typing the first drill, then save and immediately type the next one
+  // without tapping the field again.
+  const nameInputRef = useRef(null)
+
+  // Focus the name field when the form first appears.
+  useEffect(() => {
+    nameInputRef.current?.focus()
+  }, [])
 
   const activePreset = (m) =>
     Number(mins) === m && (secs === '' || secs === '0' || Number(secs) === 0)
@@ -645,6 +661,8 @@ function AddDrillForm({ orgColor, orgId, isGuest, onAdd }) {
     setNotes('')
     setShowNotes(false)
     setCueUrl('')
+    // Refocus so the next drill can be typed without tapping the field.
+    nameInputRef.current?.focus()
   }
 
   return (
@@ -652,6 +670,7 @@ function AddDrillForm({ orgColor, orgId, isGuest, onAdd }) {
       style={{ border: `2px dashed ${orgColor}44`, backgroundColor: '#0d0000' }}>
 
       <input
+        ref={nameInputRef}
         value={name} onChange={e => setName(e.target.value)}
         placeholder="Drill name..."
         onKeyDown={e => { if (e.key === 'Enter' && name.trim()) handleAdd() }}
@@ -739,6 +758,11 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
   const [editNotes,     setEditNotes]     = useState(drill.notes ?? '')
   const [editShowNotes, setEditShowNotes] = useState(!!drill.show_notes)
   const [editCueUrl,    setEditCueUrl]    = useState(drill.cue_mp3_url ?? '')
+  // Hover state — drives the +5% lightness lift on the row background
+  // so the user knows the row is interactive. Pointer-only; touch
+  // devices skip it (which is fine since edit/delete are explicit
+  // buttons, not whole-row taps).
+  const [isHover, setIsHover] = useState(false)
 
   // Sync edit fields when editing starts
   useEffect(() => {
@@ -755,16 +779,35 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
   const editHasNotes = editNotes.trim().length > 0
   const editEffectiveShowNotes = editHasNotes && editShowNotes
 
+  // Tonal hierarchy on top of the dashboard's #0d0000 page bg:
+  //   default row  : #1f0808  (~+10% L from page bg, lifts off the page)
+  //   hover        : #281010  (+5% L on top of default — interactive cue)
+  //   editing      : #2c1414  (lightest row + 2px orgColor outer ring)
+  //   dragging     : #2a0808  (existing — drag-affordance shade) + 50% opacity
+  // Borders are #3a1414 (~+20% L from row bg) by default, flip to
+  // orgColor while another drill is being dragged OVER this row.
+  // Edit-mode accent uses box-shadow (NOT border) so the layout
+  // doesn't shift +1 px per side when a row enters edit mode.
   const rowStyle = {
-    backgroundColor: isDragging ? '#2a0808' : '#1a0000',
-    border: `1px solid ${isOver && !isDragging ? orgColor + '88' : '#2a0000'}`,
+    backgroundColor: isEditing  ? '#2c1414'
+                   : isDragging ? '#2a0808'
+                   : isHover    ? '#281010'
+                   :              '#1f0808',
+    border: `1px solid ${isOver && !isDragging ? orgColor + '88' : '#3a1414'}`,
+    boxShadow: isEditing ? `0 0 0 2px ${orgColor}` : 'none',
     opacity: isDragging ? 0.5 : 1,
-    transition: 'background-color 0.1s, border-color 0.1s',
+    transition: 'background-color 120ms, border-color 120ms, box-shadow 120ms',
     userSelect: 'none',
   }
 
   return (
-    <div ref={rowRef} className="rounded-xl p-3 flex flex-col gap-2" style={rowStyle}>
+    <div
+      ref={rowRef}
+      className="rounded-xl p-3 flex flex-col gap-2"
+      style={rowStyle}
+      onMouseEnter={() => setIsHover(true)}
+      onMouseLeave={() => setIsHover(false)}
+    >
       {isEditing ? (
         // ── Inline edit mode ──────────────────────────────────────────────────
         <div className="flex flex-col gap-2">
@@ -859,51 +902,73 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
         // ── Display mode ──────────────────────────────────────────────────────
         <>
           <div className="flex items-center gap-2">
-            {/* Drag handle */}
+            {/* Drag handle — bumped to 40 px (Apple HIG min touch target) and
+                color lifted from #4a2020 to a 50%-white that reads cleanly
+                against the new #1f0808 row bg. */}
             <div
-              className="flex items-center justify-center w-8 h-8 shrink-0 rounded-lg cursor-grab active:cursor-grabbing touch-none"
-              style={{ color: '#4a2020', fontSize: 18 }}
+              className="flex items-center justify-center w-10 h-10 shrink-0 rounded-lg cursor-grab active:cursor-grabbing touch-none transition-colors hover:bg-[rgba(255,255,255,0.06)]"
+              style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20 }}
               onMouseDown={e => { e.preventDefault(); onStartDrag(index) }}
               onTouchStart={e => { e.preventDefault(); onStartDrag(index) }}>
               ⠿
             </div>
 
-            {/* Name + duration */}
-            <span className="flex-1 text-base font-bold text-white truncate">
-              {drill.name || <span style={{ color: '#4a2020', fontStyle: 'italic', fontWeight: 400 }}>Untitled drill</span>}
+            {/* Drill name — UPPERCASE display only (db value preserved as
+                typed) + ~95% white. Wider letter-spacing reads as a header
+                style. The "Untitled drill" fallback sits inside the same
+                span so it inherits uppercase too. */}
+            <span
+              className="flex-1 text-base font-bold truncate uppercase tracking-wide"
+              style={{ color: 'rgba(255,255,255,0.95)', letterSpacing: '0.04em' }}
+            >
+              {drill.name || <span style={{ color: '#7a4040', fontStyle: 'italic', fontWeight: 400 }}>Untitled drill</span>}
             </span>
             {/* Cue attached indicator — clickable to preview without entering edit mode */}
             {drill.cue_mp3_url && (
               <button
                 type="button"
                 onClick={e => { e.stopPropagation(); playCue(drill.cue_mp3_url) }}
-                className="text-xs shrink-0 px-2 py-1 rounded-md"
-                style={{ color: orgColor, border: `1px solid ${orgColor}55`, backgroundColor: 'transparent' }}
+                className="text-xs shrink-0 px-2 py-1 rounded-md transition-colors"
+                style={{ color: orgColor, border: `1px solid ${orgColor}77`, backgroundColor: 'transparent' }}
                 title="Preview cue"
               >
                 🎵
               </button>
             )}
-            <span className="text-sm font-mono shrink-0 px-2" style={{ color: '#9a8080' }}>
+            {/* Duration — bumped from #9a8080 to ~85% white so it reads
+                clearly against the new lighter row bg. */}
+            <span
+              className="text-sm font-mono shrink-0 px-2"
+              style={{ color: 'rgba(255,255,255,0.85)' }}
+            >
               {drill.duration ? fmt(drill.duration) : '—'}
             </span>
 
-            {/* Edit + Delete */}
+            {/* Edit + Delete — 40 × 40 (Apple HIG min). Edit lifts to ~85%
+                white; Delete uses a clearer red so its destructive intent
+                reads. Both get a subtle hover bg (and Delete a slightly
+                tinted red hover) so the affordance is unambiguous. */}
             <button onClick={() => onEditStart(index)}
-              className="w-8 h-8 flex items-center justify-center rounded-lg text-xs shrink-0"
-              style={{ color: '#9a8080', border: '1px solid #2a0000' }}>
+              aria-label="Edit drill"
+              className="w-10 h-10 flex items-center justify-center rounded-lg text-base shrink-0 transition-colors hover:bg-[rgba(255,255,255,0.08)]"
+              style={{ color: 'rgba(255,255,255,0.85)', border: '1px solid #3a1414' }}>
               ✎
             </button>
             <button onClick={() => onDelete(index)}
-              className="w-8 h-8 flex items-center justify-center rounded-lg text-xs shrink-0"
-              style={{ color: '#6a3030', border: '1px solid #2a0000' }}>
+              aria-label="Delete drill"
+              className="w-10 h-10 flex items-center justify-center rounded-lg text-base shrink-0 transition-colors hover:bg-[rgba(220,80,80,0.14)]"
+              style={{ color: 'rgba(220,80,80,0.9)', border: '1px solid #3a1414' }}>
               ✕
             </button>
           </div>
 
-          {/* Notes preview — shown only when present */}
+          {/* Notes preview — bumped from #9a8080 to ~75% white so notes
+              actually look like notes, not page chrome. */}
           {drill.notes && drill.notes.trim() && (
-            <p className="text-xs leading-snug pl-10 pr-2 whitespace-pre-wrap" style={{ color: '#9a8080' }}>
+            <p
+              className="text-xs leading-snug pl-12 pr-2 whitespace-pre-wrap"
+              style={{ color: 'rgba(255,255,255,0.75)' }}
+            >
               {drill.notes}
             </p>
           )}
