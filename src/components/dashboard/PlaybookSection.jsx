@@ -1,16 +1,18 @@
-// ── HelpAndGuide.jsx ──────────────────────────────────────────────────────────
-// Coach quick-start guide / FAQ content. Previously rendered as its own tab
-// ("Playbook") at the bottom of the Dashboard, but moved into Settings as a
-// "Help & Guide" section when that tab slot was repurposed for the new
-// Whiteboard feature. Rendered at the TOP of SettingsSection so coaches see
-// it without scrolling.
+// ── PlaybookSection.jsx ───────────────────────────────────────────────────────
+// Coach quick-start guide / FAQ. Lives as its own tab at the right edge of
+// the bottom nav. (Briefly relocated into Settings as "Help & Guide" in
+// commit 442baeb; restored to a dedicated tab in this commit because the
+// help cards crowded the actual settings.)
 //
 // Content was last verified accurate against the shipped app on 2026-05-08
-// (commit 8f29bce). Update sites where features change:
+// (commit 8f29bce); a Whiteboard section was added on 2026-05-10
+// (commit 442baeb) when that feature shipped. Update sites where features
+// change:
 //   • Stage Mode peek-handle behaviour       → 'display'  section
 //   • Bell-at-0:30 / horn / cue-MP3 details  → 'music'    section
 //   • Role permissions                       → 'coaching-staff' section
 //   • Print-Script + per-drill features      → 'scripts'  section
+//   • Whiteboard feature                     → 'whiteboard' section
 //   • +1m / −1m / preset buttons             → 'tips'     section
 
 const SECTIONS = [
@@ -126,7 +128,9 @@ const SECTIONS = [
   },
 ]
 
-function HelpCard({ title, icon, items, orgColor }) {
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+function SectionCard({ title, icon, items, orgColor }) {
   return (
     <div
       className="flex flex-col gap-3 p-5 rounded-2xl"
@@ -135,17 +139,17 @@ function HelpCard({ title, icon, items, orgColor }) {
       {/* Header */}
       <div className="flex items-center gap-2.5">
         <span style={{ fontSize: '1.25rem', lineHeight: 1 }}>{icon}</span>
-        <h3
+        <h2
           className="font-black tracking-widest uppercase"
           style={{
             fontFamily:    "'Bebas Neue', sans-serif",
-            fontSize:      '1.05rem',
+            fontSize:      '1.15rem',
             color:         orgColor,
             letterSpacing: '0.1em',
           }}
         >
           {title}
-        </h3>
+        </h2>
       </div>
 
       {/* Divider */}
@@ -171,44 +175,84 @@ function HelpCard({ title, icon, items, orgColor }) {
   )
 }
 
-export default function HelpAndGuide({ orgColor = '#cc1111' }) {
+// ── Main ──────────────────────────────────────────────────────────────────────
+export default function PlaybookSection({ orgColor = '#cc1111' }) {
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <h2
+    <div className="flex-1 overflow-y-auto">
+      {/* Page header */}
+      <div
+        className="sticky top-0 z-10 px-4 md:px-6 py-3 flex items-center gap-3"
+        style={{ backgroundColor: '#0d0000', borderBottom: '1px solid #1a0000' }}
+      >
+        <h1
           className="font-black tracking-widest uppercase"
           style={{
             fontFamily:    "'Bebas Neue', sans-serif",
-            fontSize:      'clamp(1.4rem, 2.4vw, 1.8rem)',
+            fontSize:      '1.4rem',
             color:         orgColor,
-            letterSpacing: '0.1em',
-            lineHeight:    1.05,
+            letterSpacing: '0.12em',
           }}
         >
-          Help &amp; Guide
-        </h2>
-        <p className="text-xs" style={{ color: '#7a5050' }}>
-          Quick-start guide. For technical help, email{' '}
-          <a
-            href="mailto:practicepace@gmail.com"
-            className="underline transition-opacity hover:opacity-80"
-            style={{ color: orgColor }}
-          >
-            practicepace@gmail.com
-          </a>
-        </p>
+          Coach Playbook
+        </h1>
+        <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#4a2020' }}>
+          Quick-Start Guide
+        </span>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {SECTIONS.map(s => (
-          <HelpCard
-            key={s.id}
-            title={s.title}
-            icon={s.icon}
-            items={s.items}
-            orgColor={orgColor}
-          />
-        ))}
+      {/* Page intro — sits above the section cards */}
+      <div className="px-4 md:px-6 pt-6 pb-2">
+        <div className="max-w-4xl mx-auto flex flex-col gap-2">
+          <h1
+            className="font-black tracking-widest uppercase"
+            style={{
+              fontFamily:    "'Bebas Neue', sans-serif",
+              fontSize:      'clamp(1.8rem, 4vw, 2.4rem)',
+              color:         orgColor,
+              letterSpacing: '0.1em',
+              lineHeight:    1.05,
+            }}
+          >
+            Optimal settings for Practice:Pace
+          </h1>
+          <p className="text-sm leading-relaxed" style={{ color: '#9a8080' }}>
+            Practice:Pace will operate on any computer or tablet, but these are
+            suggestions for optimal use.
+          </p>
+          <p className="text-xs" style={{ color: '#7a5050' }}>
+            For technical help, email{' '}
+            <a
+              href="mailto:practicepace@gmail.com"
+              className="underline transition-opacity hover:opacity-80"
+              style={{ color: orgColor }}
+            >
+              practicepace@gmail.com
+            </a>
+          </p>
+        </div>
+      </div>
+
+      {/* Cards grid */}
+      <div className="p-4 md:p-6">
+        <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4">
+          {SECTIONS.map(s => (
+            <SectionCard
+              key={s.id}
+              title={s.title}
+              icon={s.icon}
+              items={s.items}
+              orgColor={orgColor}
+            />
+          ))}
+        </div>
+
+        {/* Footer note */}
+        <p
+          className="max-w-4xl mx-auto mt-6 text-xs text-center"
+          style={{ color: '#3a1818' }}
+        >
+          PracticePace — Practice smarter. Win more.
+        </p>
       </div>
     </div>
   )

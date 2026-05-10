@@ -13,7 +13,6 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { SPORTS } from '../../lib/sports'
-import HelpAndGuide from './HelpAndGuide'
 
 const ROLES  = ['owner','admin','coach','readonly']
 
@@ -469,14 +468,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
 
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-6">
-      <div className="max-w-5xl mx-auto flex flex-col gap-6">
-
-        {/* ── Help & Guide — top of Settings so coaches see it without
-            scrolling. Full-width so its internal 2-column card grid has
-            room to breathe; the org-settings 2-column grid sits below. */}
-        <HelpAndGuide orgColor={orgColor} />
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-start">
+      <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-5 items-start">
 
         {/* ── LEFT COLUMN ── */}
         <div className="flex flex-col gap-5">
@@ -1075,7 +1067,6 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
           </Section>
 
         </div>
-      </div>
       </div>
 
       {/* ── Remove coach confirmation modal ── */}
