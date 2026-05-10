@@ -476,12 +476,19 @@ export default function Dashboard() {
         {/* Program logo (uploaded by owner+admin in Settings → Program Logo).
             Renders to the LEFT of the program name when present; nothing when
             absent (no broken-image icon). Constrained height so it never
-            disrupts the 72px header. */}
+            disrupts the 72px header.
+
+            ml-10 (40 px) of left margin gives clear visual separation from
+            the Practice:Pace wordmark — previously ml-2 (8 px), which made
+            the two logos read as a single visually-merged element. The
+            program-name <h1> still sits to the right of the logo with its
+            own px-4 padding, so the [logo + name] group still reads as
+            paired. */}
         {!isGuest && org?.logo_url && (
           <img
             src={org.logo_url}
             alt=""
-            className="shrink-0 ml-2"
+            className="shrink-0 ml-10"
             style={{ height: 48, maxWidth: 96, objectFit: 'contain' }}
           />
         )}
