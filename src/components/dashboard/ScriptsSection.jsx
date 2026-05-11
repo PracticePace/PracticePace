@@ -477,6 +477,160 @@ function PrintScriptDialog({ scriptName, drills, orgColor,
   )
 }
 
+// ── CuePickerDialog ──────────────────────────────────────────────────────────
+// When the coach taps "Add cue" (or "Replace cue") on a drill, instead of
+// going straight to the file picker we open this modal so they can either:
+//   • Pick an EXISTING song from the org's playlist — no re-upload, the
+//     cue reuses the same public Storage URL the playlist player already
+//     uses (no duplicate files, and the picker works on any device since
+//     the song is in the cloud, not on the local disk).
+//   • Tap "Upload new MP3…" to open the existing file picker for a fresh
+//     upload. Per spec, cue uploads are NOT compressed.
+//   • Cancel.
+//
+// Songs come from the same `songs` table the Music tab uses, scoped to
+// the user's org_id, ordered alphabetically by name.
+//
+// Edge case (intentionally not handled): a coach can delete a playlist
+// song that's referenced as a cue. The cue URL will 404 silently when
+// played; we don't add reference tracking in this commit.
+function CuePickerDialog({ orgId, orgColor, onUploadNew, onPickSong, onCancel }) {
+  const [songs,   setSongs]   = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error,   setError]   = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      if (!orgId) { setLoading(false); return }
+      const { data, error: err } = await supabase
+        .from('songs')
+        .select('id, name, storage_path, duration')
+        .eq('org_id', orgId)
+        .order('name', { ascending: true })
+      if (cancelled) return
+      if (err) {
+        setError(err.message ?? 'Could not load playlist.')
+      } else {
+        setSongs(data ?? [])
+      }
+      setLoading(false)
+    })()
+    return () => { cancelled = true }
+  }, [orgId])
+
+  function pick(song) {
+    const { data } = supabase.storage.from('music').getPublicUrl(song.storage_path)
+    const url = data?.publicUrl
+    if (!url) { setError('Could not resolve song URL.'); return }
+    // Cache-bust the URL — matches the existing upload flow's pattern so
+    // a re-saved cue doesn't serve a stale cached audio file.
+    onPickSong(`${url}?v=${Date.now()}`)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}
+      onClick={onCancel}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-md flex flex-col rounded-2xl overflow-hidden"
+        style={{
+          backgroundColor: '#0d0000',
+          border:          '1px solid #2a0000',
+          maxHeight:       '80vh',
+        }}
+      >
+        {/* Header */}
+        <div className="px-4 py-3 flex items-center justify-between shrink-0"
+          style={{ borderBottom: '1px solid #2a0000' }}>
+          <h3 className="font-bold text-white text-sm">Choose a cue</h3>
+          <button
+            onClick={onCancel}
+            className="text-xs px-2 py-1 rounded-md"
+            style={{ border: '1px solid #2a0000', color: '#9a8080' }}
+          >
+            Cancel
+          </button>
+        </div>
+
+        {/* Upload-new option — pinned at top, distinct visual treatment so
+            it doesn't look like just another song in the list. */}
+        <button
+          onClick={onUploadNew}
+          className="px-4 py-3 flex items-center gap-3 text-left transition-colors hover:bg-[rgba(255,255,255,0.04)] shrink-0"
+          style={{
+            borderBottom: '1px solid #2a0000',
+            color: 'rgba(255,255,255,0.92)',
+          }}
+        >
+          <span
+            className="w-8 h-8 flex items-center justify-center rounded-lg shrink-0"
+            style={{ backgroundColor: `${orgColor}33`, color: orgColor }}
+          >
+            ⬆
+          </span>
+          <span className="flex flex-col">
+            <span className="text-sm font-semibold">Upload new MP3…</span>
+            <span className="text-xs" style={{ color: '#9a8080' }}>From this device</span>
+          </span>
+        </button>
+
+        {/* Playlist songs — scrollable list */}
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <p className="px-4 py-6 text-sm text-center" style={{ color: '#9a8080' }}>Loading playlist…</p>
+          ) : error ? (
+            <p className="px-4 py-6 text-sm text-center" style={{ color: '#ff6666' }}>{error}</p>
+          ) : songs.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-center leading-relaxed" style={{ color: '#7a5050' }}>
+              No songs in the playlist yet.<br/>
+              Upload one above, or add songs in the Music tab first.
+            </p>
+          ) : (
+            <ul className="flex flex-col">
+              {songs.map(s => (
+                <li key={s.id}>
+                  <button
+                    onClick={() => pick(s)}
+                    className="w-full px-4 py-2.5 flex items-center justify-between gap-3 text-left transition-colors hover:bg-[rgba(255,255,255,0.04)]"
+                    style={{ borderBottom: '1px solid #1a0000' }}
+                  >
+                    <span className="flex items-center gap-3 min-w-0">
+                      <span
+                        className="w-7 h-7 flex items-center justify-center rounded-md shrink-0 text-xs"
+                        style={{ backgroundColor: '#1a0000', color: '#9a8080' }}
+                      >
+                        🎵
+                      </span>
+                      <span
+                        className="text-sm truncate"
+                        style={{ color: 'rgba(255,255,255,0.9)' }}
+                      >
+                        {s.name}
+                      </span>
+                    </span>
+                    {typeof s.duration === 'number' && s.duration > 0 && (
+                      <span
+                        className="text-xs font-mono shrink-0"
+                        style={{ color: '#7a5050' }}
+                      >
+                        {Math.floor(s.duration / 60)}:{String(Math.round(s.duration % 60)).padStart(2, '0')}
+                      </span>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── CueControl ───────────────────────────────────────────────────────────────
 // Shared widget for the "drill cue MP3" affordance used by both AddDrillForm
 // and DrillRow's edit mode. Two visual states:
@@ -492,8 +646,12 @@ function PrintScriptDialog({ scriptName, drills, orgColor,
 // Guests don't have a Supabase session that can write to storage, so the
 // control hides itself entirely when isGuest is true.
 function CueControl({ cueUrl, onChange, orgColor, orgId, isGuest }) {
-  const [uploading, setUploading] = useState(false)
-  const [error,     setError]     = useState('')
+  const [uploading,  setUploading]  = useState(false)
+  const [error,      setError]      = useState('')
+  // Show the picker dialog when the coach taps Add or Replace cue. The
+  // dialog itself decides whether to invoke the file picker (upload-new
+  // option) or pick from the existing playlist songs (no re-upload).
+  const [pickerOpen, setPickerOpen] = useState(false)
   const inputRef = useRef(null)
 
   if (isGuest) return null
@@ -567,7 +725,7 @@ function CueControl({ cueUrl, onChange, orgColor, orgId, isGuest }) {
       {!cueUrl ? (
         <button
           type="button"
-          onClick={() => inputRef.current?.click()}
+          onClick={() => setPickerOpen(true)}
           disabled={uploading}
           className="text-xs font-semibold px-2.5 py-1 rounded-lg disabled:opacity-50"
           style={{ border: '1px dashed #3a0000', color: '#9a8080', backgroundColor: 'transparent' }}
@@ -587,7 +745,7 @@ function CueControl({ cueUrl, onChange, orgColor, orgId, isGuest }) {
             title="Preview cue">
             ▶
           </button>
-          <button type="button" onClick={() => inputRef.current?.click()}
+          <button type="button" onClick={() => setPickerOpen(true)}
             disabled={uploading}
             className="text-xs px-2 py-1 rounded-md"
             style={{ border: '1px solid #2a0000', color: '#9a8080', backgroundColor: 'transparent' }}
@@ -607,6 +765,31 @@ function CueControl({ cueUrl, onChange, orgColor, orgId, isGuest }) {
           style={{ backgroundColor: '#2a0000', color: '#ff6666' }}>
           {error}
         </p>
+      )}
+
+      {/* Picker dialog — opens on Add cue or Replace cue. Lets the coach
+          pick an existing playlist song OR upload a new MP3. Uploading
+          new goes through the same handleFile flow as before; picking a
+          playlist song just calls onChange(url) — no upload, the cue
+          reuses the playlist song's existing Storage URL. */}
+      {pickerOpen && (
+        <CuePickerDialog
+          orgId={orgId}
+          orgColor={orgColor}
+          onUploadNew={() => {
+            setPickerOpen(false)
+            // Defer the file-picker open so the dialog has fully unmounted
+            // before iOS shows the system picker — avoids a stuttery
+            // overlay during the transition.
+            setTimeout(() => inputRef.current?.click(), 0)
+          }}
+          onPickSong={(url) => {
+            setPickerOpen(false)
+            setError('')
+            onChange(url)
+          }}
+          onCancel={() => setPickerOpen(false)}
+        />
       )}
     </div>
   )

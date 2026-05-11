@@ -6,6 +6,7 @@ import {
   playSongAtIndex, togglePlay, playNext, playPrev,
   setVolume as setAudioVolume, setShuffle, setLoop, setPlaylist, seek,
 } from '../../lib/audioPlayer'
+import { compressToMp3Mono128 } from '../../lib/audioCompressor'
 
 const BUCKET = 'music'
 
@@ -177,27 +178,72 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
     }
 
     console.log(`[Music] Starting upload of ${files.length} file(s) for org ${orgId}`)
-    setUploads(files.map(f => ({ name: f.name, progress: 0, error: null })))
+    setUploads(files.map(f => ({
+      name:     f.name,
+      phase:    'pending',  // 'pending' | 'compressing' | 'uploading' | 'done'
+      progress: 0,          // 0-100, meaning depends on phase
+      error:    null,
+    })))
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
       try {
-        // 1. Measure duration from local file before uploading
+        // 1. Measure duration from local file before any encoding
         const duration = await measureDuration(file)
         console.log(`[Music] File ${i + 1}/${files.length}: "${file.name}" | duration: ${duration}s | size: ${file.size} bytes | type: ${file.type}`)
 
-        // 2. Build storage path — sanitise filename, prepend org_id folder
+        // 2. Compress to 128 kbps mono before uploading. Reduces storage
+        //    cost and (more importantly) the decode CPU cost on the iPad
+        //    during AirPlay-mirrored practices. If compression fails for
+        //    any reason — corrupt input, unsupported codec, etc. — fall
+        //    back to uploading the original file untouched so the upload
+        //    is never blocked by the compressor.
+        setUploads(prev => prev.map((u, j) =>
+          j === i ? { ...u, phase: 'compressing', progress: 0 } : u
+        ))
+
+        let toUpload = file
+        let compressedOk = false
+        try {
+          const compressed = await compressToMp3Mono128(file, {
+            onProgress: (p) => {
+              setUploads(prev => prev.map((u, j) =>
+                j === i ? { ...u, progress: Math.round(p * 100) } : u
+              ))
+            },
+          })
+          // Edge case: if the compressed output is somehow larger than
+          // the source (already-low-bitrate file, very short file), upload
+          // the original. Per the spec — compression should never make
+          // the situation worse.
+          if (compressed.size > 0 && compressed.size < file.size) {
+            toUpload = compressed
+            compressedOk = true
+            console.log(`[Music] Compressed "${file.name}": ${file.size} → ${compressed.size} bytes (${Math.round(100 * compressed.size / file.size)}%)`)
+          } else {
+            console.log(`[Music] Skipping compression for "${file.name}" — compressed size ${compressed.size} >= original ${file.size}; uploading original.`)
+          }
+        } catch (compErr) {
+          console.warn(`[Music] Compression failed for "${file.name}":`, compErr?.message ?? compErr, '→ falling back to original upload')
+        }
+
+        // 3. Build storage path — keep the original filename (spec'd).
+        //    `_128` or similar suffix is intentionally NOT appended.
         const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
         const path     = `${orgId}/${Date.now()}_${safeName}`
-        console.log(`[Music] Uploading to storage path: ${path}`)
+        console.log(`[Music] Uploading to storage path: ${path} (${compressedOk ? 'compressed' : 'original'})`)
 
-        // 3. Upload to Supabase Storage (onUploadProgress not supported in
-        //    stable supabase-js v2 storage — use simple uploading/done states)
+        // 4. Upload to Supabase Storage. After compression the contentType
+        //    is always audio/mpeg; on the fallback path we honour the
+        //    original.
+        setUploads(prev => prev.map((u, j) =>
+          j === i ? { ...u, phase: 'uploading', progress: 0 } : u
+        ))
         const { error: uploadErr } = await supabase.storage
           .from(BUCKET)
-          .upload(path, file, {
+          .upload(path, toUpload, {
             cacheControl: '3600',
-            contentType:  file.type || 'audio/mpeg',
+            contentType:  compressedOk ? 'audio/mpeg' : (file.type || 'audio/mpeg'),
             upsert:       false,
           })
 
@@ -207,7 +253,7 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
         }
         console.log(`[Music] Storage upload succeeded: ${path}`)
 
-        // 4. Get the highest existing position so we can append
+        // 5. Get the highest existing position so we can append
         const { data: maxRow } = await supabase
           .from('songs')
           .select('position')
@@ -219,7 +265,7 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
         const nextPos = (maxRow?.position ?? -1) + 1
         console.log(`[Music] Inserting song record at position ${nextPos}`)
 
-        // 5. Insert the song record — check and surface any DB error
+        // 6. Insert the song record — check and surface any DB error
         const { error: insertErr } = await supabase.from('songs').insert({
           org_id:       orgId,
           name:         cleanName(file.name),
@@ -236,7 +282,9 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
         }
         console.log(`[Music] Song record inserted OK: "${cleanName(file.name)}"`)
 
-        setUploads(prev => prev.map((u, j) => j === i ? { ...u, progress: 100 } : u))
+        setUploads(prev => prev.map((u, j) =>
+          j === i ? { ...u, phase: 'done', progress: 100 } : u
+        ))
       } catch (err) {
         const msg = err?.message ?? 'Unknown error'
         console.error(`[Music] Upload failed for "${file.name}":`, msg)
@@ -289,16 +337,26 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
         onChange={handleFiles}
       />
 
-      {/* Upload progress */}
+      {/* Upload progress — three phases:
+            'compressing' → 0-100% real progress (encoder reports it)
+            'uploading'   → indeterminate (supabase-js v2 doesn't expose
+                            byte progress)
+            'done'        → ✓ Done
+          Failed uploads keep the existing error UI. */}
       {uploads.length > 0 && (
         <div className="flex flex-col gap-2 px-1">
-          {uploads.map((u, i) => (
+          {uploads.map((u, i) => {
+            const status = u.error
+              ? '✗ Failed'
+              : u.phase === 'done'         ? '✓ Done'
+              : u.phase === 'compressing'  ? `Compressing… ${u.progress}%`
+              : u.phase === 'uploading'    ? 'Uploading…'
+              :                              'Pending…'
+            return (
             <div key={i} className="flex flex-col gap-1">
               <div className="flex justify-between text-xs" style={{ color: u.error ? '#ff6666' : '#9a8080' }}>
                 <span className="truncate max-w-[180px]">{cleanName(u.name)}</span>
-                <span className="flex-shrink-0 ml-2">
-                  {u.error ? '✗ Failed' : u.progress === 100 ? '✓ Done' : 'Uploading…'}
-                </span>
+                <span className="flex-shrink-0 ml-2">{status}</span>
               </div>
               {/* Actual error message on its own line */}
               {u.error && (
@@ -309,13 +367,22 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
               {!u.error && (
                 <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: '#2a1a00' }}>
                   <div
-                    className={`h-full rounded-full ${u.progress < 100 ? 'animate-pulse' : ''}`}
-                    style={{ width: u.progress === 100 ? '100%' : '60%', backgroundColor: orgColor }}
+                    className={`h-full rounded-full ${u.phase !== 'done' ? 'animate-pulse' : ''}`}
+                    style={{
+                      // Compressing → real percentage. Uploading → 60 %
+                      // indeterminate. Done → 100 %.
+                      width:
+                        u.phase === 'done'        ? '100%'
+                      : u.phase === 'compressing' ? `${Math.max(2, u.progress)}%`
+                      :                             '60%',
+                      backgroundColor: orgColor,
+                    }}
                   />
                 </div>
               )}
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
