@@ -5,6 +5,7 @@ import {
   subscribe as subscribeAudio, getSnapshot as getAudioSnapshot,
   playSongAtIndex, togglePlay, playNext, playPrev,
   setVolume as setAudioVolume, setShuffle, setLoop, setPlaylist, seek,
+  stop as stopAudio,
 } from '../../lib/audioPlayer'
 import { compressToMp3Mono128 } from '../../lib/audioCompressor'
 
@@ -162,6 +163,103 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
   const [delConfirm,  setDelConfirm] = useState(null)
   const [dragIdx,     setDragIdx]    = useState(null)
   const [dragOverIdx, setDragOverIdx]= useState(null)
+
+  // ── Select Mode (multi-select bulk delete) ────────────────────────────────
+  // iOS Mail / Photos pattern: tap "Select" → checkboxes appear on each
+  // song row → coach picks multiple → tap "Delete (N)" → one confirmation
+  // → parallel storage + DB deletes.
+  const [selectMode,    setSelectMode]    = useState(false)
+  const [selectedIds,   setSelectedIds]   = useState(() => new Set())
+  const [bulkConfirm,   setBulkConfirm]   = useState(false)
+  const [bulkDeleting,  setBulkDeleting]  = useState(false)
+  const [bulkToast,     setBulkToast]     = useState('')  // "N songs deleted"
+
+  // Auto-dismiss the post-delete toast after 3 s.
+  useEffect(() => {
+    if (!bulkToast) return
+    const t = setTimeout(() => setBulkToast(''), 3000)
+    return () => clearTimeout(t)
+  }, [bulkToast])
+
+  function enterSelectMode() {
+    setSelectMode(true)
+    setSelectedIds(new Set())
+    setDelConfirm(null)      // close any open single-row confirms
+  }
+  function exitSelectMode() {
+    setSelectMode(false)
+    setSelectedIds(new Set())
+    setBulkConfirm(false)
+  }
+  function toggleSelect(id) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+  const allSelected = songs.length > 0 && selectedIds.size === songs.length
+  function toggleSelectAll() {
+    if (allSelected) setSelectedIds(new Set())
+    else setSelectedIds(new Set(songs.map(s => s.id)))
+  }
+
+  async function handleBulkDelete() {
+    const idsToDelete = Array.from(selectedIds)
+    if (idsToDelete.length === 0) return
+    const targets = songs.filter(s => idsToDelete.includes(s.id))
+
+    // If the currently-playing song is in the batch, stop playback first
+    // so we don't try to keep playing audio for a deleted Storage object.
+    if (playingId && idsToDelete.includes(playingId)) {
+      try { stopAudio() } catch {}
+    }
+
+    setBulkDeleting(true)
+    setBulkConfirm(false)
+
+    // Parallel deletes — both Storage object and DB row for each song.
+    // Per spec: continue on individual failure (log + count), refresh +
+    // exit select mode after all settle.
+    let okCount = 0
+    let failCount = 0
+    const results = await Promise.allSettled(targets.map(async song => {
+      try {
+        // Storage cleanup first. If this fails (network, RLS), we still
+        // try the DB delete — better to lose track of an orphan blob than
+        // leave a phantom DB row pointing at a missing file.
+        const { error: storageErr } = await supabase.storage
+          .from(BUCKET)
+          .remove([song.storage_path])
+        if (storageErr) {
+          console.warn(`[Music] Bulk delete: storage remove failed for ${song.storage_path}:`, storageErr.message)
+        }
+        const { error: dbErr } = await supabase
+          .from('songs')
+          .delete()
+          .eq('id', song.id)
+        if (dbErr) throw dbErr
+        return song.id
+      } catch (err) {
+        console.error(`[Music] Bulk delete failed for "${song.name}" (${song.id}):`, err?.message ?? err)
+        throw err
+      }
+    }))
+
+    for (const r of results) {
+      if (r.status === 'fulfilled') okCount++
+      else failCount++
+    }
+
+    setBulkDeleting(false)
+    await onRefresh()
+    exitSelectMode()
+    setBulkToast(
+      failCount === 0
+        ? `${okCount} song${okCount === 1 ? '' : 's'} deleted`
+        : `${okCount} deleted, ${failCount} failed`
+    )
+  }
 
   async function handleFiles(e) {
     const files = Array.from(e.target.files ?? []).filter(
@@ -321,13 +419,15 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
   return (
     <div className="flex flex-col gap-3">
 
-      {/* Upload button */}
-      <button
-        onClick={() => fileInputRef.current?.click()}
-        className="flex items-center justify-center gap-2 w-full py-4 rounded-2xl font-bold text-sm transition-all active:scale-95"
-        style={{ backgroundColor: '#1a0d00', border: `2px dashed ${orgColor}55`, color: orgColor }}>
-        <UploadIcon /> Upload Music Files
-      </button>
+      {/* Upload button — hidden in select mode per spec to avoid clutter */}
+      {!selectMode && (
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="flex items-center justify-center gap-2 w-full py-4 rounded-2xl font-bold text-sm transition-all active:scale-95"
+          style={{ backgroundColor: '#1a0d00', border: `2px dashed ${orgColor}55`, color: orgColor }}>
+          <UploadIcon /> Upload Music Files
+        </button>
+      )}
       <input
         ref={fileInputRef}
         type="file"
@@ -336,6 +436,65 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
         className="hidden"
         onChange={handleFiles}
       />
+
+      {/* Select-mode header — replaces the upload button while in select
+          mode. Left side: Cancel / Select All. Right side: shows the
+          current selection count. */}
+      {selectMode ? (
+        <div
+          className="flex items-center justify-between px-2 py-2 rounded-2xl"
+          style={{ backgroundColor: '#1a0d00', border: `1px solid ${orgColor}44` }}
+        >
+          <div className="flex items-center gap-2">
+            <button
+              onClick={exitSelectMode}
+              className="px-3 py-2 rounded-lg text-xs font-bold"
+              style={{ backgroundColor: '#2a1200', color: '#fff' }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={toggleSelectAll}
+              className="px-3 py-2 rounded-lg text-xs font-semibold"
+              style={{
+                backgroundColor: allSelected ? `${orgColor}33` : 'transparent',
+                color:           allSelected ? orgColor          : '#9a8080',
+                border:          `1px solid ${allSelected ? orgColor : '#3a2a00'}`,
+              }}
+            >
+              {allSelected ? 'Deselect All' : 'Select All'}
+            </button>
+          </div>
+          <span className="text-xs font-semibold pr-2" style={{ color: '#9a8080' }}>
+            {selectedIds.size} of {songs.length}
+          </span>
+        </div>
+      ) : (
+        // "Select" toggle — only shown when there's anything to select.
+        songs.length > 0 && (
+          <button
+            onClick={enterSelectMode}
+            className="self-end px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+            style={{
+              backgroundColor: 'transparent',
+              color:           '#9a8080',
+              border:          '1px solid #3a2a00',
+            }}
+          >
+            Select
+          </button>
+        )
+      )}
+
+      {/* Post-delete toast */}
+      {bulkToast && (
+        <div
+          className="px-3 py-2 rounded-lg text-xs font-semibold text-center"
+          style={{ backgroundColor: `${orgColor}22`, color: orgColor, border: `1px solid ${orgColor}55` }}
+        >
+          ✓ {bulkToast}
+        </div>
+      )}
 
       {/* Upload progress — three phases:
             'compressing' → 0-100% real progress (encoder reports it)
@@ -396,26 +555,71 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
 
       {/* Song list */}
       {songs.length > 0 && (
-        <div className="flex flex-col gap-1">
+        <div
+          className="flex flex-col gap-1"
+          // Reserve room at the bottom so the floating Delete bar (in
+          // select mode) doesn't obscure the last row. Bar height ≈ 56,
+          // plus 12 px breathing.
+          style={{ paddingBottom: selectMode ? 80 : 0 }}
+        >
           {songs.map((song, idx) => {
             const isActive   = song.id === playingId
             const isDragOver = dragOverIdx === idx
+            const isSelected = selectedIds.has(song.id)
+            // Row click handler:
+            //   • In select mode → toggle selection (anywhere on the row).
+            //     Play button + trash icon are hidden in select mode so we
+            //     don't need to suppress them, but we still stopPropagation
+            //     just in case future buttons get added inside the row.
+            //   • Outside select mode → no row-level click (drag-and-drop +
+            //     per-button handlers below do their own thing).
+            const rowClick = selectMode ? () => toggleSelect(song.id) : undefined
             return (
               <div
                 key={song.id}
-                draggable
-                onDragStart={() => setDragIdx(idx)}
-                onDragOver={e => { e.preventDefault(); setDragOverIdx(idx) }}
-                onDrop={() => onDrop(idx)}
+                // Drag-and-drop disabled in select mode so taps cleanly
+                // mean "select this row" without accidental drags.
+                draggable={!selectMode}
+                onDragStart={() => !selectMode && setDragIdx(idx)}
+                onDragOver={e => { if (!selectMode) { e.preventDefault(); setDragOverIdx(idx) } }}
+                onDrop={() => !selectMode && onDrop(idx)}
                 onDragEnd={() => { setDragIdx(null); setDragOverIdx(null) }}
+                onClick={rowClick}
                 className="flex items-center gap-3 px-4 py-3 rounded-2xl transition-all select-none"
                 style={{
-                  backgroundColor: isActive ? `${orgColor}22` : isDragOver ? '#2a1500' : '#0d0800',
-                  border: `1px solid ${isActive ? orgColor + '55' : isDragOver ? orgColor + '44' : '#2a1a0033'}`,
-                  cursor: 'grab',
+                  // In select mode the selected rows get an orgColor tint
+                  // + a slightly more visible border. Active-playing tint
+                  // takes priority outside select mode.
+                  backgroundColor: selectMode
+                    ? (isSelected ? `${orgColor}33` : '#0d0800')
+                    : (isActive ? `${orgColor}22` : isDragOver ? '#2a1500' : '#0d0800'),
+                  border: `1px solid ${
+                    selectMode
+                      ? (isSelected ? orgColor : '#2a1a0033')
+                      : (isActive ? orgColor + '55' : isDragOver ? orgColor + '44' : '#2a1a0033')
+                  }`,
+                  cursor: selectMode ? 'pointer' : 'grab',
                 }}>
 
-                <span className="flex-shrink-0 opacity-40"><DragHandle /></span>
+                {/* Left side: drag handle (out of select mode) or checkbox
+                    (in select mode). Same slot, different affordance. */}
+                {selectMode ? (
+                  <span
+                    aria-hidden="true"
+                    className="w-6 h-6 rounded-md shrink-0 flex items-center justify-center"
+                    style={{
+                      backgroundColor: isSelected ? orgColor : 'transparent',
+                      border:          `2px solid ${isSelected ? orgColor : '#5a3030'}`,
+                      color:           '#fff',
+                      fontSize:        14,
+                      lineHeight:      1,
+                    }}
+                  >
+                    {isSelected ? '✓' : ''}
+                  </span>
+                ) : (
+                  <span className="flex-shrink-0 opacity-40"><DragHandle /></span>
+                )}
 
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold truncate" style={{ color: isActive ? orgColor : '#fff' }}>
@@ -426,32 +630,108 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
                   </p>
                 </div>
 
-                <button
-                  onClick={() => playSongAtIndex(idx)}
-                  className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all active:scale-90"
-                  style={{ backgroundColor: isActive ? orgColor : '#2a1200', color: '#fff' }}>
-                  <PlayIcon />
-                </button>
+                {/* Play + Trash hidden in select mode — taps anywhere on
+                    the row toggle selection. Coaches who want to play or
+                    single-delete exit Select Mode first. */}
+                {!selectMode && (
+                  <>
+                    <button
+                      onClick={() => playSongAtIndex(idx)}
+                      className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all active:scale-90"
+                      style={{ backgroundColor: isActive ? orgColor : '#2a1200', color: '#fff' }}>
+                      <PlayIcon />
+                    </button>
 
-                {delConfirm === song.id ? (
-                  <div className="flex gap-1.5 flex-shrink-0">
-                    <button onClick={() => handleDelete(song)}
-                      className="text-xs font-bold px-2 py-1 rounded-lg"
-                      style={{ backgroundColor: '#cc2200', color: '#fff' }}>Delete</button>
-                    <button onClick={() => setDelConfirm(null)}
-                      className="text-xs px-2 py-1 rounded-lg"
-                      style={{ backgroundColor: '#2a1200', color: '#9a8080' }}>Cancel</button>
-                  </div>
-                ) : (
-                  <button onClick={() => setDelConfirm(song.id)}
-                    className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 opacity-40 hover:opacity-100 transition-all active:scale-90"
-                    style={{ color: '#ff4444' }}>
-                    <TrashIcon />
-                  </button>
+                    {delConfirm === song.id ? (
+                      <div className="flex gap-1.5 flex-shrink-0">
+                        <button onClick={() => handleDelete(song)}
+                          className="text-xs font-bold px-2 py-1 rounded-lg"
+                          style={{ backgroundColor: '#cc2200', color: '#fff' }}>Delete</button>
+                        <button onClick={() => setDelConfirm(null)}
+                          className="text-xs px-2 py-1 rounded-lg"
+                          style={{ backgroundColor: '#2a1200', color: '#9a8080' }}>Cancel</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setDelConfirm(song.id)}
+                        className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 opacity-40 hover:opacity-100 transition-all active:scale-90"
+                        style={{ color: '#ff4444' }}>
+                        <TrashIcon />
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* ── Floating Delete bar (select mode only) ──────────────────────────
+          Anchored just above the dashboard bottom nav (height 68 + safe-
+          area + 12 px breathing room). Disabled when nothing's selected.
+          Tap → opens the bulk-confirm modal. */}
+      {selectMode && (
+        <div
+          className="fixed left-0 right-0 z-30 flex items-center justify-center px-4"
+          style={{
+            bottom: 'calc(env(safe-area-inset-bottom, 0px) + 80px)',
+            pointerEvents: 'none',  // wrapper is non-interactive; only the button below intercepts
+          }}
+        >
+          <button
+            onClick={() => selectedIds.size > 0 && setBulkConfirm(true)}
+            disabled={selectedIds.size === 0 || bulkDeleting}
+            className="pointer-events-auto flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm shadow-xl transition-all active:scale-95 disabled:opacity-40 disabled:active:scale-100"
+            style={{
+              backgroundColor: '#cc2200',
+              color:           '#fff',
+              boxShadow:       '0 8px 24px rgba(0,0,0,0.5)',
+            }}
+          >
+            <TrashIcon />
+            {bulkDeleting ? 'Deleting…' : `Delete (${selectedIds.size})`}
+          </button>
+        </div>
+      )}
+
+      {/* ── Bulk-delete confirmation modal ────────────────────────────────── */}
+      {bulkConfirm && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}
+          onClick={() => !bulkDeleting && setBulkConfirm(false)}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="w-full max-w-sm rounded-2xl p-6 flex flex-col gap-4"
+            style={{ backgroundColor: '#110000', border: '1px solid #2a0000' }}
+          >
+            <h3 className="font-bold text-white text-lg">
+              Delete {selectedIds.size} song{selectedIds.size === 1 ? '' : 's'}?
+            </h3>
+            <p className="text-sm leading-relaxed" style={{ color: '#9a8080' }}>
+              This can't be undone. Songs will be removed from both your library
+              and storage.
+            </p>
+            <div className="flex gap-3 mt-1">
+              <button
+                onClick={() => setBulkConfirm(false)}
+                disabled={bulkDeleting}
+                className="flex-1 py-3 rounded-lg text-sm font-semibold disabled:opacity-50"
+                style={{ border: '1px solid #2a0000', color: '#9a8080' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkDeleting}
+                className="flex-1 py-3 rounded-lg text-sm font-bold text-white disabled:opacity-50"
+                style={{ backgroundColor: '#cc2200' }}
+              >
+                {bulkDeleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
