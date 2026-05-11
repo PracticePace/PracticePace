@@ -425,7 +425,6 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
   const nextDrill    = drills[currentDrillIdx + 1]
   const isLastDrill  = currentDrillIdx >= drills.length - 1
 
-  const pct          = totalSeconds ? (secondsLeft / totalSeconds) * 100 : 0
   const color        = isOverrun ? '#ef4444' : clockColor(secondsLeft, totalSeconds)
   const isDone       = hasStarted && !isRunning && secondsLeft === 0 && !isOverrun && isLastDrill && drills.length > 0
   const clockDisplay = isOverrun ? `+${fmt(overrunSeconds)}` : fmt(secondsLeft)
@@ -579,15 +578,14 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
           )}
         </div>
 
-        {/* ── 3. Timer ──────────────────────────────────────────────────────── */}
-        <div
-          className="flex-1 min-h-0 flex items-center justify-center rounded-3xl"
-          style={{
-            border:     `3px solid ${color}`,
-            boxShadow:  `0 0 80px ${color}55, inset 0 0 60px ${color}11`,
-            transition: 'border-color 0.6s, box-shadow 0.6s',
-          }}
-        >
+        {/* ── 3. Timer ────────────────────────────────────────────────────────
+            Previously this wrapper had a rounded green rectangle border +
+            outer glow + inner glow (border / boxShadow), and a thin green
+            progress bar lived directly below it. Both were removed for a
+            cleaner stage-mode look — the timer numbers stand on their own.
+            The wrapper is still a flex container so the clock stays
+            vertically centered inside flex-1 space; just no chrome. */}
+        <div className="flex-1 min-h-0 flex items-center justify-center">
           <span
             className="font-mono font-black leading-none select-none"
             style={{
@@ -605,19 +603,6 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
           >
             {clockDisplay}
           </span>
-        </div>
-
-        {/* ── Progress bar ─────────────────────────────────────────────────── */}
-        <div className="shrink-0 w-full rounded-full overflow-hidden mt-2" style={{ height: 5, backgroundColor: '#1a0000' }}>
-          <div
-            style={{
-              height:          '100%',
-              width:           `${Math.max(0, Math.min(100, pct))}%`,
-              backgroundColor: color,
-              borderRadius:    9999,
-              transition:      'width 0.95s linear, background-color 0.6s',
-            }}
-          />
         </div>
 
         {/* ── 4. Divider ────────────────────────────────────────────────────── */}
