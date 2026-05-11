@@ -153,111 +153,182 @@ function paintLandscape(ctx, w, h, paint) {
   ctx.restore()
 }
 
-// ── Basketball half-court ─────────────────────────────────────────────────────
-// Roughly square (50 × 47 ft) so we don't rotate on portrait — just fit. The
-// baseline + basket sit on the RIGHT (offensive direction), the half-court
-// line on the LEFT.
-function drawBasketballHalfCourt(ctx, w, h) {
-  ctx.fillStyle = '#c89358' // hardwood
-  ctx.fillRect(0, 0, w, h)
+// ── Basketball courts (clipboard / coaching-diagram style) ────────────────────
+// White surface, black lines. Real NBA proportions in feet (94 × 50 full,
+// 47 × 50 half) — see https://en.wikipedia.org/wiki/Basketball_court for the
+// canonical dimensions used here. All features are drawn in "court feet"
+// then scaled into the canvas via a precomputed scale factor; this keeps
+// proportions correct on any viewport without per-feature percentage math.
+//
+// Both half-court and full-court are LANDSCAPE: long axis horizontal.
+// Half-court is the LEFT HALF of the full-court — basket at left, center
+// jump half-circle at the right edge.
 
-  const long  = Math.max(w, h)
-  const short = Math.min(w, h)
-  ctx.strokeStyle = '#ffffff'
-  ctx.lineWidth = Math.max(1, long * 0.004)
+function drawBasketballHalfCourtFeatures(ctx, cx, cy, scale, baselineFt, dir) {
+  // dir = +1 → basket on the LEFT,  key extends to the RIGHT from baselineFt
+  // dir = -1 → basket on the RIGHT, key extends to the LEFT  from baselineFt
+  const basketFt   = baselineFt + dir * 5.25     // rim center
+  const ftLineFt   = baselineFt + dir * 19       // free-throw line
+  const backboardFt = baselineFt + dir * 4       // backboard line
+  const keyMinFt   = Math.min(baselineFt, ftLineFt)
+  const keyDepthFt = Math.abs(ftLineFt - baselineFt)
 
-  const m  = long * 0.04
-  const cw = w - m * 2
-  const ch = h - m * 2
-  const midY = m + ch / 2
+  // Outer key (16 ft wide × 19 ft deep) + inner lane (12 ft wide × 19 ft).
+  // Two concentric rectangles give the modern NBA / college "wide painted
+  // area with an inner lane" look the user spec'd.
+  ctx.strokeRect(cx(keyMinFt), cy(-8), keyDepthFt * scale, 16 * scale)
+  ctx.strokeRect(cx(keyMinFt), cy(-6), keyDepthFt * scale, 12 * scale)
 
-  // Court boundary
-  ctx.strokeRect(m, m, cw, ch)
-
-  // Key (paint) on the right, from baseline extending left ~40 % of court width
-  const keyH = ch * 0.32
-  const keyW = cw * 0.4
-  const keyX = m + cw - keyW
-  const keyY = midY - keyH / 2
-  ctx.strokeRect(keyX, keyY, keyW, keyH)
-
-  // Free-throw arc (half-circle on the LEFT edge of the key, facing center)
-  const ftR = keyH * 0.55
+  // Free-throw circle straddling the free-throw line.
+  //   • Midcourt-side half (facing AWAY from basket) — SOLID
+  //   • Basket-side half (facing TOWARD basket)      — DASHED
+  // Coaching-diagram convention.
+  const ftR = 6 * scale
+  ctx.setLineDash([])
   ctx.beginPath()
-  ctx.arc(keyX, midY, ftR, -Math.PI / 2, Math.PI / 2)
+  if (dir > 0) ctx.arc(cx(ftLineFt), cy(0), ftR, -Math.PI / 2,  Math.PI / 2)
+  else         ctx.arc(cx(ftLineFt), cy(0), ftR,  Math.PI / 2, 3 * Math.PI / 2)
   ctx.stroke()
 
-  // Three-point arc — semicircle from corner to corner around the basket
-  const basketX = m + cw - cw * 0.04
-  const threePtR = ch * 0.45
+  ctx.setLineDash([1.2 * scale, 0.8 * scale])
   ctx.beginPath()
-  ctx.arc(basketX, midY, threePtR, Math.PI / 2, 3 * Math.PI / 2)
+  if (dir > 0) ctx.arc(cx(ftLineFt), cy(0), ftR,  Math.PI / 2, 3 * Math.PI / 2)
+  else         ctx.arc(cx(ftLineFt), cy(0), ftR, -Math.PI / 2,  Math.PI / 2)
+  ctx.stroke()
+  ctx.setLineDash([])
+
+  // Three-point line: two straight corner sections (22 ft from baseline) +
+  // an arc of radius 23.75 ft centered on the rim. The arc joins the
+  // straights at y = ±22 ft.
+  const threePtR = 23.75
+  const cornerY  = 22
+  const arcHalf  = Math.asin(cornerY / threePtR)
+  const straightEndFt = basketFt + dir * Math.cos(arcHalf) * threePtR
+
+  ctx.beginPath()
+  ctx.moveTo(cx(baselineFt), cy(-cornerY)); ctx.lineTo(cx(straightEndFt), cy(-cornerY))
+  ctx.moveTo(cx(baselineFt), cy( cornerY)); ctx.lineTo(cx(straightEndFt), cy( cornerY))
   ctx.stroke()
 
-  // Backboard (small vertical line on the baseline side of the basket)
   ctx.beginPath()
-  ctx.moveTo(basketX + long * 0.012, midY - keyH * 0.18)
-  ctx.lineTo(basketX + long * 0.012, midY + keyH * 0.18)
+  if (dir > 0) ctx.arc(cx(basketFt), cy(0), threePtR * scale, -arcHalf, arcHalf)
+  else         ctx.arc(cx(basketFt), cy(0), threePtR * scale, Math.PI - arcHalf, Math.PI + arcHalf)
   ctx.stroke()
 
-  // Basket (orange dot)
-  ctx.fillStyle = '#ff8800'
+  // Backboard line — 6 ft wide, 4 ft from baseline
   ctx.beginPath()
-  ctx.arc(basketX, midY, long * 0.009, 0, Math.PI * 2)
-  ctx.fill()
+  ctx.moveTo(cx(backboardFt), cy(-3)); ctx.lineTo(cx(backboardFt), cy(3))
+  ctx.stroke()
+
+  // Rim marker — small circle at the basket
+  ctx.beginPath()
+  ctx.arc(cx(basketFt), cy(0), 0.75 * scale, 0, Math.PI * 2)
+  ctx.stroke()
+
+  // Restricted area — dashed semicircle, 4 ft radius from basket,
+  // opens TOWARD midcourt (away from baseline)
+  ctx.setLineDash([0.7 * scale, 0.5 * scale])
+  ctx.beginPath()
+  if (dir > 0) ctx.arc(cx(basketFt), cy(0), 4 * scale, -Math.PI / 2,  Math.PI / 2)
+  else         ctx.arc(cx(basketFt), cy(0), 4 * scale,  Math.PI / 2, 3 * Math.PI / 2)
+  ctx.stroke()
+  ctx.setLineDash([])
+
+  // Lane block hash marks — 4 short ticks per side of the lane.
+  // Real NBA marks are at 7 / 8 / 11 / 14 ft from baseline; we use
+  // 6 / 9 / 12 / 15 for visual rhythm. Ticks extend outward from the
+  // outer key edge.
+  const tickLenFt = 0.8
+  ctx.beginPath()
+  for (const d of [6, 9, 12, 15]) {
+    const tx = baselineFt + dir * d
+    // Top lane edge (y = -8)
+    ctx.moveTo(cx(tx), cy(-8)); ctx.lineTo(cx(tx), cy(-8 - tickLenFt))
+    // Bottom lane edge (y = +8)
+    ctx.moveTo(cx(tx), cy( 8)); ctx.lineTo(cx(tx), cy( 8 + tickLenFt))
+  }
+  ctx.stroke()
 }
 
-// ── Basketball full-court ─────────────────────────────────────────────────────
-// Real-world ratio ~94 × 50 ft = 1.88 : 1. Long axis along the canvas's
-// longer dimension, rotated on portrait.
-function drawBasketballFullCourt(ctx, w, h) {
-  ctx.fillStyle = '#c89358'
+// Shared renderer for both half-court and full-court.
+function drawBasketballCourt(ctx, w, h, isFullCourt) {
+  const courtL = isFullCourt ? 94 : 47  // length in feet (long axis)
+  const courtW = 50                      // width in feet  (short axis)
+
+  // Background — pure white (clipboard / paper)
+  ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, w, h)
 
-  paintLandscape(ctx, w, h, (ctx, long, short) => {
-    ctx.strokeStyle = '#ffffff'
-    ctx.lineWidth = Math.max(1, long * 0.003)
+  // Fit court inside the canvas with a 6 % margin, preserving aspect.
+  const marginRatio = 0.06
+  const availW = w * (1 - 2 * marginRatio)
+  const availH = h * (1 - 2 * marginRatio)
+  const scale  = Math.min(availW / courtL, availH / courtW)
 
-    const m  = long * 0.04
-    const cw = long  - m * 2
-    const ch = short - m * 2
-    const midX = m + cw / 2
-    const midY = m + ch / 2
+  const courtPxL = courtL * scale
+  const courtPxW = courtW * scale
+  const courtX0  = (w - courtPxL) / 2  // canvas x of court x=0 (left baseline / left edge)
+  const courtMidY = h / 2              // canvas y of court y=0 (the centerline)
 
-    // Court boundary + center line + center circle
-    ctx.strokeRect(m, m, cw, ch)
-    ctx.beginPath(); ctx.moveTo(midX, m); ctx.lineTo(midX, m + ch); ctx.stroke()
-    ctx.beginPath(); ctx.arc(midX, midY, ch * 0.13, 0, Math.PI * 2); ctx.stroke()
+  // Coord converters: court feet → canvas px. Court x ∈ [0, courtL], y ∈ [-25, +25].
+  const cx = (ftX) => courtX0  + ftX * scale
+  const cy = (ftY) => courtMidY + ftY * scale
 
-    // Helper for the per-end features (key, free-throw arc, three-point arc, basket)
-    function drawHalf(baselineX, dir /* +1 = baseline on right, -1 = on left */) {
-      const keyH = ch * 0.32
-      const keyW = cw * 0.18
-      const keyX = dir > 0 ? baselineX - keyW : baselineX
-      const keyY = midY - keyH / 2
-      ctx.strokeRect(keyX, keyY, keyW, keyH)
+  // Line styling — black, ~3 px, rounded caps for a clean clipboard look.
+  ctx.strokeStyle = '#000000'
+  ctx.lineWidth   = Math.max(2, scale * 0.18)  // ≈ 0.18 ft → 3-4 px at typical sizes
+  ctx.lineCap     = 'round'
+  ctx.lineJoin    = 'round'
 
-      const ftR  = keyH * 0.55
-      const ftX  = dir > 0 ? baselineX - keyW : baselineX + keyW
-      ctx.beginPath()
-      if (dir > 0) ctx.arc(ftX, midY, ftR, -Math.PI / 2, Math.PI / 2)
-      else         ctx.arc(ftX, midY, ftR,  Math.PI / 2, 3 * Math.PI / 2)
-      ctx.stroke()
+  // Outer court boundary
+  ctx.strokeRect(cx(0), cy(-25), courtPxL, courtPxW)
 
-      const basketX = dir > 0 ? baselineX - cw * 0.025 : baselineX + cw * 0.025
-      const tR = ch * 0.42
-      ctx.beginPath()
-      if (dir > 0) ctx.arc(basketX, midY, tR,  Math.PI / 2, 3 * Math.PI / 2)
-      else         ctx.arc(basketX, midY, tR, -Math.PI / 2,     Math.PI / 2)
-      ctx.stroke()
+  // Left-half features (basket on left)
+  drawBasketballHalfCourtFeatures(ctx, cx, cy, scale, 0, +1)
 
-      ctx.fillStyle = '#ff8800'
-      ctx.beginPath(); ctx.arc(basketX, midY, long * 0.006, 0, Math.PI * 2); ctx.fill()
-    }
-    drawHalf(m + cw, +1)
-    drawHalf(m, -1)
-  })
+  if (isFullCourt) {
+    // Right-half features (basket on right, mirrored)
+    drawBasketballHalfCourtFeatures(ctx, cx, cy, scale, courtL, -1)
+
+    // Half-court line (vertical, bisecting the court)
+    ctx.beginPath()
+    ctx.moveTo(cx(courtL / 2), cy(-25))
+    ctx.lineTo(cx(courtL / 2), cy( 25))
+    ctx.stroke()
+
+    // Center circle — full circle (6 ft radius), bisected by the
+    // half-court line.
+    ctx.beginPath()
+    ctx.arc(cx(courtL / 2), cy(0), 6 * scale, 0, Math.PI * 2)
+    ctx.stroke()
+  } else {
+    // Half-court — show the LEFT half of the center circle on the right edge
+    // (so it visually completes when you flip to a full-court mental model).
+    ctx.beginPath()
+    ctx.arc(cx(courtL), cy(0), 6 * scale, Math.PI / 2, 3 * Math.PI / 2)
+    ctx.stroke()
+  }
+
+  // Coach's-box hash marks — two small ticks on each sideline near the
+  // half-court line. For full-court the midcourt is at courtL/2; for
+  // half-court it's at the right edge (where the half-court line lives).
+  const midFt   = isFullCourt ? courtL / 2 : courtL
+  const tickGap = 2     // ticks at ±2 ft from the centerline mark
+  const tickLen = 0.8
+  ctx.beginPath()
+  for (const offset of [-tickGap, +tickGap]) {
+    // Top sideline (y = -25), tick extends inward (downward)
+    ctx.moveTo(cx(midFt + offset), cy(-25))
+    ctx.lineTo(cx(midFt + offset), cy(-25 + tickLen))
+    // Bottom sideline (y = +25), tick extends inward (upward)
+    ctx.moveTo(cx(midFt + offset), cy( 25))
+    ctx.lineTo(cx(midFt + offset), cy( 25 - tickLen))
+  }
+  ctx.stroke()
 }
+
+function drawBasketballHalfCourt(ctx, w, h) { drawBasketballCourt(ctx, w, h, false) }
+function drawBasketballFullCourt(ctx, w, h) { drawBasketballCourt(ctx, w, h, true)  }
 
 // ── Baseball / softball field ─────────────────────────────────────────────────
 // Diamond with home plate at bottom-center, 2nd base directly above, foul
