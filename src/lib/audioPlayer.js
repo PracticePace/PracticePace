@@ -112,17 +112,31 @@ function getPrevIndex() {
 }
 
 // ── Playback controls ─────────────────────────────────────────────────────────
+// NOTE on optimistic state updates: in playSongAtIndex / togglePlay /
+// resume below we set `isPlaying = true` and emit the snapshot BEFORE
+// awaiting audio.play(). The previous order was post-await, which left a
+// 100-500 ms window on iPad (network + decode) where observers saw
+// isPlaying:false even though the user had clicked play. The per-drill
+// cue orchestration reads getSnapshot() during that window when a drill
+// transition happens close to a song change — if isPlaying came back
+// false the cue skipped its audioPause() call and music played on top
+// of the cue (the BUG 1 report). Setting the state optimistically and
+// reverting if play() rejects closes the race without changing the
+// audible behaviour (a failed play() emits 'error' and flips state
+// back).
 export async function playSongAtIndex(index) {
   if (index < 0 || index >= playlist.length) return
   const song = playlist[index]
   const a    = ensureAudio()
   a.src      = getSongUrl(song.storage_path)
   a.load()
+  // Optimistic — see NOTE above.
+  currentIndex = index
+  isPlaying    = true
+  console.log('[Audio] playSongAtIndex →', { index, songId: song?.id, name: song?.name })
+  emit('state', getSnapshot())
   try {
     await a.play()
-    currentIndex = index
-    isPlaying    = true
-    emit('state', getSnapshot())
   } catch (err) {
     console.error('[AudioPlayer] Play error:', err.message)
     isPlaying = false
@@ -134,20 +148,28 @@ export async function playSongAtIndex(index) {
 export async function togglePlay() {
   const a = ensureAudio()
   if (isPlaying) {
+    console.log('[Audio] togglePlay → pausing (was playing)')
     a.pause()
     isPlaying = false
     emit('state', getSnapshot())
   } else {
     if (currentIndex === -1 && playlist.length > 0) {
+      console.log('[Audio] togglePlay → starting playlist[0]')
       await playSongAtIndex(0)
     } else if (currentIndex >= 0) {
+      // Optimistic — see NOTE above.
+      isPlaying = true
+      console.log('[Audio] togglePlay → resuming at currentIndex:', currentIndex)
+      emit('state', getSnapshot())
       try {
         await a.play()
-        isPlaying = true
-        emit('state', getSnapshot())
       } catch (err) {
+        isPlaying = false
+        emit('state', getSnapshot())
         emit('error', err.message)
       }
+    } else {
+      console.log('[Audio] togglePlay → no-op (currentIndex:', currentIndex, ', playlist length:', playlist.length, ')')
     }
   }
 }
@@ -158,14 +180,20 @@ export async function togglePlay() {
  * orchestrators (e.g. the per-drill cue player) that need state-preserving
  * pause without the toggle semantics of togglePlay().
  *
- * Idempotent: no-op if already paused or if there is no current track.
+ * Idempotent: calling pause() when already paused is a no-op on the audio
+ * element. We DROPPED the previous `if (!isPlaying) return` guard so the
+ * function still pauses the underlying audio element even if the module
+ * bookkeeping has drifted out of sync — a defensive fix for BUG 1 (cue
+ * not pausing music). The emit is gated so we only fire 'state' if
+ * something actually changed.
  */
 export function pause() {
-  if (!isPlaying) return
   if (!audio) return
+  const stateChanged = isPlaying || !audio.paused
   audio.pause()
   isPlaying = false
-  emit('state', getSnapshot())
+  console.log('[Audio] pause() → stateChanged:', stateChanged, 'audio.paused now:', audio.paused)
+  if (stateChanged) emit('state', getSnapshot())
 }
 
 /**
@@ -175,14 +203,18 @@ export function pause() {
  * like togglePlay().
  */
 export async function resume() {
-  if (isPlaying) return
+  if (isPlaying && audio && !audio.paused) return
   if (!audio) return
   if (currentIndex < 0) return
+  // Optimistic — see NOTE on playSongAtIndex above.
+  isPlaying = true
+  console.log('[Audio] resume() → currentIndex:', currentIndex)
+  emit('state', getSnapshot())
   try {
     await audio.play()
-    isPlaying = true
-    emit('state', getSnapshot())
   } catch (err) {
+    isPlaying = false
+    emit('state', getSnapshot())
     emit('error', err.message)
   }
 }
@@ -228,12 +260,16 @@ export function seek(seconds) {
 
 /** Update the player's playlist. Keeps the currently playing song stable by id. */
 export function setPlaylist(songs) {
+  const beforeIdx = currentIndex
+  const beforeId  = currentIndex >= 0 ? playlist[currentIndex]?.id : null
   if (currentIndex >= 0) {
     const currentId = playlist[currentIndex]?.id
     const newIdx    = songs.findIndex(s => s.id === currentId)
     currentIndex    = newIdx  // -1 if song was deleted
   }
   playlist = songs
+  console.log('[Audio] setPlaylist →',
+    { beforeIdx, beforeId, afterIdx: currentIndex, listSize: songs.length, isPlaying, paused: audio?.paused ?? null })
   emit('state', getSnapshot())
 }
 
@@ -273,6 +309,11 @@ export async function duckForHorn(hornFn) {
 
 // ── Stop & reset ──────────────────────────────────────────────────────────────
 export function stop() {
+  // [BUG 2 diagnostic] Log a stack trace so we can identify the caller if
+  // music ever resets unexpectedly on navigation. The expected callers are
+  // ONLY the bulk-delete batch in AudioSection (and only when the currently
+  // playing song is in the batch). Any other call site is a bug.
+  console.log('[Audio] stop() called — stack:', new Error().stack)
   if (audio) {
     audio.pause()
     audio.src = ''

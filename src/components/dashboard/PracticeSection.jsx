@@ -304,11 +304,23 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     // Capture main-player state BEFORE pausing (snapshot is sync).
     const mainSnap = getAudioSnapshot()
     cueWasPlayingMainRef.current = !!mainSnap.isPlaying && mainSnap.currentIndex >= 0
+    // [Cue BUG 1 diagnostic] If music is playing but the snapshot says
+    // isPlaying:false (the race window during await audio.play() — closed
+    // by the optimistic-state fix in audioPlayer this commit), we'd skip
+    // audioPause and the cue would play on top of music. This log shows
+    // exactly what the orchestration saw at decision time.
+    console.log('[Cue] decision →', {
+      cueUrl,
+      mainSnap_isPlaying:    mainSnap.isPlaying,
+      mainSnap_currentIndex: mainSnap.currentIndex,
+      willPauseMain:         cueWasPlayingMainRef.current,
+    })
     if (cueWasPlayingMainRef.current) audioPause()
 
     // Fire the cue. onEnded only runs on natural completion / load error.
     playCue(cueUrl, {
       onEnded: () => {
+        console.log('[Cue] ended, will resume:', cueWasPlayingMainRef.current)
         if (cueWasPlayingMainRef.current) audioResume()
         cueWasPlayingMainRef.current = false
       },
