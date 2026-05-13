@@ -6,7 +6,7 @@
 // Pattern matches audioPlayer.js: subscribe(fn) / getSnapshot() / actions.
 
 import { playAirHorn, playBell, playPeriodEnd, loadHorn, loadBell, getAutoSounds, setAutoSound } from './sounds'
-import { duckForHorn } from './audioPlayer'
+import { duckForHorn, pause as audioPause } from './audioPlayer'
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = 'pp_practice_timer'
@@ -51,6 +51,11 @@ let s = {
   // — the semantic ("alert near end of drill") is the same, only the sound
   // and threshold changed. New installs default to true.
   bellAt30:         savedAutoSounds.bellAt30 ?? savedAutoSounds.whistleAt60 ?? true,
+  // stopMusicOnEnd — auto-pause the playlist when practice TRULY ends
+  // (last drill expires with no next drill, OR coach taps Next past the
+  // last drill). Default on per spec; persisted in localStorage via
+  // setAutoSound so it lives next to the other audio toggles.
+  stopMusicOnEnd:   savedAutoSounds.stopMusicOnEnd ?? true,
 }
 
 // ── Restore persisted timer snapshot (handles page refresh) ───────────────────
@@ -238,16 +243,37 @@ function tick() {
       return
     }
 
-    // Stop
+    // Stop — practice has TRULY ended (last drill expired with no auto-
+    // advance target and overrun isn't enabled).
     s.isRunning   = false
     s.secondsLeft = 0
     stopInterval()
+    maybeStopMusicOnEnd()
     emit()
     return
   }
 
   s.secondsLeft -= 1
   emit()
+}
+
+// Conservative "practice has ended" hook. Called ONLY from the two paths
+// that end the script entirely:
+//   • tick() — last drill's secondsLeft hits 0 with no next drill and
+//     overrun off
+//   • next() — coach taps Next past the last drill
+// Pauses the audioPlayer playlist (state-preserving — coach can hit play
+// again to resume from the same currentTime). Idempotent. Wraps the call
+// in try/catch so an audioPlayer error can't take down the timer tick.
+// Cue MP3s playing at that moment continue uninterrupted because they
+// run on a separate audio element (cuePlayer.js). The horn that fires
+// at end-of-drill is also unaffected — it's a separate AudioContext
+// source with its own gain envelope.
+function maybeStopMusicOnEnd() {
+  if (!s.stopMusicOnEnd) return
+  try { audioPause() } catch (e) {
+    console.warn('[Timer] stopMusicOnEnd → audioPause error:', e?.message ?? e)
+  }
 }
 
 // ── Public actions ────────────────────────────────────────────────────────────
@@ -317,9 +343,10 @@ export function next() {
     s.hasStarted   = true
     startInterval()
   } else {
-    // Already at last drill — just stop
+    // Already at last drill — practice has TRULY ended.
     stopInterval()
     s.isRunning = false
+    maybeStopMusicOnEnd()
   }
   emit()
 }
@@ -420,5 +447,11 @@ export function setHornOnEnd(val) {
 export function setBellAt30(val) {
   s.bellAt30 = val
   setAutoSound('bellAt30', val)
+  emit()
+}
+
+export function setStopMusicOnEnd(val) {
+  s.stopMusicOnEnd = val
+  setAutoSound('stopMusicOnEnd', val)
   emit()
 }

@@ -4,7 +4,7 @@ import {
   startPause, reset, jumpTo, next,
   setTimeTo, addMinute, subtractMinute,
   setActiveScript,
-  setAutoAdvance, setAllowOverrun, setHornOnEnd, setBellAt30,
+  setAutoAdvance, setAllowOverrun, setHornOnEnd, setBellAt30, setStopMusicOnEnd,
 } from '../../lib/practiceTimer'
 import {
   subscribe as subscribeAudio,
@@ -39,10 +39,12 @@ function clockColor(left, total) {
 
 const TIME_PRESETS = [5, 10, 15, 20]
 
-// ── Music mini controls (bottom-left of practice tab) ───────────────────────
-// Compact prev / play-pause / next quick-reach controls. Wires straight into the
-// existing audioPlayer singleton — no new audio logic. Mini player bar elsewhere
-// is unaffected; this is just an additional surface for the same controls.
+// ── Music mini controls (left side of slide-up controls panel) ──────────────
+// Compact prev / play-pause / next quick-reach controls. Wires straight into
+// the existing audioPlayer singleton — no new audio logic. The standalone
+// "Now Playing" docked bar at the bottom of the screen was removed when the
+// song-name display was integrated here — the slide-up panel is now the
+// single surface for music transport AND current-song info.
 const MusicPlayIcon  = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
 const MusicPauseIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
 const MusicSkipBack  = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
@@ -58,6 +60,7 @@ function MusicMiniControls({ orgColor }) {
 
   const hasPlaylist = (snap.playlist?.length ?? 0) > 0
   const isPlaying   = !!snap.isPlaying
+  const songName    = snap.song?.name ?? ''
 
   const btnStyle = (disabled) => ({
     backgroundColor: '#0d0800',
@@ -69,8 +72,7 @@ function MusicMiniControls({ orgColor }) {
 
   return (
     <div
-      // Bottom-left of the practice tab. Rendered as the last flex child of
-      // the inner column with self-start so it sits on the left edge.
+      // Left side of the slide-up controls panel.
       className="shrink-0 self-start mt-1 flex items-center gap-2 rounded-2xl px-2 py-2"
       style={{
         backgroundColor: 'rgba(13,8,0,0.85)',
@@ -112,6 +114,28 @@ function MusicMiniControls({ orgColor }) {
       >
         <MusicSkipFwd />
       </button>
+
+      {/* Current-song name — replaces the standalone "Now Playing" docked
+          bar that used to live at the bottom of every tab. Inline with the
+          transport buttons, no "Now Playing" label (context is obvious).
+          Truncates with ellipsis on long titles; capped max-width so a
+          7-minute psyche-up mix doesn't push the rest of the toolbar
+          off-screen on narrower iPads. */}
+      {hasPlaylist && songName && (
+        <span
+          className="text-xs font-semibold truncate pl-1 pr-2"
+          style={{
+            color:    '#e8d8c8',
+            maxWidth: 160,
+            // Slight letter-spacing tightening so it visually balances
+            // the chunky transport buttons next to it.
+            letterSpacing: '0.01em',
+          }}
+          title={songName}
+        >
+          {songName}
+        </span>
+      )}
     </div>
   )
 }
@@ -219,7 +243,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
     secondsLeft, totalSeconds,
     currentDrillIdx,
     isOverrun, overrunSeconds,
-    autoAdvance, allowOverrun, hornOnEnd, bellAt30,
+    autoAdvance, allowOverrun, hornOnEnd, bellAt30, stopMusicOnEnd,
   } = snap
   // Normalize drill shape defensively: legacy seeded scripts (and any drill
   // that pre-dates the per-drill notes / cue features) may only carry
@@ -617,8 +641,11 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
           </span>
         </div>
 
-        {/* ── 4. Divider ────────────────────────────────────────────────────── */}
-        <div className="shrink-0 mt-2 mb-2 w-full" style={{ height: 1, backgroundColor: '#1a0000' }} />
+        {/* (Divider removed — was a stray 1 px line between the timer and
+            the "Next Up" block, leftover from the previous timer-frame
+            removal in commit 03c8607. The bottom of the timer numbers
+            now floats cleanly above "Next Up" with no horizontal rule
+            bisecting the display.) */}
 
         {/* ── 5. Next up ────────────────────────────────────────────────────── */}
         <div className="shrink-0 flex flex-col items-center gap-0.5" style={{ minHeight: 56 }}>
@@ -945,6 +972,12 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
             active={bellAt30}
             onColor={orgColor}
             onClick={() => setBellAt30(!bellAt30)}
+          />
+          <ToggleBtn
+            label="Stop Music at End"
+            active={stopMusicOnEnd}
+            onColor={orgColor}
+            onClick={() => setStopMusicOnEnd(!stopMusicOnEnd)}
           />
         </div>
 

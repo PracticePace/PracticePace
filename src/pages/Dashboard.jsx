@@ -4,12 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import Logo from '../components/Logo'
 import AudioSection from '../components/dashboard/AudioSection'
-import {
-  subscribe as subscribeAudio,
-  getSnapshot as getAudioSnapshot,
-  togglePlay as audioTogglePlay,
-  setPlaylist as setAudioPlaylist,
-} from '../lib/audioPlayer'
+import { setPlaylist as setAudioPlaylist } from '../lib/audioPlayer'
 
 import PracticeSection   from '../components/dashboard/PracticeSection'
 import ScriptsSection    from '../components/dashboard/ScriptsSection'
@@ -133,15 +128,11 @@ export default function Dashboard() {
     return () => document.removeEventListener('visibilitychange', handleVisibility)
   }, [])
 
-  // ── MP3 mini player state ──────────────────────────────────────────────────
-  const [audioSnap, setAudioSnap] = useState(() => getAudioSnapshot())
-  useEffect(() => {
-    return subscribeAudio((type, payload) => {
-      if (type === 'state') setAudioSnap({ ...payload })
-    })
-  }, [])
-
-  const showMiniPlayer = !!(audioSnap.song && audioSnap.isPlaying)
+  // (Previously this component subscribed to audioPlayer state to render a
+  // standalone "Now Playing" docked bar above the tab bar. That bar was
+  // removed; the song-name + transport controls now live exclusively in
+  // the Practice tab's slide-up MusicMiniControls. Dashboard no longer
+  // needs to observe audio state directly.)
 
   const orgColor = org?.primary_color ?? '#cc1111'
 
@@ -618,7 +609,12 @@ export default function Dashboard() {
       {/* ── Body ── */}
       <div className="flex flex-1 overflow-hidden">
         <main className="flex-1 flex flex-col overflow-hidden"
-          style={{ paddingBottom: showMiniPlayer ? 120 : 68 }}>
+          // 68 px reserves space for the fixed-position bottom tab bar.
+          // Used to be `showMiniPlayer ? 120 : 68` when the standalone
+          // "Now Playing" bar lived above the tabs — that bar moved into
+          // the Practice tab's slide-up panel, so the extra 52 px is no
+          // longer needed.
+          style={{ paddingBottom: 68 }}>
 
           {section === 'practice' && (
             <PracticeSection
@@ -696,48 +692,17 @@ export default function Dashboard() {
         </main>
       </div>
 
-      {/* ── MP3 mini player (shown on all tabs when a song is playing) ── */}
-      {showMiniPlayer && (() => {
-        const { song, isPlaying } = audioSnap
-        return (
-          <div
-            className="fixed left-0 right-0 flex items-center gap-3 px-4"
-            style={{
-              bottom: 68, height: 52, zIndex: 19,
-              backgroundColor: '#0d0800',
-              borderTop: `1px solid ${orgColor}33`,
-              backdropFilter: 'blur(8px)',
-            }}
-          >
-            <div className="w-9 h-9 rounded-lg flex-shrink-0 flex items-center justify-center"
-              style={{ backgroundColor: `${orgColor}22` }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={orgColor} strokeWidth="2" strokeLinecap="round">
-                <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
-              </svg>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-bold text-white truncate leading-tight">{song?.name ?? ''}</p>
-              <p className="text-xs leading-tight" style={{ color: '#9a8080' }}>Now Playing</p>
-            </div>
-            <button
-              onClick={() => audioTogglePlay().catch(() => {})}
-              className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all active:scale-90"
-              style={{ backgroundColor: orgColor, boxShadow: `0 0 12px ${orgColor}66` }}
-            >
-              {isPlaying ? (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
-                  <rect x="6" y="4" width="4" height="16" rx="1"/>
-                  <rect x="14" y="4" width="4" height="16" rx="1"/>
-                </svg>
-              ) : (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="white" style={{ marginLeft: 2 }}>
-                  <polygon points="5 3 19 12 5 21 5 3"/>
-                </svg>
-              )}
-            </button>
-          </div>
-        )
-      })()}
+      {/* (The standalone "Now Playing" docked bar that used to live here
+          — between <main> and the tab bar, height 52, fixed bottom: 68 —
+          was removed when the song-name display was integrated into the
+          Practice tab's slide-up MusicMiniControls. The bottom of the
+          stage view is now empty between "Next Up" and the bottom nav,
+          with only the CONTROLS peek handle visible. The audioPlayer
+          singleton continues to play across navigation — what was
+          removed was just the redundant UI surface. The `showMiniPlayer`
+          flag and the conditional `paddingBottom` on <main> were
+          collapsed to a constant 68 px since no extra space is needed
+          for a non-existent bar. */}
 
       {/* ── Tab bar ── */}
       <nav
