@@ -603,58 +603,78 @@ function drawTrack(ctx, w, h) {
 }
 
 // ── Cheer mat ─────────────────────────────────────────────────────────────────
-// 42 × 42 ft competition mat (square). Blue surface with white centerline +
-// the four corner X markings used to align routines. Drawn square so the
-// mat reads true-to-life on whatever viewport — coaches diagramming
-// stunts/tumbling care about proportion (which corner is which) more than
-// filling the canvas.
+// Standard USA competition mat: 42 × 54 ft carpet-bonded-foam, built from
+// 9 panels each 6 ft wide × 42 ft long, joined side-by-side. Laid out
+// landscape so the 54 ft long dimension runs horizontal. The panel seams
+// are visible as black vertical lines — coaches use them as floor
+// reference points when positioning stunts and formations.
+//
+// Two X marks sit on the vertical centerline (the seam between panels
+// 4 and 5), one near the top edge and one near the bottom edge. These
+// are the spotter / alignment marks coaches use to anchor the routine's
+// front-back axis.
+//
+// Royal blue is the standard competition mat colour; other common mats
+// are red or black, but blue reads cleanest against white drawing strokes
+// and matches the reference photo the user provided.
 function drawCheerMat(ctx, w, h) {
   // Backdrop — dark navy outside the mat so the blue mat reads against it.
-  // Inside the mat box we then fill with the regulation blue.
   ctx.fillStyle = '#0a1424'
   ctx.fillRect(0, 0, w, h)
 
-  // Mat is square. Fit it with a 6 % margin from the shorter dimension.
-  const short = Math.min(w, h)
-  const matSide = short * 0.88
-  const matX = (w - matSide) / 2
-  const matY = (h - matSide) / 2
+  // Mat aspect 54:42 ≈ 1.286 : 1 (landscape). Fit inside the canvas with
+  // a 5 % margin, preserving aspect.
+  const marginRatio = 0.05
+  const availW = w * (1 - 2 * marginRatio)
+  const availH = h * (1 - 2 * marginRatio)
+  const ASPECT = 54 / 42
+  let matW, matH
+  if (availW / availH >= ASPECT) {
+    matH = availH
+    matW = matH * ASPECT
+  } else {
+    matW = availW
+    matH = matW / ASPECT
+  }
+  const matX = (w - matW) / 2
+  const matY = (h - matH) / 2
 
-  // Mat surface — competition royal blue (a common Spirit / Resilite shade)
+  // Mat surface — competition royal blue (~Spirit / Resilite shade).
   ctx.fillStyle = '#1d4ed8'
-  ctx.fillRect(matX, matY, matSide, matSide)
+  ctx.fillRect(matX, matY, matW, matH)
 
-  // White outer boundary
-  ctx.strokeStyle = '#ffffff'
-  ctx.lineWidth = Math.max(2, matSide * 0.006)
-  ctx.lineCap = 'round'
-  ctx.strokeRect(matX, matY, matSide, matSide)
+  // Black outer boundary. Slightly heavier than the panel seams.
+  ctx.strokeStyle = '#000000'
+  ctx.lineWidth = Math.max(2, matW * 0.004)
+  ctx.lineCap = 'butt'   // square caps — panel seams meet the border crisply
+  ctx.strokeRect(matX, matY, matW, matH)
 
-  // Centerline — horizontal across the middle of the mat, the line the
-  // front of the formation aligns to. Slightly thinner than the boundary.
-  ctx.lineWidth = Math.max(1.5, matSide * 0.004)
-  ctx.beginPath()
-  ctx.moveTo(matX,            matY + matSide / 2)
-  ctx.lineTo(matX + matSide,  matY + matSide / 2)
-  ctx.stroke()
-
-  // Four corner X markings — used for routine alignment. Drawn ~2 ft in
-  // from each corner of the 42 ft mat (≈ 4.7 % of mat side). Each X is
-  // a small "+" rotated 45 °; cleaner than drawing two crossing diagonals
-  // because the canvas line-cap rounding hides the join.
-  const xInset = matSide * 0.10  // distance from corner to centre of the X
-  const xSize  = matSide * 0.04  // half-length of each arm of the X
-  ctx.lineWidth = Math.max(2, matSide * 0.007)
-  const corners = [
-    [matX + xInset,           matY + xInset],            // top-left
-    [matX + matSide - xInset, matY + xInset],            // top-right
-    [matX + xInset,           matY + matSide - xInset],  // bottom-left
-    [matX + matSide - xInset, matY + matSide - xInset],  // bottom-right
-  ]
-  for (const [cxX, cyY] of corners) {
+  // Eight vertical panel seams — dividing the mat into 9 equal-width
+  // panels of 6 ft each. The middle seam (i = 4 of 0..7, indexing from
+  // the left interior seam) is the vertical centerline.
+  const PANELS = 9
+  ctx.lineWidth = Math.max(1.5, matW * 0.0025)
+  for (let i = 1; i < PANELS; i++) {
+    const x = matX + (matW * i) / PANELS
     ctx.beginPath()
-    ctx.moveTo(cxX - xSize, cyY - xSize); ctx.lineTo(cxX + xSize, cyY + xSize)
-    ctx.moveTo(cxX + xSize, cyY - xSize); ctx.lineTo(cxX - xSize, cyY + xSize)
+    ctx.moveTo(x, matY)
+    ctx.lineTo(x, matY + matH)
+    ctx.stroke()
+  }
+
+  // Two X marks on the vertical centerline — one near the top edge, one
+  // near the bottom. ~10 % inset from each end. Drawn as two crossing
+  // diagonal strokes per X, slightly heavier than the panel seams so
+  // they read at a glance.
+  const centerX = matX + matW / 2
+  const xInsetY = matH * 0.10
+  const xSize   = matH * 0.025  // half-length of each arm
+  ctx.lineWidth = Math.max(2, matH * 0.006)
+  ctx.lineCap = 'round'
+  for (const cyY of [matY + xInsetY, matY + matH - xInsetY]) {
+    ctx.beginPath()
+    ctx.moveTo(centerX - xSize, cyY - xSize); ctx.lineTo(centerX + xSize, cyY + xSize)
+    ctx.moveTo(centerX + xSize, cyY - xSize); ctx.lineTo(centerX - xSize, cyY + xSize)
     ctx.stroke()
   }
 }
