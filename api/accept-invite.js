@@ -98,33 +98,45 @@ export default async function handler(req) {
       }, 400)
     }
 
-    // 2. Resolve account_id from the org's AD profile, NOT from
-    //    organizations.account_id directly. Reason: organizations.account_id
-    //    can drift when an account is upgraded/replaced (e.g. AD moves from
-    //    a single-program trial to a school plan; a new accounts row is
-    //    created and the AD's profile gets repointed at it, but
-    //    organizations.account_id can be left pointing at the obsolete row).
-    //    The AD's profile is the live source of truth for which account
-    //    the invitee should join — RLS uses get_my_account_id() (which reads
-    //    profiles.account_id) for org-membership SELECTs, so anchoring the
-    //    coach's account_id to the AD's keeps them visible to each other.
-    const ownerRes = await fetch(
-      `${supabaseUrl}/rest/v1/profiles?org_id=eq.${encodeURIComponent(org_id)}&role=eq.ad&select=account_id&limit=1`,
+    // 2. Resolve account_id directly from the organization row.
+    //    organizations.account_id IS the authoritative source for which
+    //    account the invitee joins — every org is created with a valid
+    //    account_id (api/create-account.js for first-time signup,
+    //    api/add-program.js for additional programs on existing
+    //    accounts), and the column is FK-constrained to public.accounts.
+    //
+    //    Why not via the org's AD profile (the previous strategy)?
+    //      • ADs are account-scoped, not org-scoped. A newly-created
+    //        program has zero profiles pinned to its org_id (the AD's
+    //        profile.org_id stays at their home org). The previous
+    //        `profiles WHERE org_id = X AND role = 'ad'` query returned
+    //        nothing for Girls Basketball-style invites and the
+    //        endpoint died.
+    //      • The drift risk the earlier comment cited (an upgrade
+    //        creating a new accounts row while organizations.account_id
+    //        stayed pointing at the old one) was an artifact of the
+    //        pre-Commit-2b single-program model. The current
+    //        Add-Program flow doesn't introduce drift — orgs always
+    //        carry the correct account_id at creation, and we verified
+    //        there's no drift in the live DB before flipping this.
+    const orgRes = await fetch(
+      `${supabaseUrl}/rest/v1/organizations?id=eq.${encodeURIComponent(org_id)}&select=account_id&limit=1`,
       { headers: sbHeaders(serviceKey) }
     )
-    if (!ownerRes.ok) {
-      const text = await ownerRes.text().catch(() => '')
-      console.error('[accept-invite] AD lookup failed:', ownerRes.status, text)
+    if (!orgRes.ok) {
+      const text = await orgRes.text().catch(() => '')
+      console.error('[accept-invite] org lookup failed:', orgRes.status, text)
       return json({ error: 'Could not look up your program.' }, 502)
     }
-    const owners = await ownerRes.json()
-    if (!Array.isArray(owners) || owners.length === 0) {
-      console.error('[accept-invite] no AD profile found for org', org_id)
+    const orgs = await orgRes.json()
+    const orgRow = Array.isArray(orgs) ? orgs[0] : null
+    if (!orgRow || !orgRow.account_id) {
+      console.error('[accept-invite] no organization (or no account_id) for org_id', org_id)
       return json({
-        error: `Cannot determine account for invite: no AD profile found for org ${org_id}. Ask your head coach to send a fresh invite.`,
+        error: `This invite points at a program (${org_id}) we can't find. Ask your head coach or athletic director to send a fresh invite.`,
       }, 404)
     }
-    const account_id = owners[0].account_id
+    const account_id = orgRow.account_id
 
     // 3. Upsert the profile row. ON CONFLICT (id) makes this idempotent —
     //    safe to retry from the client without creating duplicates.
