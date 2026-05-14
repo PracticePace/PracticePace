@@ -14,6 +14,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { SPORTS } from '../../lib/sports'
 import { roleLabel } from '../../lib/permissions'
+import AddProgramDialog from './AddProgramDialog'
 
 // Allowed role values (DB-side). Order matters for the invite dropdown:
 // the default selection is assistant_coach (most-common invite). Athletic
@@ -81,7 +82,13 @@ const STATUS_LABELS = {
 }
 
 export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
-  subscription, onSubscriptionUpdate, onStartCheckout, checkoutLoading, checkoutError }) {
+  subscription, onSubscriptionUpdate, onStartCheckout, checkoutLoading, checkoutError,
+  // Multi-program props (Commit 2b). programCount is the live count of
+  // organizations on the account — drives both the "Athletic Director"
+  // vs "Head Coach" label decision AND whether the Add Program upgrade
+  // dialog needs the AD designation step. onProgramCreated is the
+  // notify-parent callback fired after a successful program insert.
+  programCount = 1, onProgramCreated }) {
   const { user, loading: authLoading } = useAuth()
 
   const [form, setForm] = useState({
@@ -128,8 +135,18 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
   // "Athletic Director" (multi-program school) or "Head Coach" (single-
   // program account — the AD is also the de-facto HC). The DB value stays
   // 'ad' either way; this is purely a display decision. See roleLabel()
-  // in src/lib/permissions.js.
-  const [isMultiProgram, setIsMultiProgram] = useState(false)
+  // in src/lib/permissions.js. Source of truth is the parent's allOrgs
+  // count (passed as programCount) — Commit 2b lifted this from the
+  // section-local query so the value stays in sync after Add Program.
+  const isMultiProgram = (programCount ?? 0) >= 2
+
+  // ── Add Program dialog state ─────────────────────────────────────────────
+  // Eligibility (button visibility) is computed at render time. Open state
+  // is toggled by the button + the dialog's close handler.
+  const [showAddProgram, setShowAddProgram] = useState(false)
+  const canAddProgram =
+    profile?.role === 'ad'
+    || (profile?.role === 'head_coach' && programCount === 1)
 
   // Sync form whenever org or subscription changes (also covers initial load
   // when either arrives async).
@@ -145,31 +162,6 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
       loadCoaches()
     }
   }, [org?.id, org?.name, org?.sport, org?.primary_color, org?.secondary_color, subscription?.id, subscription?.program_name_color])
-
-  // Count organizations on this account — drives the "Athletic Director" vs
-  // "Head Coach" label for 'ad' role users. RLS lets any account member
-  // SELECT organizations rows scoped to their account, so no service-role
-  // hop needed.
-  useEffect(() => {
-    let cancelled = false
-    async function loadProgramCount() {
-      const accountId = subscription?.id
-      if (!accountId) { setIsMultiProgram(false); return }
-      const { count, error } = await supabase
-        .from('organizations')
-        .select('id', { count: 'exact', head: true })
-        .eq('account_id', accountId)
-      if (cancelled) return
-      if (error) {
-        console.warn('[Settings] program count query failed:', error.message)
-        setIsMultiProgram(false)
-        return
-      }
-      setIsMultiProgram((count ?? 0) >= 2)
-    }
-    loadProgramCount()
-    return () => { cancelled = true }
-  }, [subscription?.id])
 
   async function loadCoaches() {
     if (!org?.id) return
@@ -279,7 +271,14 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
 
     try {
       const ext  = file.name.split('.').pop()
-      const path = `org-${org.id}/practice-bg.${ext}`
+      // Path convention: <org_id>/practice-bg.<ext>. Must match the
+      // backgrounds bucket RLS (migration 20260517000000) which gates
+      // writes on split_part(name,'/',1) = caller's profile.org_id (or
+      // any org in the AD's account). The legacy `org-<uuid>/...` paths
+      // from before this migration become write-orphans but are still
+      // publicly readable via existing org.background_url values, so the
+      // app keeps working — we just can't replace those exact files.
+      const path = `${org.id}/practice-bg.${ext}`
 
       const { error: upErr } = await supabase.storage
         .from('backgrounds')
@@ -332,9 +331,13 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
   }
 
   // ── Program logo upload ────────────────────────────────────────────────────
-  // Stored in the existing `backgrounds` storage bucket under a `logos/` path
-  // prefix to avoid creating a second bucket. Public URL persists on
-  // organizations.logo_url (column already exists in the schema).
+  // Stored in the existing `backgrounds` storage bucket so we don't need
+  // a second bucket. Path convention is the same as the practice-bg image:
+  // <org_id>/program-logo.<ext>. This matches the bucket RLS (migration
+  // 20260517000000) which gates writes on split_part(name,'/',1) =
+  // caller's profile.org_id. Legacy paths `logos/<uuid>/program-logo.<ext>`
+  // from before this migration are write-orphans (publicly readable, but
+  // can't be overwritten by anyone) — new uploads use the flat layout.
   async function uploadLogo(e) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -349,7 +352,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
 
     try {
       const ext  = file.name.split('.').pop()
-      const path = `logos/${org.id}/program-logo.${ext}`
+      const path = `${org.id}/program-logo.${ext}`
 
       const { error: upErr } = await supabase.storage
         .from('backgrounds')
@@ -784,6 +787,45 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
         {/* ── RIGHT COLUMN ── */}
         <div className="flex flex-col gap-5">
 
+          {/* Programs — multi-program management for AD and the head-coach
+              upgrade entry point. Hidden for assistant_coach/team_manager.
+              For an AD on a multi-program account, this card also lists
+              the existing programs so they can see what's in scope at a
+              glance. */}
+          {canAddProgram && (
+            <Section title="Programs">
+              {programCount > 1 && (
+                <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
+                  Your school has{' '}
+                  <span className="font-semibold text-white">{programCount} programs</span>.
+                  Use the program switcher in the header to move between
+                  them. Add another program below.
+                </p>
+              )}
+              {programCount === 1 && profile?.role === 'head_coach' && (
+                <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
+                  Want to run a second program from the same account
+                  (e.g. football + basketball)? Add a program and we'll
+                  walk you through the Athletic Director designation.
+                </p>
+              )}
+              {programCount === 1 && profile?.role === 'ad' && (
+                <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
+                  You can run multiple programs from this one account.
+                  Add another program below — for example, a different
+                  sport or a junior-varsity team.
+                </p>
+              )}
+              <button
+                onClick={() => setShowAddProgram(true)}
+                className="flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold text-white"
+                style={{ backgroundColor: orgColor }}
+              >
+                + Add Program
+              </button>
+            </Section>
+          )}
+
           {/* Coaches & Staff — ad, head_coach, and legacy accounts with no role */}
           {canManageCoaches(profile?.role) && (
             <Section title="Coaches & Staff">
@@ -1189,6 +1231,23 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
           </div>
         )
       })()}
+
+      {/* ── Add Program dialog ── */}
+      <AddProgramDialog
+        open={showAddProgram}
+        onClose={() => setShowAddProgram(false)}
+        onCreated={(orgId, opts) => {
+          // Parent (Dashboard) refetches allOrgs + (if promoted) the
+          // caller's profile + switches active context to the new
+          // program. We just need to close the dialog.
+          onProgramCreated?.(orgId, opts)
+          setShowAddProgram(false)
+        }}
+        callerRole={profile?.role}
+        currentProgramCount={programCount}
+        orgColor={orgColor}
+        sports={SPORTS}
+      />
     </div>
   )
 }

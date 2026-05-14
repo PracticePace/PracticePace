@@ -14,6 +14,7 @@ import SettingsSection   from '../components/dashboard/SettingsSection'
 import WhiteboardSection from '../components/dashboard/WhiteboardSection'
 import PlaybookSection   from '../components/dashboard/PlaybookSection'
 import PlanSelectModal   from '../components/dashboard/PlanSelectModal'
+import ProgramSwitcher   from '../components/dashboard/ProgramSwitcher'
 
 import {
   getGuestScripts,
@@ -24,6 +25,12 @@ import {
 
 // Per-user localStorage key for the last loaded script id
 const activeScriptKey = uid => `pp_active_script_${uid}`
+
+// Per-user localStorage key for the AD's currently-active program.
+// AD-only — every other role uses their profile.org_id directly. See
+// PIECE 3 of Commit 2b for the design rationale (localStorage trades
+// cross-device persistence for zero-migration simplicity).
+const activeOrgKey = uid => `pp_active_org_${uid}`
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const S = { fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' }
@@ -69,6 +76,15 @@ export default function Dashboard() {
 
   const [section, setSection]           = useState('practice')
   const [org, setOrg]                   = useState(null)
+  // Multi-program (Commit 2b): the list of orgs visible to the current
+  // user. For an AD, this is all orgs in their account; for everyone else
+  // it's just their one org. Drives the program switcher in the header.
+  const [allOrgs, setAllOrgs]           = useState([])
+  // activeOrgId is the org-id we use for every downstream fetch — scripts,
+  // songs, scoreboard configs, etc. For AD users it can differ from
+  // profile.org_id (they may be operating in a sibling program); for all
+  // other roles it equals profile.org_id.
+  const [activeOrgId, setActiveOrgId]   = useState(null)
   const [profile, setProfile]           = useState(null)
   const [scripts, setScripts]           = useState([])
   const [activeScript, _rawSetActiveScript] = useState(null)
@@ -201,11 +217,44 @@ export default function Dashboard() {
 
       setProfile(prof ?? null)
 
-      const resolvedOrgId = prof?.org_id ?? contextOrgId
+      // ── Load all orgs visible to this user ────────────────────────────────
+      // For an AD, RLS lets them SELECT every org in their account; for
+      // any other role it's just their own org. So we don't need a role
+      // check here — the policy does the filtering. We just sort the
+      // result for the switcher's display order.
+      const { data: orgsList } = await supabase
+        .from('organizations')
+        .select('*')
+        .order('name', { ascending: true })
+      const orgsArr = orgsList ?? []
+      setAllOrgs(orgsArr)
 
-      // Explicit org fetch — always reliable, never depends on FK join caching
-      let orgData = null
-      if (resolvedOrgId) {
+      // ── Resolve activeOrgId ────────────────────────────────────────────────
+      // AD: respect a previously-stored selection in localStorage (must
+      //     still be a visible org); fall back to profile.org_id; fall
+      //     back to first alphabetical org.
+      // Everyone else: just use profile.org_id (their only org).
+      let resolvedOrgId
+      if (prof?.role === 'ad') {
+        let saved = null
+        try { saved = localStorage.getItem(activeOrgKey(user.id)) } catch {}
+        const savedIsVisible = saved && orgsArr.some(o => o.id === saved)
+        resolvedOrgId = savedIsVisible
+          ? saved
+          : (prof?.org_id && orgsArr.some(o => o.id === prof.org_id))
+              ? prof.org_id
+              : (orgsArr[0]?.id ?? null)
+      } else {
+        resolvedOrgId = prof?.org_id ?? contextOrgId ?? null
+      }
+      setActiveOrgId(resolvedOrgId)
+
+      // Active org row — pulled from the already-loaded list when
+      // possible to avoid an extra round-trip. If not in the list (rare
+      // — e.g. profile.org_id points at an org the user can't SELECT
+      // due to a stale profile row) fetch explicitly.
+      let orgData = orgsArr.find(o => o.id === resolvedOrgId) ?? null
+      if (!orgData && resolvedOrgId) {
         const { data: orgFetch } = await supabase
           .from('organizations')
           .select('*')
@@ -379,7 +428,10 @@ export default function Dashboard() {
 
     // ── Authenticated ──────────────────────────────────────────────────────
     // Prefer the explicit orgId arg, then the one in context, then org state
-    const id = orgId ?? contextOrgId ?? org?.id
+    // Prefer the explicit orgId arg, then the current active org (which
+    // is what the AD's program switcher controls), then the auth-context
+    // fallback for early-load races.
+    const id = orgId ?? activeOrgId ?? org?.id ?? contextOrgId
     if (!id) {
       console.log('[ACTIVE] loadScripts (auth) skipped — no orgId resolved')
       return []
@@ -435,6 +487,107 @@ export default function Dashboard() {
 
   function handleOrgUpdate(updated) {
     setOrg(updated)
+    // Keep the list-of-all-orgs in sync with the per-org edit (e.g. AD
+    // renames a program — the switcher should show the new name without
+    // a reload).
+    setAllOrgs(prev => prev.map(o => (o.id === updated.id ? { ...o, ...updated } : o)))
+  }
+
+  // ── New program created (from Settings → Add Program) ────────────────────
+  // The AddProgramDialog in SettingsSection fires this after a successful
+  // /api/add-program call. We:
+  //   1. Refetch the orgs list so the header switcher and the local
+  //      `allOrgs` state see the new program immediately.
+  //   2. If this was the 1→2 upgrade and the API promoted the caller from
+  //      head_coach → ad, refetch the caller's profile too so future
+  //      RLS-gated reads (especially the switcher's visibility check)
+  //      pick up the new role.
+  //   3. Switch the active program to the new one — the AD almost always
+  //      wants to set it up next (logo, colors, coaches).
+  async function handleProgramCreated(newOrgId, opts = {}) {
+    const { promotedToAd } = opts
+    try {
+      const { data: orgsList } = await supabase
+        .from('organizations')
+        .select('*')
+        .order('name', { ascending: true })
+      const orgsArr = orgsList ?? []
+      setAllOrgs(orgsArr)
+
+      if (promotedToAd && user?.id) {
+        const { data: freshProf } = await supabase
+          .from('profiles')
+          .select('id, org_id, account_id, full_name, email, role')
+          .eq('id', user.id)
+          .maybeSingle()
+        if (freshProf) setProfile(freshProf)
+      }
+
+      // Land them in the new program. switchProgram persists in
+      // localStorage and re-loads scripts/songs in that scope.
+      if (newOrgId && orgsArr.some(o => o.id === newOrgId)) {
+        // We can't reuse switchProgram() yet because it bails when
+        // newOrgId === activeOrgId; but if the user was already AD and
+        // somehow had this org as active (shouldn't happen — it's new),
+        // there's nothing to do. In the normal path, set everything.
+        try { if (user?.id) localStorage.setItem(activeOrgKey(user.id), newOrgId) } catch {}
+        setActiveOrgId(newOrgId)
+        const newOrg = orgsArr.find(o => o.id === newOrgId)
+        setOrg(newOrg ?? null)
+        // Empty collections — brand new program has no scripts/songs yet.
+        setScripts([])
+        setActiveScript(null)
+        setAudioPlaylist([])
+      }
+    } catch (err) {
+      console.error('[Dashboard] handleProgramCreated refresh failed:', err?.message ?? err)
+    }
+  }
+
+  // ── AD program switch ─────────────────────────────────────────────────────
+  // The AD picked a different program from the header switcher. Persist
+  // their choice, update the active-org id, fetch the new org row, and
+  // re-load every org-scoped collection (scripts, music, scoreboard
+  // config). No full page reload — this is meant to feel instant.
+  //
+  // Non-AD callers should not be able to reach this, but as a defence
+  // we no-op if the selected id isn't in allOrgs (i.e. the user can't
+  // actually access it).
+  async function switchProgram(orgId) {
+    if (!orgId || orgId === activeOrgId) return
+    const next = allOrgs.find(o => o.id === orgId)
+    if (!next) {
+      console.warn('[Dashboard] switchProgram: orgId not in allOrgs', orgId)
+      return
+    }
+
+    try {
+      if (user?.id) localStorage.setItem(activeOrgKey(user.id), orgId)
+    } catch {}
+
+    setActiveOrgId(orgId)
+    setOrg(next)
+
+    // Re-load org-scoped collections. We don't touch profile / account /
+    // subscription — those are user-scoped, not org-scoped.
+    await loadScripts(orgId)
+    // Clear the activeScript pointer — it was scoped to the previous
+    // program and won't exist in the new one's script list. The Scripts
+    // tab will restore from localStorage on next mount if applicable.
+    setActiveScript(null)
+
+    try {
+      const { data: songsData } = await supabase
+        .from('songs')
+        .select('*')
+        .eq('org_id', orgId)
+        .order('position',   { ascending: true })
+        .order('created_at', { ascending: true })
+      setAudioPlaylist(songsData ?? [])
+    } catch (err) {
+      console.warn('[Dashboard] songs reload on program switch failed:', err?.message ?? err)
+      setAudioPlaylist([])
+    }
   }
 
   // Guest taps Settings tab → redirect to scripts (guests don't have settings)
@@ -470,7 +623,23 @@ export default function Dashboard() {
       >
         <Logo variant="white" height={52} className="shrink-0" />
 
-        {/* Program logo (uploaded by owner+admin in Settings → Program Logo).
+        {/* Program switcher — AD-only, multi-program only.
+            Sits to the immediate right of the Practice:Pace wordmark so
+            the AD can pivot context quickly. Head coaches and other roles
+            never see this — for them activeOrgId === profile.org_id and
+            there's nothing to switch to anyway. */}
+        {!isGuest && profile?.role === 'ad' && allOrgs.length >= 2 && (
+          <div className="ml-3 shrink-0">
+            <ProgramSwitcher
+              orgs={allOrgs}
+              activeOrgId={activeOrgId}
+              onSelect={switchProgram}
+              orgColor={orgColor}
+            />
+          </div>
+        )}
+
+        {/* Program logo (uploaded by AD/head_coach in Settings → Program Logo).
             Renders to the LEFT of the program name when present; nothing when
             absent (no broken-image icon). Constrained height so it never
             disrupts the 72px header.
@@ -629,7 +798,7 @@ export default function Dashboard() {
               scripts={scripts}
               activeScript={activeScript}
               onSetActive={handleSetActive}
-              orgId={org?.id ?? contextOrgId}
+              orgId={org?.id ?? activeOrgId}
               userId={user?.id}
               orgColor={orgColor}
               isGuest={isGuest}
@@ -637,14 +806,14 @@ export default function Dashboard() {
               programName={org?.name ?? ''}
               programNameColor={subscription?.program_name_color ?? '#000000'}
               programLogoUrl={org?.logo_url ?? null}
-              onReload={() => loadScripts(org?.id ?? contextOrgId)}
+              onReload={() => loadScripts(activeOrgId ?? org?.id)}
             />
           )}
 
           {section === 'whiteboard' && (
             <WhiteboardSection
               orgColor={orgColor}
-              orgId={org?.id ?? contextOrgId}
+              orgId={org?.id ?? activeOrgId}
               sport={org?.sport ?? null}
             />
           )}
@@ -666,7 +835,7 @@ export default function Dashboard() {
 
           {section === 'video' && (
             <VideoSection
-              orgId={org?.id ?? contextOrgId}
+              orgId={org?.id ?? activeOrgId}
               orgColor={orgColor}
               isGuest={isGuest}
             />
@@ -687,6 +856,8 @@ export default function Dashboard() {
               onStartCheckout={openPlanModal}
               checkoutLoading={checkoutLoading}
               checkoutError={checkoutError}
+              programCount={allOrgs.length}
+              onProgramCreated={handleProgramCreated}
             />
           )}
 
