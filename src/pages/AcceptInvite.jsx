@@ -184,52 +184,26 @@ export default function AcceptInvite() {
         const updates = { password }
         if (fullName.trim()) updates.data = { full_name: fullName.trim() }
 
-        // ── Why we don't `await supabase.auth.updateUser(...)` ──────────────
-        // updateUser's Promise resolves only after _notifyAllSubscribers
-        // finishes Promise.all-ing every onAuthStateChange callback. The
-        // AuthProvider in src/context/AuthContext.jsx awaits a PostgREST
-        // fetchProfile() with no timeout when USER_UPDATED fires, and on
-        // the post-invite path that await never settles — even though the
-        // PUT /user request has already succeeded server-side.
+        // Why a straight `await updateUser()` works again:
+        // Pre-Commit-2c, AuthContext's USER_UPDATED listener awaited a
+        // PostgREST fetchProfile() with no timeout. Supabase's auth client
+        // _notifyAllSubscribers awaits Promise.all of every subscriber's
+        // callback before resolving auth methods, so a stalled fetch in
+        // AuthContext made updateUser() hang past 10 s and this code used
+        // a fire-and-forget + USER_UPDATED-listener + 10 s race to route
+        // around the hang. That workaround had a race of its own (Matt
+        // hit "password save timed out" on 2026-05-14).
         //
-        // We sidestep that by listening for USER_UPDATED directly and
-        // awaiting the proof event with a 10s timeout. updateUser is
-        // fire-and-forget — its rejection (if any) is logged but does not
-        // block the flow.
-        let cleanupListener = () => {}
-        const passwordSaved = new Promise(resolve => {
-          const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-            if (event === 'USER_UPDATED') {
-              console.log('[AcceptInvite] USER_UPDATED received — password saved')
-              subscription.unsubscribe()
-              resolve()
-            }
-          })
-          cleanupListener = () => subscription.unsubscribe()
-        })
-
-        console.log('[AcceptInvite] calling supabase.auth.updateUser (fire-and-forget)')
-        supabase.auth.updateUser(updates).catch(err => {
-          console.error('[AcceptInvite] updateUser threw:', err?.message ?? err)
-        })
-
-        console.log('[AcceptInvite] await Promise.race([passwordSaved, 10s timeout]) …')
-        try {
-          await Promise.race([
-            passwordSaved,
-            new Promise((_, reject) =>
-              setTimeout(
-                () => reject(new Error('Password save timed out. Please try again.')),
-                10000
-              )
-            ),
-          ])
-        } finally {
-          // Idempotent — safe even if the listener already self-unsubscribed.
-          cleanupListener()
+        // Commit 2c caps every fetchProfile call inside AuthContext at
+        // 4 s, so updateUser() resolves promptly. We can go back to the
+        // plain await.
+        console.log('[AcceptInvite] calling supabase.auth.updateUser …')
+        const { error: updErr } = await supabase.auth.updateUser(updates)
+        if (updErr) {
+          console.error('[AcceptInvite] updateUser error:', updErr.message)
+          throw new Error(updErr.message ?? 'Could not save your password.')
         }
-        console.log('[AcceptInvite] password save confirmed via USER_UPDATED')
-        console.log('[AcceptInvite] state → passwordSet.current=true')
+        console.log('[AcceptInvite] password save confirmed')
         passwordSet.current = true
       }
 

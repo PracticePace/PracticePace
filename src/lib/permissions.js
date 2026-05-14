@@ -38,6 +38,33 @@ export function canManageBilling(role) {
   return role === 'ad'
 }
 
+// ── Scoreboard gates ─────────────────────────────────────────────────────────
+// The scoreboard splits into two layers:
+//   • OPERATE — the in-game controls (run the clock, +/- score, period,
+//                 down/distance, possession, timeouts). All four real roles
+//                 can operate, including team_manager — that's exactly the
+//                 "I'm running the scoreboard during the game" use case
+//                 a manager-tier role is here for.
+//   • CONFIGURE — picking the sport / scoreboard layout. Gated to
+//                 ad + head_coach. Assistant coaches can pick within an
+//                 already-configured scoreboard (that's still "operate"
+//                 territory) but can't choose which scoreboard surface
+//                 to open.
+//
+// Both helpers return false for missing / unknown role (defensive — a
+// not-yet-loaded profile gets neither permission, which keeps the UI
+// from flashing inconsistent state during AuthContext's initial load).
+export function canOperateScoreboard(role) {
+  return role === 'ad'
+      || role === 'head_coach'
+      || role === 'assistant_coach'
+      || role === 'team_manager'
+}
+
+export function canConfigureScoreboard(role) {
+  return role === 'ad' || role === 'head_coach'
+}
+
 // ── Coach-management gates ───────────────────────────────────────────────────
 // Decide whether VIEWER is allowed to remove TARGET from the Coaches & Staff
 // list. Both arguments are profile shapes — must carry { id, role, org_id }.

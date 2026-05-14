@@ -27,6 +27,22 @@ export function AuthProvider({ children }) {
     }
   }
 
+  // Race fetchProfile against a 4 s wall-clock timeout. We use this
+  // everywhere the auth listener wants to refresh the profile because
+  // Supabase's auth client awaits every subscriber's callback Promise.all
+  // before resolving auth methods like updateUser(). If fetchProfile
+  // hangs (PostgREST stalled on a flaky network, iPad lock-contention,
+  // missing profile row mid-onboarding, …), that hang propagates back
+  // into the calling code as a userland timeout — the "password save
+  // timed out" symptom AcceptInvite used to chase with a workaround.
+  // Capping fetchProfile here keeps that contract local to AuthContext.
+  async function fetchProfileWithTimeout(authUser) {
+    await Promise.race([
+      fetchProfile(authUser),
+      new Promise(resolve => setTimeout(resolve, 4000)),
+    ])
+  }
+
   useEffect(() => {
     console.log('[ACTIVE] AuthProvider mounted — calling getSession()')
 
@@ -42,7 +58,11 @@ export function AuthProvider({ children }) {
         const authUser = session?.user ?? null
         console.log('[ACTIVE] AuthProvider getSession resolved — userId:', authUser?.id ?? null, 'isAnon:', authUser?.is_anonymous ?? null)
         setUser(authUser)
-        await fetchProfile(authUser)
+        // Race fetchProfile against a 4 s timeout — the outer 5 s safety
+        // setTimeout still acts as a final guarantee, but capping the
+        // await here keeps .finally() prompt and avoids "loading" hanging
+        // for the full safety window in the common slow-network case.
+        await fetchProfileWithTimeout(authUser)
       })
       .catch(err => {
         console.error('[Auth] getSession error:', err)
@@ -74,10 +94,7 @@ export function AuthProvider({ children }) {
         setUser(authUser)
         // Race fetchProfile against a 4 s timeout so a flaky network on
         // iPad resume can never leave loading=true indefinitely.
-        await Promise.race([
-          fetchProfile(authUser),
-          new Promise(resolve => setTimeout(resolve, 4000)),
-        ])
+        await fetchProfileWithTimeout(authUser)
         console.log('[ACTIVE] onAuthStateChange SIGNED_IN — fetchProfile done, setLoading(false)')
         setLoading(false)
       } else if (event === 'SIGNED_OUT') {
@@ -85,8 +102,23 @@ export function AuthProvider({ children }) {
         setProfile(null)
       } else {
         // TOKEN_REFRESHED, USER_UPDATED, INITIAL_SESSION, PASSWORD_RECOVERY …
+        //
+        // Same 4 s race as SIGNED_IN. CRITICAL for the post-invite flow:
+        // AcceptInvite calls supabase.auth.updateUser(password), which
+        // dispatches USER_UPDATED to all subscribers and awaits every
+        // callback's Promise.all before resolving. If this fetchProfile
+        // call awaits an indefinitely-stalled PostgREST request (which
+        // we've seen on iPad resume and on the post-invite path where
+        // the profile row doesn't exist yet), the user-facing
+        // updateUser() promise hangs and AcceptInvite times out at 10s
+        // with "password save timed out". The 4 s cap here unblocks the
+        // dispatch path; we simply leave profile=null until the next
+        // listener firing if the fetch was still pending. AcceptInvite
+        // then creates the profile row server-side and a full-page
+        // reload at the end of that flow re-runs AuthContext from
+        // scratch, picking up the now-existing row.
         setUser(authUser)
-        await fetchProfile(authUser)
+        await fetchProfileWithTimeout(authUser)
       }
     })
 

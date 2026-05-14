@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { COMPETITION_SPORTS } from '../../lib/sports'
 import { useAuth } from '../../context/AuthContext'
-import { canEdit } from '../../lib/permissions'
+import { canOperateScoreboard, canConfigureScoreboard } from '../../lib/permissions'
 
 function pad(n) { return String(n).padStart(2, '0') }
 function fmtClock(s) { return `${pad(Math.floor(Math.abs(s) / 60))}:${pad(Math.abs(s) % 60)}` }
@@ -1224,45 +1224,54 @@ function CheerScoreboard({ orgColor, programName }) {
 // ── Sport picker + root ───────────────────────────────────────────────────────
 
 export default function ScoreboardSection({ orgColor, accountId, homeTeamName, awayTeamName, programName, sport: orgSport }) {
-  // The Football and Basketball scoreboards mix "configure" (set
-  // quarters/period length, edit team names) and "operate" (advance
-  // clock, +/- score) in the same controls. The user spec asked for
-  // team_manager to be able to OPERATE during games but not CONFIGURE —
-  // since the two aren't cleanly separable today, gate ALL scoreboard
-  // edits for team_manager. Show a one-line "view-only" message
-  // instead of the picker so the surface doesn't look broken.
+  // Scoreboard splits into OPERATE (clock/score/period — all real roles
+  // can do this, including team_manager) and CONFIGURE (pick the sport /
+  // scoreboard layout — ad + head_coach only). See canOperateScoreboard
+  // and canConfigureScoreboard in src/lib/permissions.js.
   //
-  // GUARD: we wait for profile to actually load before showing the
-  // view-only screen. AuthContext starts profile=null and only populates
-  // after a Supabase fetch — without the profile?.role guard, an AD/
-  // head_coach lands here, fails canEdit(undefined), and sees the view-
-  // only screen flash for ~200–500 ms before the picker appears. Also
-  // defensive against a legacy cached session whose role string still
-  // says 'owner' (post-migration the DB row is 'ad', and canEdit('owner')
-  // returns false). Either way, falling through to the picker is safe —
-  // the picker is non-destructive.
+  // Pre-Commit-2c this section returned a "view-only" screen for
+  // team_manager. The new role model says team_manager should be able
+  // to OPERATE during games (that's literally the role's job), so we
+  // drop the early-return and instead hide the configure-level controls
+  // (sport picker, "← Change" button) for non-configurers.
   const { profile } = useAuth()
-  const userCanEdit = canEdit(profile?.role)
-  if (profile?.role && !userCanEdit) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 text-center">
-        <span style={{ fontSize: 48, opacity: 0.25 }}>🏆</span>
-        <p className="font-bold text-white text-base">Scoreboard is view-only</p>
-        <p className="text-sm max-w-md" style={{ color: '#9a8080' }}>
-          Your account role is Team Manager, which is view-only. Ask an
-          athletic director, head coach, or assistant coach on your staff
-          to run the scoreboard during games.
-        </p>
-      </div>
-    )
+  const canOperate   = canOperateScoreboard(profile?.role)
+  const canConfigure = canConfigureScoreboard(profile?.role)
+
+  // If profile hasn't loaded yet OR an unknown role appears, fall through
+  // to the normal picker (canConfigure will be false, so the operator-
+  // only autoresolve path kicks in if applicable). The previous explicit
+  // view-only screen had a flash bug on first load; this code path avoids
+  // it without sacrificing security — non-operators just see the picker
+  // and any operate action they attempt is RLS-gated downstream.
+
+  // Map orgSport → which sub-scoreboard surface to auto-open for
+  // operate-only users. Configurers still see the picker.
+  function defaultSportForOrg() {
+    if (typeof orgSport === 'string') {
+      const s = orgSport.toLowerCase()
+      if (COMPETITION_SPORTS.has(s)) return 'cheer'
+      if (s === 'football')           return 'football'
+      if (s === 'basketball')         return 'basketball'
+    }
+    // Unknown / no orgSport — fall back to the football scoreboard, the
+    // most common case. The configure-tier role can change it; the
+    // operate-only role lives with the default.
+    return 'football'
   }
-  // Auto-select the cheer/competition scoreboard for cheer / stunt /
-  // dance-team programs. The picker is still reachable via the "← Change"
-  // button at the top of the sub-scoreboard, so a cheer coach who wants
-  // a football scoreboard for a game-day matchup can still pick it.
+
+  // Configurers: the picker stays the entry point (null = "show picker").
+  // For competition-sport programs we still auto-default to 'cheer' so
+  // existing cheer/stunt/dance flows aren't a regression.
+  //
+  // Operate-only roles (assistant_coach + team_manager): never see the
+  // picker. Auto-default based on the org's configured sport.
   const competitionDefault =
     typeof orgSport === 'string' && COMPETITION_SPORTS.has(orgSport.toLowerCase())
-  const [sport, setSport] = useState(competitionDefault ? 'cheer' : null)
+  const initialSport = canConfigure
+    ? (competitionDefault ? 'cheer' : null)
+    : defaultSportForOrg()
+  const [sport, setSport] = useState(initialSport)
 
   // Picker options. Cheer/Competition is shown to ALL programs so a
   // football coach who wants a generic count-down timer can pick it too.
@@ -1299,13 +1308,19 @@ export default function ScoreboardSection({ orgColor, accountId, homeTeamName, a
   return (
     <div className="flex-1 flex flex-col overflow-hidden min-h-0">
       <div className="flex items-center gap-3 px-4 pt-3 shrink-0">
-        <button
-          onClick={() => setSport(null)}
-          className="text-sm font-semibold px-4 py-2 rounded-xl"
-          style={{ border: '1px solid #2a0000', color: '#9a8080' }}
-        >
-          ← Change
-        </button>
+        {/* "← Change" returns to the picker. Configure-tier only — an
+            operate-only role (assistant_coach / team_manager) shouldn't
+            be able to swap scoreboards mid-game. They stay on the
+            auto-resolved surface for the org's sport. */}
+        {canConfigure && (
+          <button
+            onClick={() => setSport(null)}
+            className="text-sm font-semibold px-4 py-2 rounded-xl"
+            style={{ border: '1px solid #2a0000', color: '#9a8080' }}
+          >
+            ← Change
+          </button>
+        )}
         <span className="font-black text-white text-base">
           {activeEmoji} {activeLabel}
         </span>
