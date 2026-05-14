@@ -880,6 +880,7 @@ export default function Dashboard() {
                 awayTeamName={subscription?.away_team_name ?? null}
                 programName={org?.name ?? null}
                 sport={org?.sport ?? null}
+                sportCustomLabel={org?.sport_custom_label ?? null}
               />
           )}
 

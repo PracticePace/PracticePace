@@ -4,24 +4,20 @@ import { saveGuestScript, deleteGuestScript } from '../../lib/guestStorage'
 import { playCue, stopCue } from '../../lib/cuePlayer'
 import { useAuth } from '../../context/AuthContext'
 import { canEdit } from '../../lib/permissions'
+import { SPORTS as LAUNCH_SPORTS } from '../../lib/sports'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function pad(n) { return String(n).padStart(2, '0') }
 function fmt(s) { const sec = Number(s) || 0; return `${pad(Math.floor(sec / 60))}:${pad(sec % 60)}` }
 function totalSec(drills) { return (drills ?? []).reduce((s, d) => s + (Number(d.duration) || 0), 0) }
 
-const SPORTS = [
-  { value: 'football',   label: 'Football' },
-  { value: 'basketball', label: 'Basketball' },
-  { value: 'volleyball', label: 'Volleyball' },
-  { value: 'baseball',   label: 'Baseball' },
-  { value: 'softball',   label: 'Softball' },
-  { value: 'soccer',     label: 'Soccer' },
-  { value: 'track',      label: 'Track' },
-  { value: 'wrestling',  label: 'Wrestling' },
-  { value: 'tennis',     label: 'Tennis' },
-  { value: 'other',      label: 'Other' },
-]
+// Sport list for the script's per-drill-set sport. Aliases the central
+// SPORTS in src/lib/sports.js so the script sport picker stays in lock-
+// step with Program Settings. Scripts don't have their own custom-label
+// column — a script whose sport='custom' just means "this script
+// belongs to a custom-sport program"; the org's sport_custom_label is
+// the authoritative display string.
+const SPORTS = LAUNCH_SPORTS
 
 const INPUT_STYLE = { backgroundColor: '#1a0000', border: '1px solid #2a0000', color: '#fff' }
 

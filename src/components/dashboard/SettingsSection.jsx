@@ -92,11 +92,16 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
   const { user, loading: authLoading } = useAuth()
 
   const [form, setForm] = useState({
-    name:             org?.name  ?? '',
-    sport:            (org?.sport ?? '').toLowerCase(),
-    primaryColor:     org?.primary_color   ?? '#cc1111',
-    secondaryColor:   org?.secondary_color ?? '#ffffff',
-    programNameColor: subscription?.program_name_color ?? '#ffffff',
+    name:              org?.name  ?? '',
+    sport:             (org?.sport ?? '').toLowerCase(),
+    // Custom-sport free-form label. Only meaningful when sport === 'custom'.
+    // Cleared on every save when sport !== 'custom' so we never leak a
+    // stale label after the coach picks a real sport. See migration
+    // 20260521000000 for the matching column.
+    sportCustomLabel:  org?.sport_custom_label ?? '',
+    primaryColor:      org?.primary_color   ?? '#cc1111',
+    secondaryColor:    org?.secondary_color ?? '#ffffff',
+    programNameColor:  subscription?.program_name_color ?? '#ffffff',
   })
   const [saving, setSaving]   = useState(false)
   const [saved, setSaved]     = useState(false)
@@ -155,13 +160,14 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
       setForm({
         name:             org.name  ?? '',
         sport:            (org.sport ?? '').toLowerCase(),
+        sportCustomLabel: org.sport_custom_label ?? '',
         primaryColor:     org.primary_color   ?? '#cc1111',
         secondaryColor:   org.secondary_color ?? '#ffffff',
         programNameColor: subscription?.program_name_color ?? '#ffffff',
       })
       loadCoaches()
     }
-  }, [org?.id, org?.name, org?.sport, org?.primary_color, org?.secondary_color, subscription?.id, subscription?.program_name_color])
+  }, [org?.id, org?.name, org?.sport, org?.sport_custom_label, org?.primary_color, org?.secondary_color, subscription?.id, subscription?.program_name_color])
 
   async function loadCoaches() {
     if (!org?.id) return
@@ -175,17 +181,31 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
 
   async function saveSettings() {
     if (!form.name.trim()) { setSaveErr('Program name is required.'); return }
+    // Custom-sport guard: if the coach picked "Custom" they have to fill in
+    // the label too. We could let it save empty, but then the dashboard
+    // header would just show "Custom" with no clue what the program is.
+    if (form.sport === 'custom' && !form.sportCustomLabel.trim()) {
+      setSaveErr('Add a label for your custom sport, or pick one from the list.')
+      return
+    }
     setSaving(true); setSaved(false); setSaveErr('')
     try {
       if (org?.id) {
         // ── Existing org: update ──────────────────────────────────────────────
+        // sport_custom_label is only meaningful when sport === 'custom'.
+        // Always write null for the other sports so we don't leak a stale
+        // label after a coach switches from Custom back to a real sport.
+        const customLabel = form.sport === 'custom'
+          ? form.sportCustomLabel.trim()
+          : null
         const { error: err } = await supabase
           .from('organizations')
           .update({
-            name:            form.name.trim(),
-            sport:           form.sport,
-            primary_color:   form.primaryColor,
-            secondary_color: form.secondaryColor,
+            name:               form.name.trim(),
+            sport:              form.sport,
+            sport_custom_label: customLabel,
+            primary_color:      form.primaryColor,
+            secondary_color:    form.secondaryColor,
           })
           .eq('id', org.id)
         if (err) { setSaveErr(err.message); return }
@@ -209,10 +229,11 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
         setSaved(true)
         onOrgUpdate?.({
           ...org,
-          name:            form.name.trim(),
-          sport:           form.sport,
-          primary_color:   form.primaryColor,
-          secondary_color: form.secondaryColor,
+          name:               form.name.trim(),
+          sport:              form.sport,
+          sport_custom_label: form.sport === 'custom' ? form.sportCustomLabel.trim() : null,
+          primary_color:      form.primaryColor,
+          secondary_color:    form.secondaryColor,
         })
       } else {
         // ── No org yet: create org + profile (first-time setup) ──────────────
@@ -567,6 +588,32 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                 <option value="">Select sport…</option>
                 {SPORTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
+
+              {/* Custom-sport label input — only shown when sport='custom'.
+                  The DB column is organizations.sport_custom_label (added
+                  in migration 20260521000000). Pairs with sport='custom'
+                  for any program that doesn't fit the launch list (e.g.
+                  "8-Man Football", "Esports", "Cheerleading Stunt Team"). */}
+              {form.sport === 'custom' && (
+                <div className="flex flex-col gap-1 mt-2">
+                  <label className="text-xs font-semibold tracking-widest uppercase"
+                    style={{ color: '#9a8080' }}>
+                    Custom Sport Label
+                  </label>
+                  <input
+                    value={form.sportCustomLabel}
+                    onChange={e => upd('sportCustomLabel', e.target.value)}
+                    placeholder="e.g. 8-Man Football, Esports, Stunt Team"
+                    className="rounded-lg px-4 py-3 text-sm outline-none"
+                    style={inputStyle}
+                    maxLength={64}
+                  />
+                  <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
+                    Type the name of your program's sport. Shown in your
+                    dashboard, scripts, and on the scoreboard.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Color pickers */}

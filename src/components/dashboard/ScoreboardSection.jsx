@@ -1,8 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
-import { COMPETITION_SPORTS } from '../../lib/sports'
-import { useAuth } from '../../context/AuthContext'
-import { canOperateScoreboard, canConfigureScoreboard } from '../../lib/permissions'
 
 function pad(n) { return String(n).padStart(2, '0') }
 function fmtClock(s) { return `${pad(Math.floor(Math.abs(s) / 60))}:${pad(Math.abs(s) % 60)}` }
@@ -1027,17 +1024,17 @@ function BasketballScoreboard({ orgColor }) {
 }
 
 // ── Cheer / Stunt / Dance-Team competition scoreboard ────────────────────────
-// Minimal count-down routine timer + optional score field. Built for the
-// cheerleading-supplier demo — coaches running cheer / stunt / dance-team
-// programs land here automatically (auto-selected by org.sport in the
-// root component below). Football and Basketball coaches can still pick
-// this surface manually from the picker if they want a generic
-// competition timer.
+// CURRENTLY UNUSED (as of the launch-sport-list commit). cheerleading is
+// routed to GenericScoreboard per spec ("Cheerleading … fall back to a
+// generic clock+score scoreboard"). Function kept in the file so we can
+// re-wire it later if cheer coaches want their purpose-built competition
+// timer back — wire by mapping 'cheerleading' to CheerScoreboard in the
+// sportToScoreboard helper at the bottom of this file.
 //
-// Default time = 2:30 (typical cheer routine length). Coach can tap the
-// big clock to set any duration in MM:SS format. Score field starts at
-// 0 with simple +/− buttons; coach can ignore it if their routine
-// doesn't track points.
+// (Original intent: minimal count-down routine timer + optional score
+// field for the cheerleading-supplier demo. Default 2:30, tap-to-edit
+// MM:SS, simple +/− score.)
+// eslint-disable-next-line no-unused-vars
 function CheerScoreboard({ orgColor, programName }) {
   const DEFAULT_SECS = 150  // 2:30
 
@@ -1221,125 +1218,204 @@ function CheerScoreboard({ orgColor, programName }) {
   )
 }
 
-// ── Sport picker + root ───────────────────────────────────────────────────────
+// ── GenericScoreboard ────────────────────────────────────────────────────────
+// Minimal home/away score + game clock + period indicator. The fallback
+// surface for every launch-list sport that doesn't have a purpose-built
+// scoreboard (Flag Football, Soccer M/F, Volleyball, Baseball, Softball,
+// Cheerleading, Custom). Football and Boys/Girls Basketball still get
+// their sport-specific scoreboards.
+//
+// No DB writes — all state is local React. Operate-only roles
+// (team_manager) can run this entirely client-side; the sport-config
+// gates ad+head_coach (set in Program Settings, not here).
+function GenericScoreboard({ orgColor, homeTeamName, awayTeamName, programName, sportDisplayLabel }) {
+  const [home, setHome] = useState({ name: homeTeamName || 'HOME', score: 0 })
+  const [away, setAway] = useState({ name: awayTeamName || 'AWAY', score: 0 })
+  const [period, setPeriod] = useState(1)
+  // Default to 12:00 — middling between basketball halves (20:00),
+  // soccer halves (45:00), and volleyball sets (no clock). Coaches can
+  // tap to retype anything.
+  const [gameSecs, setGameSecs] = useState(12 * 60)
+  const [gameRun,  setGameRun]  = useState(false)
 
-export default function ScoreboardSection({ orgColor, accountId, homeTeamName, awayTeamName, programName, sport: orgSport }) {
-  // Scoreboard splits into OPERATE (clock/score/period — all real roles
-  // can do this, including team_manager) and CONFIGURE (pick the sport /
-  // scoreboard layout — ad + head_coach only). See canOperateScoreboard
-  // and canConfigureScoreboard in src/lib/permissions.js.
-  //
-  // Pre-Commit-2c this section returned a "view-only" screen for
-  // team_manager. The new role model says team_manager should be able
-  // to OPERATE during games (that's literally the role's job), so we
-  // drop the early-return and instead hide the configure-level controls
-  // (sport picker, "← Change" button) for non-configurers.
-  const { profile } = useAuth()
-  const canOperate   = canOperateScoreboard(profile?.role)
-  const canConfigure = canConfigureScoreboard(profile?.role)
-
-  // If profile hasn't loaded yet OR an unknown role appears, fall through
-  // to the normal picker (canConfigure will be false, so the operator-
-  // only autoresolve path kicks in if applicable). The previous explicit
-  // view-only screen had a flash bug on first load; this code path avoids
-  // it without sacrificing security — non-operators just see the picker
-  // and any operate action they attempt is RLS-gated downstream.
-
-  // Map orgSport → which sub-scoreboard surface to auto-open for
-  // operate-only users. Configurers still see the picker.
-  function defaultSportForOrg() {
-    if (typeof orgSport === 'string') {
-      const s = orgSport.toLowerCase()
-      if (COMPETITION_SPORTS.has(s)) return 'cheer'
-      if (s === 'football')           return 'football'
-      if (s === 'basketball')         return 'basketball'
-    }
-    // Unknown / no orgSport — fall back to the football scoreboard, the
-    // most common case. The configure-tier role can change it; the
-    // operate-only role lives with the default.
-    return 'football'
-  }
-
-  // Configurers: the picker stays the entry point (null = "show picker").
-  // For competition-sport programs we still auto-default to 'cheer' so
-  // existing cheer/stunt/dance flows aren't a regression.
-  //
-  // Operate-only roles (assistant_coach + team_manager): never see the
-  // picker. Auto-default based on the org's configured sport.
-  const competitionDefault =
-    typeof orgSport === 'string' && COMPETITION_SPORTS.has(orgSport.toLowerCase())
-  const initialSport = canConfigure
-    ? (competitionDefault ? 'cheer' : null)
-    : defaultSportForOrg()
-  const [sport, setSport] = useState(initialSport)
-
-  // Picker options. Cheer/Competition is shown to ALL programs so a
-  // football coach who wants a generic count-down timer can pick it too.
-  const PICKER = [
-    { id: 'football',   label: 'Football',   emoji: '🏈' },
-    { id: 'basketball', label: 'Basketball', emoji: '🏀' },
-    { id: 'cheer',      label: 'Competition', emoji: '📣' },
-  ]
-
-  if (!sport) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-8 p-8">
-        <h2 className="text-xl font-black text-white tracking-wide">Choose Sport</h2>
-        <div className="flex gap-6 flex-wrap justify-center">
-          {PICKER.map(s => (
-            <button
-              key={s.id}
-              onClick={() => setSport(s.id)}
-              className="flex flex-col items-center gap-4 rounded-2xl transition-all"
-              style={{ backgroundColor: '#1a0000', border: '2px solid #2a0000', padding: '2.5rem 3rem', minWidth: 180 }}
-            >
-              <span style={{ fontSize: 64 }}>{s.emoji}</span>
-              <span className="font-black text-white text-lg">{s.label}</span>
-            </button>
-          ))}
-        </div>
-      </div>
+  useEffect(() => {
+    if (!gameRun) return
+    const id = setInterval(
+      () => setGameSecs(s => { if (s <= 0) { setGameRun(false); return 0 } return s - 1 }),
+      1000,
     )
+    return () => clearInterval(id)
+  }, [gameRun])
+
+  function adj(setTeam, pts) {
+    setTeam(t => ({ ...t, score: Math.max(0, t.score + pts) }))
   }
 
-  const activeLabel = PICKER.find(p => p.id === sport)?.label ?? sport
-  const activeEmoji = PICKER.find(p => p.id === sport)?.emoji ?? ''
+  const ScoreBtns = ({ setTeam }) => (
+    <div className="flex gap-2 w-full">
+      {[1, 2, 3].map(pts => (
+        <button
+          key={pts}
+          onClick={() => adj(setTeam, pts)}
+          className="flex-1 rounded-xl font-black py-3"
+          style={{
+            backgroundColor: `${orgColor}22`,
+            border:          `2px solid ${orgColor}`,
+            color:            orgColor,
+            fontSize:         '1.4rem',
+          }}
+        >
+          +{pts}
+        </button>
+      ))}
+      <button
+        onClick={() => adj(setTeam, -1)}
+        className="rounded-xl font-bold px-3"
+        style={{ backgroundColor: '#1a0000', border: '1px solid #3a0000', color: '#6a4040', fontSize: '0.85rem' }}
+      >
+        −1
+      </button>
+    </div>
+  )
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-      <div className="flex items-center gap-3 px-4 pt-3 shrink-0">
-        {/* "← Change" returns to the picker. Configure-tier only — an
-            operate-only role (assistant_coach / team_manager) shouldn't
-            be able to swap scoreboards mid-game. They stay on the
-            auto-resolved surface for the org's sport. */}
-        {canConfigure && (
-          <button
-            onClick={() => setSport(null)}
-            className="text-sm font-semibold px-4 py-2 rounded-xl"
-            style={{ border: '1px solid #2a0000', color: '#9a8080' }}
-          >
-            ← Change
-          </button>
-        )}
-        <span className="font-black text-white text-base">
-          {activeEmoji} {activeLabel}
-        </span>
-      </div>
-      {sport === 'football' && (
-        <FootballScoreboard
-          orgColor={orgColor}
-          accountId={accountId}
-          homeTeamName={homeTeamName}
-          awayTeamName={awayTeamName}
-          programName={programName}
+    <div className="flex-1 flex flex-col overflow-y-auto p-4 gap-5">
+      {programName && (
+        <div className="text-center">
+          <h2 className="text-lg font-black text-white tracking-wide">{programName}</h2>
+          {sportDisplayLabel && (
+            <p className="text-xs uppercase tracking-widest" style={{ color: '#9a8080' }}>
+              {sportDisplayLabel}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Clock + period */}
+      <div className="flex flex-col items-center gap-3">
+        <GameClock
+          secs={gameSecs}
+          warn={gameSecs <= 60 && gameSecs > 0}
+          running={gameRun}
+          onChange={v => setGameSecs(v)}
         />
-      )}
-      {sport === 'basketball' && (
-        <BasketballScoreboard orgColor={orgColor} />
-      )}
-      {sport === 'cheer' && (
-        <CheerScoreboard orgColor={orgColor} programName={programName} />
-      )}
+        <button
+          onClick={() => setGameRun(r => !r)}
+          className="px-5 py-2.5 rounded-xl font-bold text-white"
+          style={{ backgroundColor: gameRun ? '#7a2020' : orgColor }}
+        >
+          {gameRun ? 'Pause' : 'Start'}
+        </button>
+
+        <div className="flex items-center gap-3">
+          <button onClick={() => setPeriod(p => Math.max(1, p - 1))}
+            className="w-9 h-9 rounded-lg text-base font-bold"
+            style={{ border: '1px solid #2a0000', color: '#9a8080' }}>−</button>
+          <span className="font-bold text-white" style={{ minWidth: 90, textAlign: 'center' }}>
+            Period {period}
+          </span>
+          <button onClick={() => setPeriod(p => Math.min(9, p + 1))}
+            className="w-9 h-9 rounded-lg text-base font-bold"
+            style={{ border: '1px solid #2a0000', color: '#9a8080' }}>+</button>
+        </div>
+      </div>
+
+      {/* Home / Away */}
+      {[
+        { side: 'home', team: home, setTeam: setHome },
+        { side: 'away', team: away, setTeam: setAway },
+      ].map(({ side, team, setTeam }) => (
+        <div key={side}
+          className="rounded-2xl p-4 flex flex-col gap-3"
+          style={{ backgroundColor: '#0d0000', border: '1px solid #2a0000' }}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs uppercase tracking-widest" style={{ color: '#9a8080' }}>
+              {side === 'home' ? 'Home' : 'Away'}
+            </span>
+            <input
+              value={team.name}
+              onChange={e => setTeam(t => ({ ...t, name: e.target.value }))}
+              className="bg-transparent text-right font-black text-white text-base outline-none"
+              style={{ maxWidth: '60%' }}
+              maxLength={24}
+            />
+          </div>
+          <div className="font-black text-center"
+            style={{ color: orgColor, fontSize: 'clamp(3rem, 12vw, 7rem)', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+            {team.score}
+          </div>
+          <ScoreBtns setTeam={setTeam} />
+        </div>
+      ))}
     </div>
+  )
+}
+
+// ── Root: pick scoreboard surface by org sport ───────────────────────────────
+// No more sport picker. The program's sport (set in Program Settings) is
+// the single source of truth — Scoreboard auto-renders the surface that
+// fits. Changing sports happens in Program Settings, not here. This
+// matches the rest of the app (Scripts/Music/Whiteboard already scope
+// to the program; Scoreboard now does the same).
+//
+// Mapping:
+//   football                                   → FootballScoreboard
+//   boys_basketball, girls_basketball,         → BasketballScoreboard
+//     basketball (legacy)
+//   anything else (flag_football, cheerleading, → GenericScoreboard
+//     boys_soccer, girls_soccer, volleyball,
+//     baseball, softball, custom, legacy
+//     stunt/dance/etc., null/undefined)
+function sportToScoreboard(orgSport) {
+  const s = typeof orgSport === 'string' ? orgSport.toLowerCase() : ''
+  if (s === 'football')                                   return 'football'
+  if (s === 'boys_basketball'
+   || s === 'girls_basketball'
+   || s === 'basketball')                                 return 'basketball'
+  return 'generic'
+}
+
+export default function ScoreboardSection({
+  orgColor, accountId, homeTeamName, awayTeamName, programName,
+  sport: orgSport, sportCustomLabel,
+}) {
+  const surface = sportToScoreboard(orgSport)
+
+  // Display label for the generic scoreboard header. Falls back to the
+  // raw sport value if it's not in the launch list — kept best-effort
+  // readable in roleLabel style. For sport='custom', sportCustomLabel is
+  // the authoritative display string.
+  let sportDisplayLabel = ''
+  if (orgSport === 'custom' && sportCustomLabel) {
+    sportDisplayLabel = sportCustomLabel
+  } else if (typeof orgSport === 'string' && orgSport.length > 0) {
+    sportDisplayLabel = orgSport
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase())
+  }
+
+  if (surface === 'football') {
+    return (
+      <FootballScoreboard
+        orgColor={orgColor}
+        accountId={accountId}
+        homeTeamName={homeTeamName}
+        awayTeamName={awayTeamName}
+        programName={programName}
+      />
+    )
+  }
+  if (surface === 'basketball') {
+    return <BasketballScoreboard orgColor={orgColor} />
+  }
+  return (
+    <GenericScoreboard
+      orgColor={orgColor}
+      homeTeamName={homeTeamName}
+      awayTeamName={awayTeamName}
+      programName={programName}
+      sportDisplayLabel={sportDisplayLabel}
+    />
   )
 }

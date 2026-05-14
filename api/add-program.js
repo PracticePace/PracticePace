@@ -198,10 +198,20 @@ export default async function handler(req) {
 
   const name          = String(body?.name ?? '').trim()
   const sport         = String(body?.sport ?? '').trim().toLowerCase()
+  // sport_custom_label — only meaningful when sport === 'custom'. Server
+  // null-coerces in the other direction so a client mistakenly passing a
+  // label with a non-custom sport doesn't pollute the row. See migration
+  // 20260521000000 for the column + the SettingsSection mirror.
+  const sportCustomLabel = sport === 'custom'
+    ? String(body?.sport_custom_label ?? '').trim()
+    : null
   const adDesignation = body?.adDesignation ?? null
 
   if (!name)  return json({ error: 'name is required' }, 400)
   if (!sport) return json({ error: 'sport is required' }, 400)
+  if (sport === 'custom' && !sportCustomLabel) {
+    return json({ error: 'Custom sport requires a label.' }, 400)
+  }
   if (!callerAccountId) {
     return json({ error: 'Your account is missing — contact support.' }, 400)
   }
@@ -261,12 +271,13 @@ export default async function handler(req) {
       method:  'POST',
       headers: sbHeaders(serviceRoleKey),
       body: JSON.stringify({
-        account_id:      callerAccountId,
+        account_id:         callerAccountId,
         name,
         slug,
         sport,
-        primary_color:   '#cc1111',
-        secondary_color: '#ffffff',
+        sport_custom_label: sportCustomLabel,  // null unless sport='custom'
+        primary_color:      '#cc1111',
+        secondary_color:    '#ffffff',
       }),
     })
     if (!orgRes.ok) {

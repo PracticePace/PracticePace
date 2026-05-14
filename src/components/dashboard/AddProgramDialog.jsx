@@ -60,6 +60,11 @@ export default function AddProgramDialog({
   const [programName, setProgramName] = useState('')
   const defaultSport = sports?.[0]?.value ?? 'football'
   const [sport, setSport]             = useState(defaultSport)
+  // Pairs with sport='custom'. The text input only renders when the
+  // coach picks Custom; on submit we send sport_custom_label alongside
+  // sport so the new org row gets both columns set. See migration
+  // 20260521000000.
+  const [sportCustomLabel, setSportCustomLabel] = useState('')
 
   const [submitting, setSubmitting]   = useState(false)
   const [err, setErr]                 = useState('')
@@ -75,6 +80,7 @@ export default function AddProgramDialog({
     setAdName('')
     setProgramName('')
     setSport(defaultSport)
+    setSportCustomLabel('')
     setSubmitting(false)
     setErr('')
     setWarning('')
@@ -102,6 +108,11 @@ export default function AddProgramDialog({
     const name = programName.trim()
     if (!name)  { setErr('Program name is required.'); return }
     if (!sport) { setErr('Pick a sport for this program.'); return }
+    const customLabel = sport === 'custom' ? sportCustomLabel.trim() : null
+    if (sport === 'custom' && !customLabel) {
+      setErr('Add a label for your custom sport, or pick one from the list.')
+      return
+    }
 
     let adDesignation = null
     if (needsDesignation) {
@@ -126,7 +137,7 @@ export default function AddProgramDialog({
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ name, sport, adDesignation }),
+        body: JSON.stringify({ name, sport, sport_custom_label: customLabel, adDesignation }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -333,6 +344,29 @@ export default function AddProgramDialog({
                   ))}
                 </select>
               </div>
+
+              {/* Custom-sport label input (mirrors the same field in
+                  Program Settings). Only shown when "Custom" is picked
+                  from the dropdown. Required for submit on the custom
+                  path so the new program isn't created with a blank
+                  label. */}
+              {sport === 'custom' && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold uppercase tracking-widest"
+                         style={{ color: '#9a8080' }}>
+                    Custom Sport Label
+                  </label>
+                  <input
+                    type="text"
+                    value={sportCustomLabel}
+                    onChange={e => setSportCustomLabel(e.target.value)}
+                    placeholder="e.g. 8-Man Football, Esports, Stunt Team"
+                    className="rounded-lg px-3 py-2.5 text-sm outline-none"
+                    style={inputStyle}
+                    maxLength={64}
+                  />
+                </div>
+              )}
             </div>
 
             {err && (

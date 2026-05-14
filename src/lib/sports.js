@@ -1,43 +1,61 @@
 // ── Sport list (shared) ──────────────────────────────────────────────────────
-// Used by the org sport selector in Onboarding and Settings. The same set of
-// canonical lowercase values is enforced on the Postgres side via
-// organizations_sport_check and scripts_sport_check — see the matching
-// migration at supabase/migrations/20260506000001_expand_sports_check_constraint.sql.
+// Used by the org sport selector in Settings / Add Program / Scripts. The
+// canonical lowercase snake_case `value` is what we persist to
+// organizations.sport and scripts.sport; `label` is the display string.
+// Allowed values are enforced by organizations_sport_check and
+// scripts_sport_check — see migration 20260521000000.
 //
-// Sorted alphabetically by label, with "Other" pinned to the end.
+// Order matters: the dropdown renders in this exact order, with "Custom"
+// always last regardless of where the rest are. Don't alphabetise.
 //
-// `value` is the canonical lowercase string we persist; `label` is the
-// display text shown in dropdowns.
+// 'custom' pairs with organizations.sport_custom_label. The UI shows a
+// text input when sport='custom' so the coach can type a free-form
+// label like "8-Man Football" or "Esports". For scripts (which don't
+// have their own custom-label column) 'custom' just means "this script
+// belongs to a custom-sport program" — the org's label is the authority.
 
 export const SPORTS = [
-  { value: 'baseball',        label: 'Baseball' },
-  { value: 'basketball',      label: 'Basketball' },
-  { value: 'cheerleading',    label: 'Cheerleading' },
-  { value: 'cross country',   label: 'Cross Country' },
-  { value: 'dance',           label: 'Dance' },
-  { value: 'dance team',      label: 'Dance Team' },
-  { value: 'football',        label: 'Football' },
-  { value: 'golf',            label: 'Golf' },
-  { value: 'gymnastics',      label: 'Gymnastics' },
-  { value: 'hockey',          label: 'Hockey' },
-  { value: 'lacrosse',        label: 'Lacrosse' },
-  { value: 'soccer',          label: 'Soccer' },
-  { value: 'softball',        label: 'Softball' },
-  { value: 'stunt',           label: 'Stunt' },
-  { value: 'swimming',        label: 'Swimming' },
-  { value: 'tennis',          label: 'Tennis' },
-  { value: 'track and field', label: 'Track and Field' },
-  { value: 'volleyball',      label: 'Volleyball' },
-  { value: 'wrestling',       label: 'Wrestling' },
-  { value: 'other',           label: 'Other' },
+  { value: 'football',         label: 'Football'         },
+  { value: 'flag_football',    label: 'Flag Football'    },
+  { value: 'boys_basketball',  label: 'Boys Basketball'  },
+  { value: 'girls_basketball', label: 'Girls Basketball' },
+  { value: 'cheerleading',     label: 'Cheerleading'     },
+  { value: 'boys_soccer',      label: 'Boys Soccer'      },
+  { value: 'girls_soccer',     label: 'Girls Soccer'     },
+  { value: 'volleyball',       label: 'Volleyball'       },
+  { value: 'baseball',         label: 'Baseball'         },
+  { value: 'softball',         label: 'Softball'         },
+  { value: 'custom',           label: 'Custom'           },
 ]
 
-// Sports that share a "competition routine + score" workflow rather than
-// the football/basketball game-clock model. Used by the Scoreboard tab to
-// auto-default these programs to the CheerScoreboard (count-down timer +
-// optional score) instead of the football/basketball picker. Easy to
-// extend later (e.g. gymnastics, wrestling tournament timer) without
-// touching the scoreboard component itself.
+// Quick lookup by canonical value. Returns the Title-Case display label
+// for any sport in the launch list. For legacy / grandfathered values
+// not in the list (e.g. 'basketball' before the boys/girls split,
+// 'stunt', 'dance team'), returns a best-effort title-cased version of
+// the raw value so the UI doesn't render raw snake_case to the user.
+export function sportLabel(value, customLabel = null) {
+  if (value === 'custom') {
+    const trimmed = (customLabel ?? '').trim()
+    return trimmed ? `Custom — ${trimmed}` : 'Custom'
+  }
+  const found = SPORTS.find(s => s.value === value)
+  if (found) return found.label
+  // Legacy / grandfathered fallback: turn snake_case + spaced lowercase
+  // into Title Case ("dance team" → "Dance Team", "track and field" →
+  // "Track and Field" — small-word casing isn't perfect but readable).
+  return String(value ?? '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase())
+}
+
+// Set of "competition routine" sports kept for backwards compatibility.
+// Previously drove the auto-default to CheerScoreboard in the scoreboard
+// picker; the picker was removed in the same commit that introduced
+// this launch list, and the cheer scoreboard is no longer wired —
+// cheerleading now falls back to the generic clock+score scoreboard
+// per spec. Set is unreferenced today; kept exported so existing
+// callers don't break, and so we can re-wire CheerScoreboard later
+// without a renaming round.
 export const COMPETITION_SPORTS = new Set([
   'cheerleading',
   'stunt',
