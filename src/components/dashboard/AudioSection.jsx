@@ -8,6 +8,7 @@ import {
   stop as stopAudio,
 } from '../../lib/audioPlayer'
 import { compressToMp3Mono128 } from '../../lib/audioCompressor'
+import { canEdit } from '../../lib/permissions'
 
 const BUCKET = 'music'
 
@@ -157,7 +158,7 @@ function PlayerControls({ snap, currentTime, orgColor }) {
 }
 
 // ── Library tab ───────────────────────────────────────────────────────────────
-function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
+function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh, canEdit: userCanEdit = true }) {
   const fileInputRef  = useRef(null)
   const [uploads,     setUploads]    = useState([])
   const [delConfirm,  setDelConfirm] = useState(null)
@@ -419,8 +420,10 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
   return (
     <div className="flex flex-col gap-3">
 
-      {/* Upload button — hidden in select mode per spec to avoid clutter */}
-      {!selectMode && (
+      {/* Upload button — hidden in select mode (clutter) AND hidden for
+          readonly coaches (they can listen to the playlist but can't
+          modify it; RLS would reject the upload anyway). */}
+      {userCanEdit && !selectMode && (
         <button
           onClick={() => fileInputRef.current?.click()}
           className="flex items-center justify-center gap-2 w-full py-4 rounded-2xl font-bold text-sm transition-all active:scale-95"
@@ -470,8 +473,10 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
           </span>
         </div>
       ) : (
-        // "Select" toggle — only shown when there's anything to select.
-        songs.length > 0 && (
+        // "Select" toggle — only shown to editors when there's anything
+        // to select. Readonly never enters select mode (bulk delete is a
+        // mutation; they wouldn't be allowed to delete anyway).
+        userCanEdit && songs.length > 0 && (
           <button
             onClick={enterSelectMode}
             className="self-end px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
@@ -577,12 +582,12 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
             return (
               <div
                 key={song.id}
-                // Drag-and-drop disabled in select mode so taps cleanly
-                // mean "select this row" without accidental drags.
-                draggable={!selectMode}
-                onDragStart={() => !selectMode && setDragIdx(idx)}
-                onDragOver={e => { if (!selectMode) { e.preventDefault(); setDragOverIdx(idx) } }}
-                onDrop={() => !selectMode && onDrop(idx)}
+                // Drag-and-drop disabled in select mode (taps mean select)
+                // AND disabled for readonly (they can't reorder either).
+                draggable={!selectMode && userCanEdit}
+                onDragStart={() => !selectMode && userCanEdit && setDragIdx(idx)}
+                onDragOver={e => { if (!selectMode && userCanEdit) { e.preventDefault(); setDragOverIdx(idx) } }}
+                onDrop={() => !selectMode && userCanEdit && onDrop(idx)}
                 onDragEnd={() => { setDragIdx(null); setDragOverIdx(null) }}
                 onClick={rowClick}
                 className="flex items-center gap-3 px-4 py-3 rounded-2xl transition-all select-none"
@@ -598,11 +603,12 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
                       ? (isSelected ? orgColor : '#2a1a0033')
                       : (isActive ? orgColor + '55' : isDragOver ? orgColor + '44' : '#2a1a0033')
                   }`,
-                  cursor: selectMode ? 'pointer' : 'grab',
+                  cursor: selectMode ? 'pointer' : (userCanEdit ? 'grab' : 'default'),
                 }}>
 
-                {/* Left side: drag handle (out of select mode) or checkbox
-                    (in select mode). Same slot, different affordance. */}
+                {/* Left side: drag handle (editor, out of select mode),
+                    checkbox (any user, in select mode), or no affordance
+                    (readonly). */}
                 {selectMode ? (
                   <span
                     aria-hidden="true"
@@ -617,9 +623,9 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
                   >
                     {isSelected ? '✓' : ''}
                   </span>
-                ) : (
+                ) : userCanEdit ? (
                   <span className="flex-shrink-0 opacity-40"><DragHandle /></span>
-                )}
+                ) : null}
 
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold truncate" style={{ color: isActive ? orgColor : '#fff' }}>
@@ -630,9 +636,9 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
                   </p>
                 </div>
 
-                {/* Play + Trash hidden in select mode — taps anywhere on
-                    the row toggle selection. Coaches who want to play or
-                    single-delete exit Select Mode first. */}
+                {/* Play (visible to everyone — readonly can listen) and
+                    Trash (editors only). Both hidden in select mode
+                    because taps anywhere toggle selection there. */}
                 {!selectMode && (
                   <>
                     <button
@@ -642,21 +648,23 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh }) {
                       <PlayIcon />
                     </button>
 
-                    {delConfirm === song.id ? (
-                      <div className="flex gap-1.5 flex-shrink-0">
-                        <button onClick={() => handleDelete(song)}
-                          className="text-xs font-bold px-2 py-1 rounded-lg"
-                          style={{ backgroundColor: '#cc2200', color: '#fff' }}>Delete</button>
-                        <button onClick={() => setDelConfirm(null)}
-                          className="text-xs px-2 py-1 rounded-lg"
-                          style={{ backgroundColor: '#2a1200', color: '#9a8080' }}>Cancel</button>
-                      </div>
-                    ) : (
-                      <button onClick={() => setDelConfirm(song.id)}
-                        className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 opacity-40 hover:opacity-100 transition-all active:scale-90"
-                        style={{ color: '#ff4444' }}>
-                        <TrashIcon />
-                      </button>
+                    {userCanEdit && (
+                      delConfirm === song.id ? (
+                        <div className="flex gap-1.5 flex-shrink-0">
+                          <button onClick={() => handleDelete(song)}
+                            className="text-xs font-bold px-2 py-1 rounded-lg"
+                            style={{ backgroundColor: '#cc2200', color: '#fff' }}>Delete</button>
+                          <button onClick={() => setDelConfirm(null)}
+                            className="text-xs px-2 py-1 rounded-lg"
+                            style={{ backgroundColor: '#2a1200', color: '#9a8080' }}>Cancel</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setDelConfirm(song.id)}
+                          className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 opacity-40 hover:opacity-100 transition-all active:scale-90"
+                          style={{ color: '#ff4444' }}>
+                          <TrashIcon />
+                        </button>
+                      )
                     )}
                   </>
                 )}
@@ -933,6 +941,7 @@ function Mp3Player({ orgColor }) {
         <LibraryTab
           songs={songs} playingId={snap.song?.id ?? null}
           orgColor={orgColor} orgId={orgId} onRefresh={loadSongs}
+          canEdit={canEdit(profile?.role)}
         />
       ) : (
         <PlaylistTab

@@ -488,7 +488,11 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
         {/* ── LEFT COLUMN ── */}
         <div className="flex flex-col gap-5">
 
-          {/* Program Settings */}
+          {/* Program Settings — owner/admin only. Aligns with the RLS
+              gate on organizations UPDATE (P0 migration 20260515000000).
+              A readonly or coach role would have the inputs render but
+              every save would bounce off RLS, so we hide the whole card. */}
+          {canManageCoaches(profile?.role) && (
           <Section title="Program Settings">
             <div className="flex flex-col gap-1">
               <label className="text-xs font-semibold tracking-widest uppercase" style={{ color: '#9a8080' }}>
@@ -601,6 +605,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
               {saving ? 'Saving…' : saved ? '✓ Saved!' : org?.id ? 'Save Changes' : 'Create Program'}
             </button>
           </Section>
+          )}
 
           {/* Program Logo — owner+admin only (same gating as Coaches & Staff) */}
           {canManageCoaches(profile?.role) && (
@@ -665,7 +670,9 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
           </Section>
           )}
 
-          {/* Practice Background */}
+          {/* Practice Background — owner/admin only. Same logic as
+              Program Settings + Program Logo. */}
+          {canManageCoaches(profile?.role) && (
           <Section title="Practice Screen Background">
             <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
               Upload an image that appears behind the clock on the Practice screen.
@@ -728,6 +735,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
 
             {/* dev setup notes removed — see file header comment */}
           </Section>
+          )}
         </div>
 
         {/* ── RIGHT COLUMN ── */}

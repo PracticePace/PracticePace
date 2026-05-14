@@ -23,6 +23,8 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../context/AuthContext'
+import { canEdit } from '../../lib/permissions'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 // Order matters here — first color is the default selection, and the
@@ -713,6 +715,11 @@ const TrashIcon  = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="n
 
 // ── Main component ───────────────────────────────────────────────────────────
 export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }) {
+  // canEdit gates ALL drawing + toolbar controls. readonly coaches can
+  // still see what's on the board (it loads + renders normally) but
+  // can't draw, erase, undo, redo, clear, or change background.
+  const { profile } = useAuth()
+  const userCanEdit = canEdit(profile?.role)
   // ── Refs ───────────────────────────────────────────────────────────────────
   const containerRef = useRef(null)
   const canvasRef    = useRef(null)
@@ -838,6 +845,7 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
   }
 
   function onPointerDown(e) {
+    if (!userCanEdit) return       // readonly: ignore taps on the canvas
     if (showClearConfirm) return
     e.preventDefault()
     canvasRef.current?.setPointerCapture?.(e.pointerId)
@@ -855,6 +863,7 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
   }
 
   function onPointerMove(e) {
+    if (!userCanEdit) return
     if (!currentStrokeRef.current) return
     e.preventDefault()
     const now = performance.now()
@@ -889,6 +898,7 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
   }
 
   function onPointerUp(e) {
+    if (!userCanEdit) return
     if (!currentStrokeRef.current) return
     e.preventDefault()
     canvasRef.current?.releasePointerCapture?.(e.pointerId)
@@ -1065,7 +1075,9 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
 
-      {/* ── Toolbar ── */}
+      {/* ── Toolbar — hidden entirely for readonly so the board reads as
+          a view-only surface. The canvas still loads + renders below. */}
+      {userCanEdit && (
       <div
         className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2"
         style={{ backgroundColor: '#0d0000', borderBottom: '1px solid #1a0000' }}
@@ -1184,6 +1196,7 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
           </span>
         )}
       </div>
+      )}
 
       {/* ── Canvas area ──
           Container background follows the canvas's Blank colour so the
@@ -1209,7 +1222,7 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
           onPointerCancel={onPointerUp}
           style={{
             display: 'block',
-            cursor:  tool === 'eraser' ? 'cell' : 'crosshair',
+            cursor:  !userCanEdit ? 'default' : (tool === 'eraser' ? 'cell' : 'crosshair'),
             // touch-action: none on the parent handles the touch suppression;
             // belt-and-suspenders here too.
             touchAction: 'none',

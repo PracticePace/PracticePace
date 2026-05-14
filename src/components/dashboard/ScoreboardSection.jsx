@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { COMPETITION_SPORTS } from '../../lib/sports'
+import { useAuth } from '../../context/AuthContext'
+import { canEdit } from '../../lib/permissions'
 
 function pad(n) { return String(n).padStart(2, '0') }
 function fmtClock(s) { return `${pad(Math.floor(Math.abs(s) / 60))}:${pad(Math.abs(s) % 60)}` }
@@ -1222,6 +1224,28 @@ function CheerScoreboard({ orgColor, programName }) {
 // ── Sport picker + root ───────────────────────────────────────────────────────
 
 export default function ScoreboardSection({ orgColor, accountId, homeTeamName, awayTeamName, programName, sport: orgSport }) {
+  // The Football and Basketball scoreboards mix "configure" (set
+  // quarters/period length, edit team names) and "operate" (advance
+  // clock, +/- score) in the same controls. The user spec asked for
+  // readonly to be able to OPERATE during games but not CONFIGURE —
+  // since the two aren't cleanly separable today, gate ALL scoreboard
+  // edits for readonly. Show a one-line "read-only — ask a coach to
+  // run the scoreboard" message instead of the picker so the surface
+  // doesn't look broken.
+  const { profile } = useAuth()
+  const userCanEdit = canEdit(profile?.role)
+  if (!userCanEdit) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 text-center">
+        <span style={{ fontSize: 48, opacity: 0.25 }}>🏆</span>
+        <p className="font-bold text-white text-base">Scoreboard is read-only</p>
+        <p className="text-sm max-w-md" style={{ color: '#9a8080' }}>
+          Your account role is set to read-only. Ask a coach, admin, or owner
+          on your staff to run the scoreboard during games.
+        </p>
+      </div>
+    )
+  }
   // Auto-select the cheer/competition scoreboard for cheer / stunt /
   // dance-team programs. The picker is still reachable via the "← Change"
   // button at the top of the sub-scoreboard, so a cheer coach who wants

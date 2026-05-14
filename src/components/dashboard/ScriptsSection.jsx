@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
 import { saveGuestScript, deleteGuestScript } from '../../lib/guestStorage'
 import { playCue, stopCue } from '../../lib/cuePlayer'
+import { useAuth } from '../../context/AuthContext'
+import { canEdit } from '../../lib/permissions'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function pad(n) { return String(n).padStart(2, '0') }
@@ -934,6 +936,7 @@ function AddDrillForm({ orgColor, orgId, isGuest, onAdd }) {
 // ── DrillRow ──────────────────────────────────────────────────────────────────
 
 function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId, isGuest,
+  canEdit: userCanEdit = true,
   rowRef, onStartDrag, onEditStart, onEditSave, onEditCancel, onDelete }) {
   const [editName,      setEditName]      = useState(drill.name ?? '')
   const [editMins,      setEditMins]      = useState(drill.duration ? String(Math.floor(drill.duration / 60)) : '')
@@ -1085,16 +1088,20 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
         // ── Display mode ──────────────────────────────────────────────────────
         <>
           <div className="flex items-center gap-2">
-            {/* Drag handle — bumped to 40 px (Apple HIG min touch target) and
-                color lifted from #4a2020 to a 50%-white that reads cleanly
-                against the new #1f0808 row bg. */}
-            <div
-              className="flex items-center justify-center w-10 h-10 shrink-0 rounded-lg cursor-grab active:cursor-grabbing touch-none transition-colors hover:bg-[rgba(255,255,255,0.06)]"
-              style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20 }}
-              onMouseDown={e => { e.preventDefault(); onStartDrag(index) }}
-              onTouchStart={e => { e.preventDefault(); onStartDrag(index) }}>
-              ⠿
-            </div>
+            {/* Drag handle — hidden for readonly. */}
+            {userCanEdit ? (
+              <div
+                className="flex items-center justify-center w-10 h-10 shrink-0 rounded-lg cursor-grab active:cursor-grabbing touch-none transition-colors hover:bg-[rgba(255,255,255,0.06)]"
+                style={{ color: 'rgba(255,255,255,0.5)', fontSize: 20 }}
+                onMouseDown={e => { e.preventDefault(); onStartDrag(index) }}
+                onTouchStart={e => { e.preventDefault(); onStartDrag(index) }}>
+                ⠿
+              </div>
+            ) : (
+              // Keep a same-width spacer so the drill rows line up
+              // identically for readonly viewers.
+              <div className="w-10 h-10 shrink-0" aria-hidden="true" />
+            )}
 
             {/* Drill name — UPPERCASE display only (db value preserved as
                 typed) + ~95% white. Wider letter-spacing reads as a header
@@ -1127,22 +1134,23 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
               {drill.duration ? fmt(drill.duration) : '—'}
             </span>
 
-            {/* Edit + Delete — 40 × 40 (Apple HIG min). Edit lifts to ~85%
-                white; Delete uses a clearer red so its destructive intent
-                reads. Both get a subtle hover bg (and Delete a slightly
-                tinted red hover) so the affordance is unambiguous. */}
-            <button onClick={() => onEditStart(index)}
-              aria-label="Edit drill"
-              className="w-10 h-10 flex items-center justify-center rounded-lg text-base shrink-0 transition-colors hover:bg-[rgba(255,255,255,0.08)]"
-              style={{ color: 'rgba(255,255,255,0.85)', border: '1px solid #3a1414' }}>
-              ✎
-            </button>
-            <button onClick={() => onDelete(index)}
-              aria-label="Delete drill"
-              className="w-10 h-10 flex items-center justify-center rounded-lg text-base shrink-0 transition-colors hover:bg-[rgba(220,80,80,0.14)]"
-              style={{ color: 'rgba(220,80,80,0.9)', border: '1px solid #3a1414' }}>
-              ✕
-            </button>
+            {/* Edit + Delete — hidden for readonly. */}
+            {userCanEdit && (
+              <>
+                <button onClick={() => onEditStart(index)}
+                  aria-label="Edit drill"
+                  className="w-10 h-10 flex items-center justify-center rounded-lg text-base shrink-0 transition-colors hover:bg-[rgba(255,255,255,0.08)]"
+                  style={{ color: 'rgba(255,255,255,0.85)', border: '1px solid #3a1414' }}>
+                  ✎
+                </button>
+                <button onClick={() => onDelete(index)}
+                  aria-label="Delete drill"
+                  className="w-10 h-10 flex items-center justify-center rounded-lg text-base shrink-0 transition-colors hover:bg-[rgba(220,80,80,0.14)]"
+                  style={{ color: 'rgba(220,80,80,0.9)', border: '1px solid #3a1414' }}>
+                  ✕
+                </button>
+              </>
+            )}
           </div>
 
           {/* Notes preview — bumped from #9a8080 to ~75% white so notes
@@ -1163,6 +1171,7 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
 
 // ── ScriptEditor ──────────────────────────────────────────────────────────────
 function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
+  canEdit: userCanEdit = true,
   programName, programNameColor, programLogoUrl,
   onBack, onSetActive, onSwitchTab, onReload }) {
   const [name,   setName]   = useState(script.name  ?? '')
@@ -1319,12 +1328,14 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
           ←
         </button>
 
-        {/* Editable script name */}
+        {/* Editable script name — disabled for readonly (still legible) */}
         <input
           value={name} onChange={e => updateName(e.target.value)}
           placeholder="Script name"
+          disabled={!userCanEdit}
+          readOnly={!userCanEdit}
           className="flex-1 text-lg font-black text-white outline-none bg-transparent
-            border-b-2 px-1 py-1"
+            border-b-2 px-1 py-1 disabled:opacity-90"
           style={{ borderBottomColor: '#2a0000' }}
         />
 
@@ -1343,7 +1354,8 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
       <div className="shrink-0 px-4 md:px-6 py-2.5 flex items-center gap-4"
         style={{ borderBottom: '1px solid #1a0000' }}>
         <select value={sport} onChange={e => updateSport(e.target.value)}
-          className="rounded-lg px-3 py-2 text-sm outline-none"
+          disabled={!userCanEdit}
+          className="rounded-lg px-3 py-2 text-sm outline-none disabled:opacity-90"
           style={INPUT_STYLE}>
           {SPORTS.map(({ value, label }) => (
             <option key={value} value={value}>{label}</option>
@@ -1406,6 +1418,7 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
               orgColor={orgColor}
               orgId={orgId}
               isGuest={isGuest}
+              canEdit={userCanEdit}
               rowRef={el => { rowRefs.current[i] = el }}
               onStartDrag={startDrag}
               onEditStart={idx => setEditingIndex(idx === editingIndex ? null : idx)}
@@ -1415,8 +1428,10 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
             />
           ))}
 
-          {/* ── Add drill form ──────────────────────────────────────────── */}
-          <AddDrillForm orgColor={orgColor} orgId={orgId} isGuest={isGuest} onAdd={addDrill} />
+          {/* ── Add drill form (hidden for readonly) ────────────────────── */}
+          {userCanEdit && (
+            <AddDrillForm orgColor={orgColor} orgId={orgId} isGuest={isGuest} onAdd={addDrill} />
+          )}
         </div>
       </div>
     </div>
@@ -1430,6 +1445,13 @@ export default function ScriptsSection({
   programName, programNameColor, programLogoUrl,
   onReload, onSwitchTab,
 }) {
+  // canEdit gates every destructive control on this surface (P0 UX
+  // follow-up to the RLS hardening in migration 20260515000000). readonly
+  // coaches can still view scripts + drills, set a script active, and
+  // print — they just can't add/edit/delete anything.
+  const { profile } = useAuth()
+  const userCanEdit = canEdit(profile?.role) || isGuest
+
   const [view,           setView]          = useState('list')   // 'list' | 'editor'
   const [editingScript,  setEditingScript] = useState(null)
   const [showNew,        setShowNew]       = useState(false)
@@ -1470,6 +1492,7 @@ export default function ScriptsSection({
           orgColor={orgColor}
           isGuest={isGuest}
           isActive={activeScript?.id === editingScript.id}
+          canEdit={userCanEdit}
           programName={programName}
           programNameColor={programNameColor}
           programLogoUrl={programLogoUrl}
@@ -1488,11 +1511,13 @@ export default function ScriptsSection({
       {/* Header */}
       <div className="flex items-center justify-between mb-5 max-w-5xl mx-auto">
         <h2 className="font-bold text-white text-lg">Practice Scripts</h2>
-        <button onClick={() => setShowNew(true)}
-          className="px-5 py-3 rounded-xl text-sm font-bold text-white"
-          style={{ backgroundColor: orgColor }}>
-          + New Script
-        </button>
+        {userCanEdit && (
+          <button onClick={() => setShowNew(true)}
+            className="px-5 py-3 rounded-xl text-sm font-bold text-white"
+            style={{ backgroundColor: orgColor }}>
+            + New Script
+          </button>
+        )}
       </div>
 
       {scripts.length === 0 ? (
@@ -1500,13 +1525,17 @@ export default function ScriptsSection({
           <div style={{ fontSize: 64, opacity: 0.1 }}>📋</div>
           <p className="font-bold text-white text-lg">No scripts yet</p>
           <p className="text-sm" style={{ color: '#9a8080' }}>
-            Create your first practice script to get started.
+            {userCanEdit
+              ? 'Create your first practice script to get started.'
+              : 'No scripts yet. Ask an admin or head coach to create one.'}
           </p>
-          <button onClick={() => setShowNew(true)}
-            className="mt-2 px-6 py-3 rounded-xl text-sm font-bold text-white"
-            style={{ backgroundColor: orgColor }}>
-            Create Script
-          </button>
+          {userCanEdit && (
+            <button onClick={() => setShowNew(true)}
+              className="mt-2 px-6 py-3 rounded-xl text-sm font-bold text-white"
+              style={{ backgroundColor: orgColor }}>
+              Create Script
+            </button>
+          )}
         </div>
       ) : (
         <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1562,20 +1591,24 @@ export default function ScriptsSection({
                       }}>
                       {isActive ? '✓ Active' : 'Load'}
                     </button>
-                    {/* Edit */}
+                    {/* Edit / View — labelled "View" for readonly so they
+                        know tapping it opens the script in read-only mode
+                        rather than failing to save. */}
                     <button
                       onClick={() => openEditor(script)}
                       className="px-4 py-2 rounded-lg text-xs font-semibold"
                       style={{ border: '1px solid #2a0000', color: '#9a8080' }}>
-                      Edit
+                      {userCanEdit ? 'Edit' : 'View'}
                     </button>
-                    {/* Delete */}
-                    <button
-                      onClick={() => setDeleteId(script.id)}
-                      className="px-4 py-2 rounded-lg text-xs font-semibold"
-                      style={{ border: '1px solid #2a0000', color: '#6a3030' }}>
-                      Delete
-                    </button>
+                    {/* Delete — hidden for readonly */}
+                    {userCanEdit && (
+                      <button
+                        onClick={() => setDeleteId(script.id)}
+                        className="px-4 py-2 rounded-lg text-xs font-semibold"
+                        style={{ border: '1px solid #2a0000', color: '#6a3030' }}>
+                        Delete
+                      </button>
+                    )}
                   </div>
                 </div>
 
