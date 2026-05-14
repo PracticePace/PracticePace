@@ -618,60 +618,49 @@ function drawTrack(ctx, w, h) {
 // are red or black, but blue reads cleanest against white drawing strokes
 // and matches the reference photo the user provided.
 function drawCheerMat(ctx, w, h) {
-  // Backdrop — dark navy outside the mat so the blue mat reads against it.
-  ctx.fillStyle = '#0a1424'
-  ctx.fillRect(0, 0, w, h)
-
-  // Mat aspect 54:42 ≈ 1.286 : 1 (landscape). Fit inside the canvas with
-  // a 5 % margin, preserving aspect.
-  const marginRatio = 0.05
-  const availW = w * (1 - 2 * marginRatio)
-  const availH = h * (1 - 2 * marginRatio)
-  const ASPECT = 54 / 42
-  let matW, matH
-  if (availW / availH >= ASPECT) {
-    matH = availH
-    matW = matH * ASPECT
-  } else {
-    matW = availW
-    matH = matW / ASPECT
-  }
-  const matX = (w - matW) / 2
-  const matY = (h - matH) / 2
+  // Mat fills the entire canvas — no margins, no letterbox. Real
+  // 42 × 54 ft proportions aren't preserved; coaches told us the
+  // diagramming surface matters more than true aspect, so we stretch
+  // the 9 panels evenly across whatever viewport they're drawing on.
+  // (If aspect-accurate proportions are wanted later, swap the fill
+  // for the previous fitted-rect math.)
 
   // Mat surface — competition royal blue (~Spirit / Resilite shade).
   ctx.fillStyle = '#1d4ed8'
-  ctx.fillRect(matX, matY, matW, matH)
+  ctx.fillRect(0, 0, w, h)
 
-  // Black outer boundary. Slightly heavier than the panel seams.
+  // Black outer boundary — drawn inside the canvas so the line itself
+  // is fully visible (a stroke on the very edge gets clipped in half
+  // by the canvas bounds).
   ctx.strokeStyle = '#000000'
-  ctx.lineWidth = Math.max(2, matW * 0.004)
-  ctx.lineCap = 'butt'   // square caps — panel seams meet the border crisply
-  ctx.strokeRect(matX, matY, matW, matH)
+  ctx.lineWidth = Math.max(2, w * 0.0035)
+  ctx.lineCap   = 'butt'
+  const inset = ctx.lineWidth / 2
+  ctx.strokeRect(inset, inset, w - inset * 2, h - inset * 2)
 
   // Eight vertical panel seams — dividing the mat into 9 equal-width
-  // panels of 6 ft each. The middle seam (i = 4 of 0..7, indexing from
-  // the left interior seam) is the vertical centerline.
+  // panels. The 4th seam is the vertical centerline used for stunt /
+  // formation alignment.
   const PANELS = 9
-  ctx.lineWidth = Math.max(1.5, matW * 0.0025)
+  ctx.lineWidth = Math.max(1.5, w * 0.002)
   for (let i = 1; i < PANELS; i++) {
-    const x = matX + (matW * i) / PANELS
+    const x = (w * i) / PANELS
     ctx.beginPath()
-    ctx.moveTo(x, matY)
-    ctx.lineTo(x, matY + matH)
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, h)
     ctx.stroke()
   }
 
   // Two X marks on the vertical centerline — one near the top edge, one
-  // near the bottom. ~10 % inset from each end. Drawn as two crossing
-  // diagonal strokes per X, slightly heavier than the panel seams so
-  // they read at a glance.
-  const centerX = matX + matW / 2
-  const xInsetY = matH * 0.10
-  const xSize   = matH * 0.025  // half-length of each arm
-  ctx.lineWidth = Math.max(2, matH * 0.006)
-  ctx.lineCap = 'round'
-  for (const cyY of [matY + xInsetY, matY + matH - xInsetY]) {
+  // near the bottom. ~10 % inset from each end of the canvas. Drawn as
+  // two crossing diagonal strokes per X, slightly heavier than the
+  // panel seams so they read at a glance.
+  const centerX = w / 2
+  const xInsetY = h * 0.10
+  const xSize   = h * 0.025  // half-length of each arm
+  ctx.lineWidth = Math.max(2, h * 0.006)
+  ctx.lineCap   = 'round'
+  for (const cyY of [xInsetY, h - xInsetY]) {
     ctx.beginPath()
     ctx.moveTo(centerX - xSize, cyY - xSize); ctx.lineTo(centerX + xSize, cyY + xSize)
     ctx.moveTo(centerX + xSize, cyY - xSize); ctx.lineTo(centerX - xSize, cyY + xSize)
