@@ -13,7 +13,7 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { SPORTS } from '../../lib/sports'
-import { roleLabel } from '../../lib/permissions'
+import { roleLabel, canRemoveCoach, canEditCoachRole } from '../../lib/permissions'
 import AddProgramDialog from './AddProgramDialog'
 
 // Allowed role values (DB-side). Order matters for the invite dropdown:
@@ -860,28 +860,44 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                             <p className="text-xs truncate" style={{ color: '#9a8080' }}>{c.email}</p>
                           </div>
 
-                          {/* Action buttons — not shown while editing */}
-                          {!isEditing && (
-                            <div className="flex gap-1.5 shrink-0">
-                              <button
-                                onClick={() => startEditRole(c)}
-                                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
-                                style={{ border: '1px solid #2a0000', color: '#9a8080' }}
-                              >
-                                Edit role
-                              </button>
-                              {/* No remove button for the current user */}
-                              {!isSelf && (
-                                <button
-                                  onClick={() => setRemoveId(c.id)}
-                                  className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
-                                  style={{ border: '1px solid #3a0000', color: '#cc4444' }}
-                                >
-                                  Remove
-                                </button>
-                              )}
-                            </div>
-                          )}
+                          {/* Action buttons — not shown while editing.
+                              Visibility is gated by canRemoveCoach() /
+                              canEditCoachRole() in src/lib/permissions.js —
+                              the RLS in migration 20260518000000 is the
+                              actual security boundary, these helpers just
+                              keep the UI honest so a head_coach doesn't
+                              tap a button that's going to bounce off RLS
+                              with a confusing error. Notably: head_coach
+                              never sees Remove/Edit-role on the AD's row,
+                              and assistant_coach / team_manager never see
+                              either button anywhere. */}
+                          {!isEditing && (() => {
+                            const canEdit   = canEditCoachRole(profile, c)
+                            const canRemove = canRemoveCoach(profile, c)
+                            if (!canEdit && !canRemove) return null
+                            return (
+                              <div className="flex gap-1.5 shrink-0">
+                                {canEdit && (
+                                  <button
+                                    onClick={() => startEditRole(c)}
+                                    className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                                    style={{ border: '1px solid #2a0000', color: '#9a8080' }}
+                                  >
+                                    Edit role
+                                  </button>
+                                )}
+                                {canRemove && (
+                                  <button
+                                    onClick={() => setRemoveId(c.id)}
+                                    className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                                    style={{ border: '1px solid #3a0000', color: '#cc4444' }}
+                                  >
+                                    Remove
+                                  </button>
+                                )}
+                              </div>
+                            )
+                          })()}
                         </div>
 
                         {/* Inline edit-role row */}

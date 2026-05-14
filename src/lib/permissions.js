@@ -38,6 +38,49 @@ export function canManageBilling(role) {
   return role === 'ad'
 }
 
+// ── Coach-management gates ───────────────────────────────────────────────────
+// Decide whether VIEWER is allowed to remove TARGET from the Coaches & Staff
+// list. Both arguments are profile shapes — must carry { id, role, org_id }.
+// Mirrors the profiles DELETE RLS policy from migration 20260518000000;
+// keep them in sync.
+//
+// Rules:
+//   • Cannot remove yourself via this UI (self-delete is a different flow).
+//   • AD can remove anyone in their account (RLS handles the account scope;
+//     this helper just trusts the caller is consistent).
+//   • head_coach can remove SAME-ORG non-AD members. Cannot remove the AD;
+//     cannot remove cross-program peers.
+//   • assistant_coach / team_manager / no-role cannot remove anyone.
+export function canRemoveCoach(viewer, target) {
+  if (!viewer || !target) return false
+  if (viewer.id === target.id) return false
+  if (viewer.role === 'ad') return true
+  if (viewer.role === 'head_coach') {
+    if (target.role === 'ad') return false
+    if (viewer.org_id !== target.org_id) return false
+    return true
+  }
+  return false
+}
+
+// Decide whether VIEWER can edit TARGET's role via the inline dropdown.
+// Same rules as canRemoveCoach with one subtlety: an AD editing their
+// own role is allowed at the DB layer (the self-update policy permits
+// it), so we DON'T gate self-edit here. If you want a UI guard against
+// the AD demoting themselves, add a confirmation dialog in the caller —
+// don't bake it into this helper.
+export function canEditCoachRole(viewer, target) {
+  if (!viewer || !target) return false
+  if (viewer.role === 'ad') return true
+  if (viewer.role === 'head_coach') {
+    if (viewer.id === target.id) return false   // head_coach can't edit own role here
+    if (target.role === 'ad') return false
+    if (viewer.org_id !== target.org_id) return false
+    return true
+  }
+  return false
+}
+
 // ── User-facing role labels ──────────────────────────────────────────────────
 // The DB stores the canonical snake_case value; the UI shows a friendly
 // Title-Case label.
