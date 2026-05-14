@@ -1527,7 +1527,7 @@ export default function ScriptsSection({
           <p className="text-sm" style={{ color: '#9a8080' }}>
             {userCanEdit
               ? 'Create your first practice script to get started.'
-              : 'No scripts yet. Ask an admin or head coach to create one.'}
+              : 'Ask a head coach, assistant coach, or athletic director on your staff to create one.'}
           </p>
           {userCanEdit && (
             <button onClick={() => setShowNew(true)}

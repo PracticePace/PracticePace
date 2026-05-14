@@ -1227,21 +1227,31 @@ export default function ScoreboardSection({ orgColor, accountId, homeTeamName, a
   // The Football and Basketball scoreboards mix "configure" (set
   // quarters/period length, edit team names) and "operate" (advance
   // clock, +/- score) in the same controls. The user spec asked for
-  // readonly to be able to OPERATE during games but not CONFIGURE —
+  // team_manager to be able to OPERATE during games but not CONFIGURE —
   // since the two aren't cleanly separable today, gate ALL scoreboard
-  // edits for readonly. Show a one-line "read-only — ask a coach to
-  // run the scoreboard" message instead of the picker so the surface
-  // doesn't look broken.
+  // edits for team_manager. Show a one-line "view-only" message
+  // instead of the picker so the surface doesn't look broken.
+  //
+  // GUARD: we wait for profile to actually load before showing the
+  // view-only screen. AuthContext starts profile=null and only populates
+  // after a Supabase fetch — without the profile?.role guard, an AD/
+  // head_coach lands here, fails canEdit(undefined), and sees the view-
+  // only screen flash for ~200–500 ms before the picker appears. Also
+  // defensive against a legacy cached session whose role string still
+  // says 'owner' (post-migration the DB row is 'ad', and canEdit('owner')
+  // returns false). Either way, falling through to the picker is safe —
+  // the picker is non-destructive.
   const { profile } = useAuth()
   const userCanEdit = canEdit(profile?.role)
-  if (!userCanEdit) {
+  if (profile?.role && !userCanEdit) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 text-center">
         <span style={{ fontSize: 48, opacity: 0.25 }}>🏆</span>
-        <p className="font-bold text-white text-base">Scoreboard is read-only</p>
+        <p className="font-bold text-white text-base">Scoreboard is view-only</p>
         <p className="text-sm max-w-md" style={{ color: '#9a8080' }}>
-          Your account role is set to read-only. Ask a coach, admin, or owner
-          on your staff to run the scoreboard during games.
+          Your account role is Team Manager, which is view-only. Ask an
+          athletic director, head coach, or assistant coach on your staff
+          to run the scoreboard during games.
         </p>
       </div>
     )

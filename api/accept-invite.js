@@ -94,7 +94,7 @@ export default async function handler(req) {
       // our /api/invite-coach endpoint. Tell the user clearly so support
       // can re-send the invite via the UI.
       return json({
-        error: 'This invite is missing organization details. Ask your admin to send a fresh invite from PracticePace.',
+        error: 'This invite is missing organization details. Ask your head coach or athletic director to send a fresh invite from PracticePace.',
       }, 400)
     }
 

@@ -64,7 +64,7 @@ export default function AcceptInvite() {
           setAuthLoading(false)
           setAuthError(
             'Your invite link has already been used or expired. ' +
-            'Ask your admin to send a fresh invite.'
+            'Ask your head coach or athletic director to send a fresh invite.'
           )
         } else {
           console.log('[AcceptInvite] verifyOtp ok, session userId=', data?.session?.user?.id ?? null)
@@ -93,7 +93,7 @@ export default function AcceptInvite() {
           }
         } else if (event === 'SIGNED_OUT') {
           setAuthLoading(false)
-          setAuthError('Your invite link has expired or is invalid. Ask your admin to send a new invite.')
+          setAuthError('Your invite link has expired or is invalid. Ask your head coach or athletic director to send a new invite.')
         }
       }
     )
@@ -111,7 +111,7 @@ export default function AcceptInvite() {
           setAuthLoading(prev => {
             if (prev) {
               // Still loading after grace period — no valid session found
-              setAuthError('Your invite link has expired or is invalid. Ask your admin to send a new invite.')
+              setAuthError('Your invite link has expired or is invalid. Ask your head coach or athletic director to send a new invite.')
               return false
             }
             return prev

@@ -84,10 +84,10 @@ const SECTIONS = [
     items: [
       'Invite coaches in Settings → Coaches & Staff → Send Invite.',
       'Coaches receive an email invite and set their own password, then land directly in your account’s dashboard.',
-      'Owner — full access including subscription and billing. The owner is the person who created the account.',
-      'Admin — can manage coaches, edit the program logo, and use all practice tools. Cannot access billing.',
-      'Coach — can run practice, edit scripts, and use all practice tools.',
-      'Read-only — listed as read-only in the Coaches & Staff directory. Note: stricter view-only enforcement is in development.',
+      'Athletic Director — full access including subscription and billing. The Athletic Director is the person who created the account. (On a single-program account, this role displays as "Head Coach".)',
+      'Head Coach — can manage coaches, edit the program logo, and use all practice tools. Cannot access billing.',
+      'Assistant Coach — can run practice, edit scripts and drills, and use all practice tools. Cannot manage coaches or edit program settings.',
+      'Team Manager — view-only. Can run a practice, view scripts and drills, and watch the whiteboard, but cannot create or edit anything and cannot run the scoreboard.',
     ],
   },
   {
