@@ -80,6 +80,17 @@ export default function Dashboard() {
   // user. For an AD, this is all orgs in their account; for everyone else
   // it's just their one org. Drives the program switcher in the header.
   const [allOrgs, setAllOrgs]           = useState([])
+  // accountProgramCount = account-wide org count, served by the
+  // get_my_account_program_count() SECURITY DEFINER RPC (migration
+  // 20260517010000). Distinct from allOrgs.length because head_coach /
+  // assistant_coach / team_manager are RLS-restricted to seeing only
+  // their own org — their allOrgs.length = 1 even when the account has
+  // multiple programs. This account-wide count drives:
+  //   • the "Athletic Director" vs "Head Coach" friendly-label decision
+  //     for role='ad' (renders correctly for non-AD viewers too)
+  //   • the canAddProgram gate in SettingsSection (head_coach can only
+  //     add a program when the account currently has exactly 1).
+  const [accountProgramCount, setAccountProgramCount] = useState(0)
   // activeOrgId is the org-id we use for every downstream fetch — scripts,
   // songs, scoreboard configs, etc. For AD users it can differ from
   // profile.org_id (they may be operating in a sibling program); for all
@@ -228,6 +239,29 @@ export default function Dashboard() {
         .order('name', { ascending: true })
       const orgsArr = orgsList ?? []
       setAllOrgs(orgsArr)
+
+      // ── Account-wide program count (RPC) ──────────────────────────────────
+      // Bypasses the org SELECT RLS via SECURITY DEFINER — see migration
+      // 20260517010000. We need this because non-AD viewers see only
+      // their own org through `orgsList` above, but the friendly-label
+      // and Add-Program-eligibility logic both want the true account
+      // total.
+      try {
+        const { data: countResult, error: countErr } = await supabase
+          .rpc('get_my_account_program_count')
+        if (countErr) {
+          console.warn('[Dashboard] account program count RPC failed:', countErr.message)
+          // Fallback: trust allOrgs.length. Safe for AD (matches the
+          // RPC); slight under-count for non-AD viewers, but never
+          // higher than truth, so canAddProgram won't open false doors.
+          setAccountProgramCount(orgsArr.length)
+        } else {
+          setAccountProgramCount(typeof countResult === 'number' ? countResult : (countResult ?? 0))
+        }
+      } catch (err) {
+        console.warn('[Dashboard] account program count RPC threw:', err?.message ?? err)
+        setAccountProgramCount(orgsArr.length)
+      }
 
       // ── Resolve activeOrgId ────────────────────────────────────────────────
       // AD: respect a previously-stored selection in localStorage (must
@@ -513,6 +547,22 @@ export default function Dashboard() {
         .order('name', { ascending: true })
       const orgsArr = orgsList ?? []
       setAllOrgs(orgsArr)
+
+      // Refresh the account-wide program count too. Critical for the
+      // friendly-label decision: a head_coach who self-promotes during
+      // the 1→2 upgrade will now have role='ad', and the new program
+      // count of 2 flips their label from "Head Coach" to "Athletic
+      // Director" in subsequent renders. If we don't refresh this,
+      // SettingsSection's isMultiProgram stays false and the badge
+      // still reads "Head Coach" until the next page reload.
+      try {
+        const { data: countResult } = await supabase
+          .rpc('get_my_account_program_count')
+        if (typeof countResult === 'number') setAccountProgramCount(countResult)
+        else if (countResult != null)        setAccountProgramCount(countResult)
+      } catch (e) {
+        console.warn('[Dashboard] post-create program count refresh failed:', e?.message ?? e)
+      }
 
       if (promotedToAd && user?.id) {
         const { data: freshProf } = await supabase
@@ -856,7 +906,7 @@ export default function Dashboard() {
               onStartCheckout={openPlanModal}
               checkoutLoading={checkoutLoading}
               checkoutError={checkoutError}
-              programCount={allOrgs.length}
+              programCount={accountProgramCount}
               onProgramCreated={handleProgramCreated}
             />
           )}
