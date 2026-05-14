@@ -1024,19 +1024,32 @@ function BasketballScoreboard({ orgColor }) {
 }
 
 // ── Cheer / Stunt / Dance-Team competition scoreboard ────────────────────────
-// CURRENTLY UNUSED (as of the launch-sport-list commit). cheerleading is
-// routed to GenericScoreboard per spec ("Cheerleading … fall back to a
-// generic clock+score scoreboard"). Function kept in the file so we can
-// re-wire it later if cheer coaches want their purpose-built competition
-// timer back — wire by mapping 'cheerleading' to CheerScoreboard in the
-// sportToScoreboard helper at the bottom of this file.
+// The cheer-specific scoreboard surface. Wired in sportToScoreboard for
+// programs with sport='cheerleading'; built for the June 18 supplier
+// pitch demo.
 //
-// (Original intent: minimal count-down routine timer + optional score
-// field for the cheerleading-supplier demo. Default 2:30, tap-to-edit
-// MM:SS, simple +/− score.)
-// eslint-disable-next-line no-unused-vars
+// Three sections, top-to-bottom:
+//   1. SQUAD NAME — editable inline input at the top. Defaults to the
+//      org's program name; coaches can rename for a competition (e.g.
+//      "Albertville Aggies Varsity").
+//   2. ROUTINE TIMER — count-down from 2:30 (typical comp routine
+//      length). Tap to edit MM:SS. Start/Pause + Reset transport plus
+//      preset chips for 2:30 / 2:00 / 1:30 / 1:00. Big jumbotron-
+//      readable type. Colour shifts amber under 30 s, red under 10 s.
+//   3. SCORE — competitive cheer scores up to 200 with half-points
+//      common. Four buttons: -1, -0.5, +0.5, +1. Displayed as an
+//      integer when whole, one decimal when half. Tap the number to
+//      reset to zero.
+//
+// No DB writes — purely client-side, so any role with access to the
+// Scoreboard tab can operate this surface.
 function CheerScoreboard({ orgColor, programName }) {
   const DEFAULT_SECS = 150  // 2:30
+
+  const [squadName, setSquadName] = useState(programName ?? '')
+  // Re-sync the squad name when the parent's programName changes (e.g.
+  // AD switches programs while the Scoreboard tab is mounted).
+  useEffect(() => { setSquadName(programName ?? '') }, [programName])
 
   const [secsLeft, setSecsLeft] = useState(DEFAULT_SECS)
   const [running,  setRunning]  = useState(false)
@@ -1081,13 +1094,45 @@ function CheerScoreboard({ orgColor, programName }) {
     : secsLeft <= 30 ? '#f59e0b'
     :                  '#22c55e'
 
+  // Adjust score by `delta` (positive or negative, may be a half).
+  // Clamped to [0, 200] — the upper bound is generous (most comps top
+  // out around 100 but the spec called for 0-200, leaving headroom for
+  // sliding-scale judges or multi-routine totals).
+  function adjustScore(delta) {
+    setScore(s => {
+      const next = Math.round((s + delta) * 2) / 2   // snap to halves
+      if (next < 0)   return 0
+      if (next > 200) return 200
+      return next
+    })
+  }
+
+  // Display the score as an integer when whole, otherwise one decimal.
+  // `285` stays `285`; `285.5` shows `285.5`.
+  const scoreDisplay = Number.isInteger(score) ? String(score) : score.toFixed(1)
+
   return (
-    <div className="flex-1 flex flex-col items-center justify-center gap-8 p-6 overflow-y-auto">
-      {programName && (
-        <p className="text-xs font-semibold tracking-widest uppercase" style={{ color: '#6a4040' }}>
-          {programName}
-        </p>
-      )}
+    <div className="flex-1 flex flex-col items-center justify-center gap-7 p-6 overflow-y-auto">
+      {/* Editable squad name — tap the text to rename inline. Matches
+          the editable-input pattern from FootballScoreboard's TeamLabel
+          (transparent background, bottom border on focus). */}
+      <input
+        value={squadName}
+        onChange={e => setSquadName(e.target.value)}
+        placeholder="Squad Name"
+        maxLength={48}
+        className="bg-transparent outline-none text-center font-black"
+        style={{
+          fontSize:      'clamp(1rem, 3.2vw, 1.6rem)',
+          color:         '#ffffff',
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+          maxWidth:      '90%',
+          width:         '90%',
+          borderBottom:  `2px solid ${orgColor}44`,
+          paddingBottom: '0.25rem',
+        }}
+      />
 
       <p className="text-sm font-bold tracking-widest uppercase" style={{ color: '#9a8080', letterSpacing: '0.2em' }}>
         Routine Timer
@@ -1174,43 +1219,66 @@ function CheerScoreboard({ orgColor, programName }) {
         })}
       </div>
 
-      {/* Optional score — coach can ignore it. +/− buttons + tap the
-          number to reset to zero. Compact, sits below transport. */}
+      {/* Score — optional but featured in the demo. Four adjustment
+          buttons (-1, -0.5, +0.5, +1) bracket the big score readout.
+          Tap the number itself to reset to zero. Cap at 200; the spec
+          asked for 0-200 to leave headroom for cumulative totals. */}
       <div className="flex flex-col items-center gap-2 mt-2">
         <p className="text-xs font-bold tracking-widest uppercase" style={{ color: '#6a4040', letterSpacing: '0.2em' }}>
-          Score (optional)
+          Score
         </p>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          {/* -1 then -0.5 on the left side */}
           <button
-            onClick={() => setScore(s => Math.max(0, s - 1))}
-            className="w-12 h-12 rounded-xl font-black text-xl"
+            onClick={() => adjustScore(-1)}
+            className="w-14 h-12 rounded-xl font-black text-base"
             style={{ backgroundColor: '#110000', border: '1px solid #2a0000', color: '#9a8080' }}
           >
-            −
+            −1
           </button>
+          <button
+            onClick={() => adjustScore(-0.5)}
+            className="w-14 h-12 rounded-xl font-black text-sm"
+            style={{ backgroundColor: '#110000', border: '1px solid #2a0000', color: '#9a8080' }}
+          >
+            −½
+          </button>
+
+          {/* The score itself — large, tabular nums for stable width
+              between integer and one-decimal renderings. */}
           <button
             onClick={() => setScore(0)}
             title="Tap to reset"
-            className="font-mono font-black"
+            className="font-mono font-black px-2"
             style={{
-              fontSize: 'clamp(2.2rem, 6vw, 3.4rem)',
-              color:    '#ffffff',
-              minWidth: '3ch',
-              textAlign:'center',
-              background: 'transparent',
-              border:     'none',
-              cursor:     'pointer',
+              fontSize:           'clamp(2.4rem, 7vw, 3.8rem)',
+              color:              '#ffffff',
+              minWidth:           '5ch',
+              textAlign:          'center',
+              background:         'transparent',
+              border:             'none',
+              cursor:             'pointer',
               fontVariantNumeric: 'tabular-nums',
             }}
           >
-            {score}
+            {scoreDisplay}
+          </button>
+
+          {/* +0.5 then +1 on the right side, +1 in orgColor to mirror
+              the Start button. */}
+          <button
+            onClick={() => adjustScore(0.5)}
+            className="w-14 h-12 rounded-xl font-black text-sm text-white"
+            style={{ backgroundColor: `${orgColor}99`, border: `1px solid ${orgColor}` }}
+          >
+            +½
           </button>
           <button
-            onClick={() => setScore(s => s + 1)}
-            className="w-12 h-12 rounded-xl font-black text-xl text-white"
+            onClick={() => adjustScore(1)}
+            className="w-14 h-12 rounded-xl font-black text-base text-white"
             style={{ backgroundColor: orgColor }}
           >
-            +
+            +1
           </button>
         </div>
       </div>
@@ -1363,16 +1431,21 @@ function GenericScoreboard({ orgColor, homeTeamName, awayTeamName, programName, 
 //   football                                   → FootballScoreboard
 //   boys_basketball, girls_basketball,         → BasketballScoreboard
 //     basketball (legacy)
-//   anything else (flag_football, cheerleading, → GenericScoreboard
-//     boys_soccer, girls_soccer, volleyball,
-//     baseball, softball, custom, legacy
-//     stunt/dance/etc., null/undefined)
+//   cheerleading, plus legacy stunt / dance /  → CheerScoreboard
+//     dance team
+//   anything else (flag_football, boys_soccer, → GenericScoreboard
+//     girls_soccer, volleyball, baseball,
+//     softball, custom, null/undefined)
 function sportToScoreboard(orgSport) {
   const s = typeof orgSport === 'string' ? orgSport.toLowerCase() : ''
   if (s === 'football')                                   return 'football'
   if (s === 'boys_basketball'
    || s === 'girls_basketball'
    || s === 'basketball')                                 return 'basketball'
+  if (s === 'cheerleading'
+   || s === 'stunt'
+   || s === 'dance'
+   || s === 'dance team')                                 return 'cheer'
   return 'generic'
 }
 
@@ -1408,6 +1481,9 @@ export default function ScoreboardSection({
   }
   if (surface === 'basketball') {
     return <BasketballScoreboard orgColor={orgColor} />
+  }
+  if (surface === 'cheer') {
+    return <CheerScoreboard orgColor={orgColor} programName={programName} />
   }
   return (
     <GenericScoreboard
