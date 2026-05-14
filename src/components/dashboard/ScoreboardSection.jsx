@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
+import { COMPETITION_SPORTS } from '../../lib/sports'
 
 function pad(n) { return String(n).padStart(2, '0') }
 function fmtClock(s) { return `${pad(Math.floor(Math.abs(s) / 60))}:${pad(Math.abs(s) % 60)}` }
@@ -1023,20 +1024,226 @@ function BasketballScoreboard({ orgColor }) {
   )
 }
 
+// ── Cheer / Stunt / Dance-Team competition scoreboard ────────────────────────
+// Minimal count-down routine timer + optional score field. Built for the
+// cheerleading-supplier demo — coaches running cheer / stunt / dance-team
+// programs land here automatically (auto-selected by org.sport in the
+// root component below). Football and Basketball coaches can still pick
+// this surface manually from the picker if they want a generic
+// competition timer.
+//
+// Default time = 2:30 (typical cheer routine length). Coach can tap the
+// big clock to set any duration in MM:SS format. Score field starts at
+// 0 with simple +/− buttons; coach can ignore it if their routine
+// doesn't track points.
+function CheerScoreboard({ orgColor, programName }) {
+  const DEFAULT_SECS = 150  // 2:30
+
+  const [secsLeft, setSecsLeft] = useState(DEFAULT_SECS)
+  const [running,  setRunning]  = useState(false)
+  const [presetSecs, setPresetSecs] = useState(DEFAULT_SECS)
+  const [editingClock, setEditingClock] = useState(false)
+  const [clockDraft,   setClockDraft]   = useState('')
+  const [score, setScore] = useState(0)
+  const intervalRef = useRef(null)
+
+  // tick loop — same setInterval pattern as the football scoreboard
+  useEffect(() => {
+    if (!running) return
+    intervalRef.current = setInterval(() => {
+      setSecsLeft(prev => {
+        if (prev <= 1) {
+          // Reached 00:00 — stop the timer and hold at zero.
+          setRunning(false)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+    }
+  }, [running])
+
+  function commitClockEdit() {
+    const parsed = parseTimeInput(clockDraft)
+    if (typeof parsed === 'number' && parsed >= 0) {
+      setSecsLeft(parsed)
+      setPresetSecs(parsed)
+    }
+    setEditingClock(false)
+    setClockDraft('')
+  }
+
+  // Clock colour: green > 30 s, amber > 10 s, red ≤ 10 s, white at 0.
+  const clockColor =
+    secsLeft === 0 ? '#ffffff'
+    : secsLeft <= 10 ? '#ef4444'
+    : secsLeft <= 30 ? '#f59e0b'
+    :                  '#22c55e'
+
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center gap-8 p-6 overflow-y-auto">
+      {programName && (
+        <p className="text-xs font-semibold tracking-widest uppercase" style={{ color: '#6a4040' }}>
+          {programName}
+        </p>
+      )}
+
+      <p className="text-sm font-bold tracking-widest uppercase" style={{ color: '#9a8080', letterSpacing: '0.2em' }}>
+        Routine Timer
+      </p>
+
+      {/* Big clock — tappable to edit (matches the football scoreboard's
+          parseTimeInput / MM:SS-edit pattern) */}
+      {editingClock ? (
+        <input
+          autoFocus
+          value={clockDraft}
+          onChange={e => setClockDraft(e.target.value)}
+          onBlur={commitClockEdit}
+          onKeyDown={e => { if (e.key === 'Enter') commitClockEdit() }}
+          placeholder="2:30"
+          className="font-mono font-black text-center bg-transparent outline-none"
+          style={{
+            fontSize:           'clamp(5rem, 18vw, 11rem)',
+            color:              clockColor,
+            border:             `2px solid ${orgColor}55`,
+            borderRadius:       24,
+            padding:            '0 1rem',
+            minWidth:           '6ch',
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        />
+      ) : (
+        <button
+          onClick={() => { setClockDraft(fmtClock(secsLeft)); setEditingClock(true); setRunning(false) }}
+          className="font-mono font-black leading-none select-none"
+          style={{
+            fontSize:           'clamp(5rem, 18vw, 11rem)',
+            color:              clockColor,
+            textShadow:         `0 0 80px ${clockColor}66`,
+            transition:         'color 0.6s, text-shadow 0.6s',
+            fontVariantNumeric: 'tabular-nums',
+            background:         'transparent',
+            border:             'none',
+            cursor:             'pointer',
+          }}
+        >
+          {fmtClock(secsLeft)}
+        </button>
+      )}
+
+      {/* Transport: Start/Pause, Reset, preset times. */}
+      <div className="flex items-center gap-2 flex-wrap justify-center">
+        <button
+          onClick={() => setRunning(r => !r)}
+          disabled={secsLeft === 0 && !running}
+          className="h-12 px-7 rounded-xl font-black text-white transition-all disabled:opacity-30"
+          style={{ backgroundColor: orgColor, minWidth: 130, fontSize: '1.05rem' }}
+        >
+          {running ? '⏸ Pause' : '▶ Start'}
+        </button>
+        <button
+          onClick={() => { setRunning(false); setSecsLeft(presetSecs) }}
+          className="h-12 px-4 rounded-xl font-bold text-sm"
+          style={{ backgroundColor: '#110000', border: '1px solid #2a0000', color: '#9a8080' }}
+        >
+          ↺ Reset
+        </button>
+        {[
+          { label: '2:30', secs: 150 },
+          { label: '2:00', secs: 120 },
+          { label: '1:30', secs: 90  },
+          { label: '1:00', secs: 60  },
+        ].map(p => {
+          const isActive = presetSecs === p.secs
+          return (
+            <button
+              key={p.label}
+              onClick={() => { setRunning(false); setSecsLeft(p.secs); setPresetSecs(p.secs) }}
+              className="h-12 px-3 rounded-lg text-xs font-bold"
+              style={{
+                backgroundColor: isActive ? `${orgColor}22` : '#110000',
+                border:          `1px solid ${isActive ? orgColor : '#2a0000'}`,
+                color:           isActive ? orgColor : '#9a8080',
+              }}
+            >
+              {p.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Optional score — coach can ignore it. +/− buttons + tap the
+          number to reset to zero. Compact, sits below transport. */}
+      <div className="flex flex-col items-center gap-2 mt-2">
+        <p className="text-xs font-bold tracking-widest uppercase" style={{ color: '#6a4040', letterSpacing: '0.2em' }}>
+          Score (optional)
+        </p>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setScore(s => Math.max(0, s - 1))}
+            className="w-12 h-12 rounded-xl font-black text-xl"
+            style={{ backgroundColor: '#110000', border: '1px solid #2a0000', color: '#9a8080' }}
+          >
+            −
+          </button>
+          <button
+            onClick={() => setScore(0)}
+            title="Tap to reset"
+            className="font-mono font-black"
+            style={{
+              fontSize: 'clamp(2.2rem, 6vw, 3.4rem)',
+              color:    '#ffffff',
+              minWidth: '3ch',
+              textAlign:'center',
+              background: 'transparent',
+              border:     'none',
+              cursor:     'pointer',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {score}
+          </button>
+          <button
+            onClick={() => setScore(s => s + 1)}
+            className="w-12 h-12 rounded-xl font-black text-xl text-white"
+            style={{ backgroundColor: orgColor }}
+          >
+            +
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Sport picker + root ───────────────────────────────────────────────────────
 
-export default function ScoreboardSection({ orgColor, accountId, homeTeamName, awayTeamName, programName }) {
-  const [sport, setSport] = useState(null)
+export default function ScoreboardSection({ orgColor, accountId, homeTeamName, awayTeamName, programName, sport: orgSport }) {
+  // Auto-select the cheer/competition scoreboard for cheer / stunt /
+  // dance-team programs. The picker is still reachable via the "← Change"
+  // button at the top of the sub-scoreboard, so a cheer coach who wants
+  // a football scoreboard for a game-day matchup can still pick it.
+  const competitionDefault =
+    typeof orgSport === 'string' && COMPETITION_SPORTS.has(orgSport.toLowerCase())
+  const [sport, setSport] = useState(competitionDefault ? 'cheer' : null)
+
+  // Picker options. Cheer/Competition is shown to ALL programs so a
+  // football coach who wants a generic count-down timer can pick it too.
+  const PICKER = [
+    { id: 'football',   label: 'Football',   emoji: '🏈' },
+    { id: 'basketball', label: 'Basketball', emoji: '🏀' },
+    { id: 'cheer',      label: 'Competition', emoji: '📣' },
+  ]
 
   if (!sport) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-8 p-8">
         <h2 className="text-xl font-black text-white tracking-wide">Choose Sport</h2>
         <div className="flex gap-6 flex-wrap justify-center">
-          {[
-            { id: 'football',   label: 'Football',   emoji: '🏈' },
-            { id: 'basketball', label: 'Basketball', emoji: '🏀' },
-          ].map(s => (
+          {PICKER.map(s => (
             <button
               key={s.id}
               onClick={() => setSport(s.id)}
@@ -1052,6 +1259,9 @@ export default function ScoreboardSection({ orgColor, accountId, homeTeamName, a
     )
   }
 
+  const activeLabel = PICKER.find(p => p.id === sport)?.label ?? sport
+  const activeEmoji = PICKER.find(p => p.id === sport)?.emoji ?? ''
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden min-h-0">
       <div className="flex items-center gap-3 px-4 pt-3 shrink-0">
@@ -1063,19 +1273,24 @@ export default function ScoreboardSection({ orgColor, accountId, homeTeamName, a
           ← Change
         </button>
         <span className="font-black text-white text-base">
-          {sport === 'football' ? '🏈 Football' : '🏀 Basketball'}
+          {activeEmoji} {activeLabel}
         </span>
       </div>
-      {sport === 'football'
-        ? <FootballScoreboard
-            orgColor={orgColor}
-            accountId={accountId}
-            homeTeamName={homeTeamName}
-            awayTeamName={awayTeamName}
-            programName={programName}
-          />
-        : <BasketballScoreboard orgColor={orgColor} />
-      }
+      {sport === 'football' && (
+        <FootballScoreboard
+          orgColor={orgColor}
+          accountId={accountId}
+          homeTeamName={homeTeamName}
+          awayTeamName={awayTeamName}
+          programName={programName}
+        />
+      )}
+      {sport === 'basketball' && (
+        <BasketballScoreboard orgColor={orgColor} />
+      )}
+      {sport === 'cheer' && (
+        <CheerScoreboard orgColor={orgColor} programName={programName} />
+      )}
     </div>
   )
 }

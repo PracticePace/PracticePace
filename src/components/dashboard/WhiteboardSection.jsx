@@ -602,30 +602,97 @@ function drawTrack(ctx, w, h) {
   })
 }
 
-const BACKGROUNDS = {
-  blank:              drawBlank,
-  football:           drawFootballField,
-  basketball_half:    drawBasketballHalfCourt,
-  basketball_full:    drawBasketballFullCourt,
-  baseball:           drawBaseballField,
-  soccer:             drawSoccerPitch,
-  volleyball:         drawVolleyballCourt,
-  tennis:             drawTennisCourt,
-  track:              drawTrack,
+// ── Cheer mat ─────────────────────────────────────────────────────────────────
+// 42 × 42 ft competition mat (square). Blue surface with white centerline +
+// the four corner X markings used to align routines. Drawn square so the
+// mat reads true-to-life on whatever viewport — coaches diagramming
+// stunts/tumbling care about proportion (which corner is which) more than
+// filling the canvas.
+function drawCheerMat(ctx, w, h) {
+  // Backdrop — dark navy outside the mat so the blue mat reads against it.
+  // Inside the mat box we then fill with the regulation blue.
+  ctx.fillStyle = '#0a1424'
+  ctx.fillRect(0, 0, w, h)
+
+  // Mat is square. Fit it with a 6 % margin from the shorter dimension.
+  const short = Math.min(w, h)
+  const matSide = short * 0.88
+  const matX = (w - matSide) / 2
+  const matY = (h - matSide) / 2
+
+  // Mat surface — competition royal blue (a common Spirit / Resilite shade)
+  ctx.fillStyle = '#1d4ed8'
+  ctx.fillRect(matX, matY, matSide, matSide)
+
+  // White outer boundary
+  ctx.strokeStyle = '#ffffff'
+  ctx.lineWidth = Math.max(2, matSide * 0.006)
+  ctx.lineCap = 'round'
+  ctx.strokeRect(matX, matY, matSide, matSide)
+
+  // Centerline — horizontal across the middle of the mat, the line the
+  // front of the formation aligns to. Slightly thinner than the boundary.
+  ctx.lineWidth = Math.max(1.5, matSide * 0.004)
+  ctx.beginPath()
+  ctx.moveTo(matX,            matY + matSide / 2)
+  ctx.lineTo(matX + matSide,  matY + matSide / 2)
+  ctx.stroke()
+
+  // Four corner X markings — used for routine alignment. Drawn ~2 ft in
+  // from each corner of the 42 ft mat (≈ 4.7 % of mat side). Each X is
+  // a small "+" rotated 45 °; cleaner than drawing two crossing diagonals
+  // because the canvas line-cap rounding hides the join.
+  const xInset = matSide * 0.10  // distance from corner to centre of the X
+  const xSize  = matSide * 0.04  // half-length of each arm of the X
+  ctx.lineWidth = Math.max(2, matSide * 0.007)
+  const corners = [
+    [matX + xInset,           matY + xInset],            // top-left
+    [matX + matSide - xInset, matY + xInset],            // top-right
+    [matX + xInset,           matY + matSide - xInset],  // bottom-left
+    [matX + matSide - xInset, matY + matSide - xInset],  // bottom-right
+  ]
+  for (const [cxX, cyY] of corners) {
+    ctx.beginPath()
+    ctx.moveTo(cxX - xSize, cyY - xSize); ctx.lineTo(cxX + xSize, cyY + xSize)
+    ctx.moveTo(cxX + xSize, cyY - xSize); ctx.lineTo(cxX - xSize, cyY + xSize)
+    ctx.stroke()
+  }
 }
 
-// Toolbar dropdown options, in the order the user spec'd. All visible to all
-// users regardless of program sport — no filtering.
+const BACKGROUNDS = {
+  blank:                  drawBlank,
+  football:               drawFootballField,
+  // Sideline-cheer alias points at the same drawer as 'football' — it's the
+  // identical surface, separately labeled in the dropdown so cheer
+  // programs see "their" option without scanning past the football
+  // entry. Persisting the alias as its own value (rather than aliasing
+  // to 'football' on save) keeps the coach's selection round-trippable.
+  football_sideline_cheer: drawFootballField,
+  basketball_half:        drawBasketballHalfCourt,
+  basketball_full:        drawBasketballFullCourt,
+  baseball:               drawBaseballField,
+  soccer:                 drawSoccerPitch,
+  volleyball:             drawVolleyballCourt,
+  tennis:                 drawTennisCourt,
+  track:                  drawTrack,
+  cheer_mat:              drawCheerMat,
+}
+
+// Toolbar dropdown options. All visible to all users regardless of program
+// sport — no filtering. The two cheer entries (cheer_mat,
+// football_sideline_cheer) were added for the cheerleading-supplier demo.
 const BACKGROUND_OPTIONS = [
-  { value: 'blank',           label: 'Blank' },
-  { value: 'football',        label: 'Football field' },
-  { value: 'basketball_half', label: 'Basketball half-court' },
-  { value: 'basketball_full', label: 'Basketball full-court' },
-  { value: 'baseball',        label: 'Baseball/softball field' },
-  { value: 'soccer',          label: 'Soccer pitch' },
-  { value: 'volleyball',      label: 'Volleyball court' },
-  { value: 'tennis',          label: 'Tennis court' },
-  { value: 'track',           label: 'Track (oval, 8 lanes)' },
+  { value: 'blank',                  label: 'Blank' },
+  { value: 'football',               label: 'Football field' },
+  { value: 'football_sideline_cheer', label: 'Football field (sideline cheer)' },
+  { value: 'basketball_half',        label: 'Basketball half-court' },
+  { value: 'basketball_full',        label: 'Basketball full-court' },
+  { value: 'baseball',               label: 'Baseball/softball field' },
+  { value: 'soccer',                 label: 'Soccer pitch' },
+  { value: 'volleyball',             label: 'Volleyball court' },
+  { value: 'tennis',                 label: 'Tennis court' },
+  { value: 'track',                  label: 'Track (oval, 8 lanes)' },
+  { value: 'cheer_mat',              label: 'Cheer mat' },
 ]
 
 // ── Toolbar icons (inline SVGs match the project convention) ─────────────────
