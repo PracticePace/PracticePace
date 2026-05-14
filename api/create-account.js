@@ -1,6 +1,13 @@
 // Vercel Edge Function — create account, org, and profile during onboarding.
 // Uses the service role key so it bypasses RLS entirely.
 //
+// The first profile in a new account is assigned role='ad' (Athletic
+// Director) — they own the account and can manage everything.
+//
+// ROLES (renamed 2026-05-16 — Commit 2a athletic-terminology refactor):
+//   ad / head_coach / assistant_coach / team_manager
+//   (formerly owner / admin / coach / readonly)
+//
 // REQUIRED ENV VARS:
 //   VITE_SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY
@@ -138,13 +145,17 @@ export default async function handler(req) {
     })
     console.log('[create-account] org created:', org.id)
 
-    // 3. Upsert profile — safe to upsert in case a partial row exists
+    // 3. Upsert profile — safe to upsert in case a partial row exists.
+    //    role='ad' = the account owner (Athletic Director). All onboarding
+    //    flows start here regardless of plan tier; if the account turns
+    //    out to be single-program, the UI labels them "Head Coach" in
+    //    most surfaces (see roleLabel() in src/lib/permissions.js).
     await sbUpsert(supabaseUrl, serviceKey, 'profiles', {
       id:         userId,
       account_id: account.id,
       org_id:     org.id,
       email,
-      role:       'owner',
+      role:       'ad',
       full_name:  fullName ?? '',
     }, 'id')
     console.log('[create-account] profile upserted for user:', userId)

@@ -1,10 +1,14 @@
 // Vercel Edge Function — Finalize a coach invite by creating their profile row.
 //
 // Why this exists:
-//   profiles RLS only permits owners/admins to INSERT. A freshly-invited
+//   profiles RLS only permits ad/head_coach to INSERT. A freshly-invited
 //   coach has no profile row yet, so get_my_role() returns NULL and the
 //   browser-side upsert is denied. We bypass RLS with the service role
-//   key — same pattern as api/create-account.js for first-time owners.
+//   key — same pattern as api/create-account.js for first-time ADs.
+//
+// ROLES (renamed 2026-05-16 — Commit 2a athletic-terminology refactor):
+//   ad / head_coach / assistant_coach / team_manager
+//   (formerly owner / admin / coach / readonly)
 //
 // Inputs (request body):
 //   { userId }   — the auth.users id of the invited coach (required)
@@ -81,7 +85,7 @@ export default async function handler(req) {
     const meta = authUser?.user_metadata ?? {}
 
     const org_id    = meta.org_id
-    const role      = meta.role      ?? 'coach'
+    const role      = meta.role      ?? 'assistant_coach'
     const full_name = meta.full_name ?? ''
     const email     = authUser?.email ?? ''
 
@@ -94,30 +98,30 @@ export default async function handler(req) {
       }, 400)
     }
 
-    // 2. Resolve account_id from the org's OWNER profile, NOT from
+    // 2. Resolve account_id from the org's AD profile, NOT from
     //    organizations.account_id directly. Reason: organizations.account_id
-    //    can drift when an account is upgraded/replaced (e.g. owner moves
-    //    from a single-program trial to a school plan; a new accounts row is
-    //    created and the owner's profile gets repointed at it, but
+    //    can drift when an account is upgraded/replaced (e.g. AD moves from
+    //    a single-program trial to a school plan; a new accounts row is
+    //    created and the AD's profile gets repointed at it, but
     //    organizations.account_id can be left pointing at the obsolete row).
-    //    The owner's profile is the live source of truth for which account
+    //    The AD's profile is the live source of truth for which account
     //    the invitee should join — RLS uses get_my_account_id() (which reads
     //    profiles.account_id) for org-membership SELECTs, so anchoring the
-    //    coach's account_id to the owner's keeps them visible to each other.
+    //    coach's account_id to the AD's keeps them visible to each other.
     const ownerRes = await fetch(
-      `${supabaseUrl}/rest/v1/profiles?org_id=eq.${encodeURIComponent(org_id)}&role=eq.owner&select=account_id&limit=1`,
+      `${supabaseUrl}/rest/v1/profiles?org_id=eq.${encodeURIComponent(org_id)}&role=eq.ad&select=account_id&limit=1`,
       { headers: sbHeaders(serviceKey) }
     )
     if (!ownerRes.ok) {
       const text = await ownerRes.text().catch(() => '')
-      console.error('[accept-invite] owner lookup failed:', ownerRes.status, text)
+      console.error('[accept-invite] AD lookup failed:', ownerRes.status, text)
       return json({ error: 'Could not look up your program.' }, 502)
     }
     const owners = await ownerRes.json()
     if (!Array.isArray(owners) || owners.length === 0) {
-      console.error('[accept-invite] no owner profile found for org', org_id)
+      console.error('[accept-invite] no AD profile found for org', org_id)
       return json({
-        error: `Cannot determine account for invite: no owner profile found for org ${org_id}. Ask your admin to send a fresh invite.`,
+        error: `Cannot determine account for invite: no AD profile found for org ${org_id}. Ask your head coach to send a fresh invite.`,
       }, 404)
     }
     const account_id = owners[0].account_id

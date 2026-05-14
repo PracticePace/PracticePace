@@ -13,29 +13,39 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { SPORTS } from '../../lib/sports'
+import { roleLabel } from '../../lib/permissions'
 
-const ROLES  = ['owner','admin','coach','readonly']
+// Allowed role values (DB-side). Order matters for the invite dropdown:
+// the default selection is assistant_coach (most-common invite). Athletic
+// Director ('ad') is intentionally NOT included here — AD promotions go
+// through a different (manual) path so a head_coach can't escalate via the
+// invite endpoint. See api/invite-coach.js for the matching server-side gate.
+const ROLES = ['assistant_coach', 'team_manager', 'head_coach']
 
-// Role badge colours
+// Role badge colours, keyed by DB value.
 const ROLE_STYLE = {
-  owner:    { bg: '#2a1a00', color: '#fbbf24', border: '#5a3a00' },
-  admin:    { bg: '#3a0000', color: '#ff6666', border: '#6a0000' },
-  coach:    { bg: '#001a2e', color: '#60a5fa', border: '#003a5e' },
-  readonly: { bg: '#1a1a1a', color: '#9a9a9a', border: '#333333' },
+  ad:              { bg: '#2a1a00', color: '#fbbf24', border: '#5a3a00' },
+  head_coach:      { bg: '#3a0000', color: '#ff6666', border: '#6a0000' },
+  assistant_coach: { bg: '#001a2e', color: '#60a5fa', border: '#003a5e' },
+  team_manager:    { bg: '#1a1a1a', color: '#9a9a9a', border: '#333333' },
 }
 
-// Roles that can manage coaches and send invites
+// Roles that can manage coaches and send invites. Legacy accounts with a
+// missing role still slip through (defensive — early users predate the
+// role column). Matches the RLS gate on profiles INSERT/UPDATE which uses
+// get_my_role() IN ('ad','head_coach').
 function canManageCoaches(role) {
-  return role === 'owner' || role === 'admin' || !role
+  return role === 'ad' || role === 'head_coach' || !role
 }
-function RoleBadge({ role }) {
-  const s = ROLE_STYLE[role] ?? ROLE_STYLE.readonly
+
+function RoleBadge({ role, isMultiProgram }) {
+  const s = ROLE_STYLE[role] ?? ROLE_STYLE.team_manager
   return (
     <span
-      className="text-xs font-bold px-2 py-0.5 rounded-full capitalize"
+      className="text-xs font-bold px-2 py-0.5 rounded-full"
       style={{ backgroundColor: s.bg, color: s.color, border: `1px solid ${s.border}` }}
     >
-      {role}
+      {roleLabel(role, isMultiProgram)}
     </span>
   )
 }
@@ -96,7 +106,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
 
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteName, setInviteName]   = useState('')
-  const [inviteRole, setInviteRole]   = useState('coach')
+  const [inviteRole, setInviteRole]   = useState('assistant_coach')
   const [inviting, setInviting]       = useState(false)
   const [inviteSent, setInviteSent]   = useState('')   // success: shows the sent-to email
   const [inviteErr, setInviteErr]     = useState('')
@@ -114,6 +124,13 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
   const [portalLoading, setPortalLoading] = useState(false)
   const [portalError,   setPortalError]   = useState('')
 
+  // Whether this account has 2+ programs. Decides whether 'ad' is labelled
+  // "Athletic Director" (multi-program school) or "Head Coach" (single-
+  // program account — the AD is also the de-facto HC). The DB value stays
+  // 'ad' either way; this is purely a display decision. See roleLabel()
+  // in src/lib/permissions.js.
+  const [isMultiProgram, setIsMultiProgram] = useState(false)
+
   // Sync form whenever org or subscription changes (also covers initial load
   // when either arrives async).
   useEffect(() => {
@@ -128,6 +145,31 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
       loadCoaches()
     }
   }, [org?.id, org?.name, org?.sport, org?.primary_color, org?.secondary_color, subscription?.id, subscription?.program_name_color])
+
+  // Count organizations on this account — drives the "Athletic Director" vs
+  // "Head Coach" label for 'ad' role users. RLS lets any account member
+  // SELECT organizations rows scoped to their account, so no service-role
+  // hop needed.
+  useEffect(() => {
+    let cancelled = false
+    async function loadProgramCount() {
+      const accountId = subscription?.id
+      if (!accountId) { setIsMultiProgram(false); return }
+      const { count, error } = await supabase
+        .from('organizations')
+        .select('id', { count: 'exact', head: true })
+        .eq('account_id', accountId)
+      if (cancelled) return
+      if (error) {
+        console.warn('[Settings] program count query failed:', error.message)
+        setIsMultiProgram(false)
+        return
+      }
+      setIsMultiProgram((count ?? 0) >= 2)
+    }
+    loadProgramCount()
+    return () => { cancelled = true }
+  }, [subscription?.id])
 
   async function loadCoaches() {
     if (!org?.id) return
@@ -199,7 +241,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
         // 2. Link profile to the new org
         const { error: profErr } = await supabase
           .from('profiles')
-          .upsert({ id: userId, org_id: orgId, email: user?.email ?? '', role: 'admin', full_name: profile?.full_name ?? '' }, { onConflict: 'id' })
+          .upsert({ id: userId, org_id: orgId, email: user?.email ?? '', role: 'head_coach', full_name: profile?.full_name ?? '' }, { onConflict: 'id' })
         if (profErr) { setSaveErr(`Could not link profile: ${profErr.message}`); return }
 
         setSaved(true)
@@ -404,7 +446,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
       // P0 security fix (2026-05-15): /api/invite-coach now requires a
       // valid Supabase JWT in the Authorization header. The endpoint
       // verifies the caller server-side, looks up their profile, and
-      // only allows the invite when the caller has role ∈ {owner,admin}
+      // only allows the invite when the caller has role ∈ {ad,head_coach}
       // AND the org_id matches their own. Without this header the
       // endpoint returns 401.
       const { data: { session } } = await supabase.auth.getSession()
@@ -488,10 +530,11 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
         {/* ── LEFT COLUMN ── */}
         <div className="flex flex-col gap-5">
 
-          {/* Program Settings — owner/admin only. Aligns with the RLS
-              gate on organizations UPDATE (P0 migration 20260515000000).
-              A readonly or coach role would have the inputs render but
-              every save would bounce off RLS, so we hide the whole card. */}
+          {/* Program Settings — ad/head_coach only. Aligns with the RLS
+              gate on organizations UPDATE (P0 migration 20260515000000,
+              renamed in 20260516000000). A team_manager or assistant_coach
+              would have the inputs render but every save would bounce off
+              RLS, so we hide the whole card. */}
           {canManageCoaches(profile?.role) && (
           <Section title="Program Settings">
             <div className="flex flex-col gap-1">
@@ -607,7 +650,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
           </Section>
           )}
 
-          {/* Program Logo — owner+admin only (same gating as Coaches & Staff) */}
+          {/* Program Logo — ad+head_coach only (same gating as Coaches & Staff) */}
           {canManageCoaches(profile?.role) && (
           <Section title="Program Logo">
             <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
@@ -670,7 +713,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
           </Section>
           )}
 
-          {/* Practice Background — owner/admin only. Same logic as
+          {/* Practice Background — ad/head_coach only. Same logic as
               Program Settings + Program Logo. */}
           {canManageCoaches(profile?.role) && (
           <Section title="Practice Screen Background">
@@ -741,7 +784,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
         {/* ── RIGHT COLUMN ── */}
         <div className="flex flex-col gap-5">
 
-          {/* Coaches & Staff — owners, admins, and legacy accounts with no role */}
+          {/* Coaches & Staff — ad, head_coach, and legacy accounts with no role */}
           {canManageCoaches(profile?.role) && (
             <Section title="Coaches & Staff">
               {/* ── Coach rows ── */}
@@ -770,7 +813,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                                   <span className="ml-1.5 text-xs font-normal" style={{ color: '#9a8080' }}>(you)</span>
                                 )}
                               </p>
-                              {!isEditing && <RoleBadge role={c.role} />}
+                              {!isEditing && <RoleBadge role={c.role} isMultiProgram={isMultiProgram} />}
                             </div>
                             <p className="text-xs truncate" style={{ color: '#9a8080' }}>{c.email}</p>
                           </div>
@@ -805,11 +848,11 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                             <select
                               value={editRole}
                               onChange={e => setEditRole(e.target.value)}
-                              className="flex-1 rounded-lg px-3 py-2 text-sm font-bold outline-none capitalize"
+                              className="flex-1 rounded-lg px-3 py-2 text-sm font-bold outline-none"
                               style={{ backgroundColor: '#1a0000', border: '1px solid #3a0000', color: '#fff' }}
                             >
                               {ROLES.map(r => (
-                                <option key={r} value={r} className="capitalize">{r}</option>
+                                <option key={r} value={r}>{roleLabel(r, isMultiProgram)}</option>
                               ))}
                             </select>
                             <button
@@ -865,7 +908,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                     className="rounded-lg px-2 py-3 text-xs font-bold outline-none"
                     style={{ backgroundColor: '#1a0000', border: '1px solid #2a0000', color: '#fff' }}
                   >
-                    {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                    {ROLES.map(r => <option key={r} value={r}>{roleLabel(r, isMultiProgram)}</option>)}
                   </select>
                 </div>
 
@@ -898,10 +941,12 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
             </Section>
           )}
 
-          {/* ── Billing — owner only ───────────────────────────────────────
-              Admins manage coaches/staff but should not see or touch billing.
-              Coaches/readonly should never see this card. */}
-          {profile?.role === 'owner' && (
+          {/* ── Billing — ad only ──────────────────────────────────────────
+              head_coach manages coaches/staff but should not see or touch
+              billing. assistant_coach / team_manager should never see this
+              card. Matches the RLS gate on accounts UPDATE (get_my_role()
+              = 'ad'). */}
+          {profile?.role === 'ad' && (
           <Section title="Subscription & Billing">
             {(() => {
               const sub      = subscription
@@ -1077,13 +1122,20 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
           <Section title="Your Account">
             <div className="flex flex-col gap-3">
               {[
-                { label: 'Name',  value: profile?.full_name },
-                { label: 'Email', value: profile?.email },
-                { label: 'Role',  value: profile?.role },
-              ].map(({ label, value }) => (
+                { label: 'Name',  value: profile?.full_name, capitalize: true  },
+                { label: 'Email', value: profile?.email,     capitalize: false },
+                // Role uses the friendly label (e.g. "Athletic Director")
+                // rather than the raw DB value ('ad'). The roleLabel helper
+                // already returns Title Case, so don't apply CSS capitalize
+                // (which would otherwise hyper-capitalise "Athletic Director"
+                // → "Athletic Director" — fine — but also "head_coach" →
+                // "Head_Coach" if the label ever fell through to the raw
+                // value defensively).
+                { label: 'Role',  value: roleLabel(profile?.role, isMultiProgram), capitalize: false },
+              ].map(({ label, value, capitalize }) => (
                 <div key={label} className="flex flex-col gap-0.5">
                   <span className="text-xs uppercase tracking-widest" style={{ color: '#4a2020' }}>{label}</span>
-                  <span className="text-sm font-semibold text-white capitalize">{value || '—'}</span>
+                  <span className={`text-sm font-semibold text-white ${capitalize ? 'capitalize' : ''}`}>{value || '—'}</span>
                 </div>
               ))}
             </div>

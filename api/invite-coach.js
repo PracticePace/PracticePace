@@ -6,10 +6,14 @@
 //   This endpoint REQUIRES a valid Supabase JWT in the Authorization header.
 //   We verify the JWT server-side (Supabase /auth/v1/user), look up the
 //   caller's profile via service-role, and only then allow the invite IFF
-//   the caller has role ∈ {owner, admin} AND the org_id in the request body
-//   matches the caller's own profiles.org_id. Without this, anyone on the
-//   internet could POST here with arbitrary {email, org_id, role:'owner'}
-//   and self-invite as owner of any program whose UUID they guessed.
+//   the caller has role ∈ {ad, head_coach} AND the org_id in the request
+//   body matches the caller's own profiles.org_id. Without this, anyone on
+//   the internet could POST here with arbitrary {email, org_id, role:'ad'}
+//   and self-invite as AD of any program whose UUID they guessed.
+//
+// ROLES (renamed 2026-05-16 — Commit 2a athletic-terminology refactor):
+//   ad / head_coach / assistant_coach / team_manager
+//   (formerly owner / admin / coach / readonly)
 //
 // VERCEL ENV VARS REQUIRED (Settings → Environment Variables):
 //   VITE_SUPABASE_URL        — already set (your Supabase project URL)
@@ -140,12 +144,12 @@ export default async function handler(req) {
   }
 
   // ── 4. Authorisation gates ────────────────────────────────────────────────
-  // Caller must be owner or admin AND must be inviting into THEIR OWN org.
-  // (Cross-program invites — e.g. a school admin inviting into a sibling
-  // program — are intentionally NOT supported by this endpoint in the P0
-  // hardening. Lifting that constraint is part of the role-model refactor
-  // in Commit 2; needs a product decision on multi-org admins first.)
-  if (callerRole !== 'owner' && callerRole !== 'admin') {
+  // Caller must be ad or head_coach AND must be inviting into THEIR OWN org.
+  // (Cross-program invites — e.g. an AD inviting into a sibling program —
+  // are intentionally NOT supported by this endpoint in the P0 hardening.
+  // Lifting that constraint is part of Commit 2b; needs the multi-program
+  // model wired up first.)
+  if (callerRole !== 'ad' && callerRole !== 'head_coach') {
     console.warn('[invite-coach] insufficient role for', callerUserId, '— has', callerRole)
     return json({ error: 'Forbidden' }, 403)
   }
@@ -157,12 +161,13 @@ export default async function handler(req) {
     return json({ error: 'Forbidden' }, 403)
   }
 
-  // The invited role itself is also constrained — defence-in-depth so an
-  // admin can't promote anyone above their own privilege via this endpoint.
-  // Default 'coach'; allow {coach, readonly, admin}. Owner promotions go
-  // through a different (manual) path so a single rogue admin can't escalate.
-  const invitedRole = role ?? 'coach'
-  if (!['coach', 'readonly', 'admin'].includes(invitedRole)) {
+  // The invited role itself is also constrained — defence-in-depth so a
+  // head_coach can't promote anyone above their own privilege via this
+  // endpoint. Default 'assistant_coach'; allow {assistant_coach,
+  // team_manager, head_coach}. AD promotions go through a different
+  // (manual) path so a single rogue head_coach can't escalate.
+  const invitedRole = role ?? 'assistant_coach'
+  if (!['assistant_coach', 'team_manager', 'head_coach'].includes(invitedRole)) {
     console.warn('[invite-coach] disallowed invited role:', invitedRole)
     return json({ error: 'Invalid role' }, 400)
   }
