@@ -850,9 +850,15 @@ function PlaylistTab({ songs, currentIndex, orgColor, onReorder }) {
 }
 
 // ── Main MP3 player ───────────────────────────────────────────────────────────
-function Mp3Player({ orgColor }) {
+// orgId is passed down from AudioSection → Dashboard so the AD's program
+// switcher (Commit 2b) propagates here. Falling back to profile.org_id is
+// for legacy callers / safety; in the live Dashboard chain orgId is always
+// supplied. If we read profile.org_id directly, an AD switched to a
+// sibling program would see their pinned Football music instead of the
+// active program's.
+function Mp3Player({ orgColor, orgId: orgIdProp }) {
   const { profile } = useAuth()
-  const orgId = profile?.org_id
+  const orgId = orgIdProp ?? profile?.org_id
 
   const [snap,        setSnap]        = useState(() => getAudioSnapshot())
   const [currentTime, setCurrentTime] = useState(0)
@@ -954,7 +960,7 @@ function Mp3Player({ orgColor }) {
 }
 
 // ── Export ────────────────────────────────────────────────────────────────────
-export default function AudioSection({ orgColor }) {
+export default function AudioSection({ orgColor, orgId }) {
   return (
     <div className="flex-1 overflow-y-auto p-5 md:p-8">
       <div className="max-w-xl mx-auto flex flex-col gap-6">
@@ -967,7 +973,7 @@ export default function AudioSection({ orgColor }) {
           <h2 className="font-black text-white text-xl">Music</h2>
         </div>
 
-        <Mp3Player orgColor={orgColor} />
+        <Mp3Player orgColor={orgColor} orgId={orgId} />
 
       </div>
     </div>

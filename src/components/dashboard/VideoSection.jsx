@@ -37,9 +37,15 @@ function safeHostname(url) {
 // Per-org localStorage cache so the list shows instantly on tab return
 function videoCacheKey(orgId) { return `pp_video_cache_${orgId}` }
 
-export default function VideoSection({ orgColor, isGuest }) {
+export default function VideoSection({ orgColor, isGuest, orgId: orgIdProp }) {
   const { user, profile, loading: authLoading } = useAuth()
-  const orgId = profile?.org_id
+  // orgId comes from the parent (Dashboard), which holds the AD-switched
+  // active org context. Falling back to profile.org_id is only for the
+  // (legacy) case where the parent didn't pass anything; an AD who has
+  // switched to a sibling program would otherwise see stale Football
+  // video instead of the active program's. See Commit-2b's program
+  // switcher.
+  const orgId = orgIdProp ?? profile?.org_id
 
   const [videos, setVideos]       = useState([])
   const [loading, setLoading]     = useState(true)

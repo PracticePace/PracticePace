@@ -892,7 +892,7 @@ export default function Dashboard() {
           )}
 
           {section === 'audio' && (
-            <AudioSection orgColor={orgColor} />
+            <AudioSection orgColor={orgColor} orgId={org?.id ?? activeOrgId} />
           )}
 
           {section === 'settings' && !isGuest && (
