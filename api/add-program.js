@@ -297,6 +297,36 @@ export default async function handler(req) {
     return json({ error: 'Program creation failed — try again.' }, 500)
   }
 
+  // ── 5b. Auto-sync account tier ────────────────────────────────────────────
+  // Albertville-drift fix (migration 20260522000000 was the one-time
+  // historical repair; this is the prevent-it-from-happening-again
+  // logic). After inserting a new org, if the account now has ≥2
+  // programs, flip account_type+plan_type to school. /api/delete-program
+  // does the mirror in the other direction.
+  //
+  // Non-fatal — if this update fails the program is still created and
+  // the client gets a 200. Worst case we have a brief drift the next
+  // add/delete will heal.
+  try {
+    const newCount = await countOrgsForAccount(supabaseUrl, serviceRoleKey, callerAccountId)
+    if (newCount >= 2) {
+      const syncRes = await fetch(
+        `${supabaseUrl}/rest/v1/accounts?id=eq.${encodeURIComponent(callerAccountId)}`,
+        {
+          method:  'PATCH',
+          headers: sbHeaders(serviceRoleKey),
+          body:    JSON.stringify({ account_type: 'school', plan_type: 'school' }),
+        }
+      )
+      if (!syncRes.ok) {
+        const text = await syncRes.text().catch(() => '')
+        console.warn('[add-program] account-tier sync failed (non-fatal):', syncRes.status, text)
+      }
+    }
+  } catch (err) {
+    console.warn('[add-program] account-tier sync threw (non-fatal):', err?.message ?? err)
+  }
+
   // ── 6. AD-designation side effects ────────────────────────────────────────
   let promotedToAd  = false
   let invitedAdEmail = null
