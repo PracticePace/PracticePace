@@ -401,9 +401,24 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
     setInviting(true); setInviteSent(''); setInviteErr('')
 
     try {
+      // P0 security fix (2026-05-15): /api/invite-coach now requires a
+      // valid Supabase JWT in the Authorization header. The endpoint
+      // verifies the caller server-side, looks up their profile, and
+      // only allows the invite when the caller has role ∈ {owner,admin}
+      // AND the org_id matches their own. Without this header the
+      // endpoint returns 401.
+      const { data: { session } } = await supabase.auth.getSession()
+      const accessToken = session?.access_token ?? null
+      if (!accessToken) {
+        throw new Error('Your session has expired — please sign in again.')
+      }
+
       const res = await fetch('/api/invite-coach', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
         body:    JSON.stringify({
           email:  inviteEmail.trim(),
           name:   inviteName.trim() || null,
