@@ -594,6 +594,50 @@ export default function Dashboard() {
     }
   }
 
+  // ── Program deleted (from Settings → Programs delete button) ─────────────
+  // Mirror of handleProgramCreated. After /api/delete-program returns
+  // OK, we:
+  //   1. Refetch the orgs list so the switcher / Settings list lose
+  //      the deleted program.
+  //   2. Refresh the account-wide program count so the friendly-label
+  //      and Add-Program-eligibility logic re-evaluate.
+  //   3. If the active program was the one deleted, switch to whatever
+  //      remaining org sorts first. (The server-side delete refuses if
+  //      the account would drop below 1 program, so there's always at
+  //      least one survivor here.)
+  async function handleProgramDeleted(deletedOrgId) {
+    try {
+      const { data: orgsList } = await supabase
+        .from('organizations')
+        .select('*')
+        .order('name', { ascending: true })
+      const orgsArr = orgsList ?? []
+      setAllOrgs(orgsArr)
+
+      try {
+        const { data: countResult } = await supabase
+          .rpc('get_my_account_program_count')
+        if (typeof countResult === 'number') setAccountProgramCount(countResult)
+        else if (countResult != null)        setAccountProgramCount(countResult)
+      } catch (e) {
+        console.warn('[Dashboard] post-delete program count refresh failed:', e?.message ?? e)
+      }
+
+      if (deletedOrgId === activeOrgId) {
+        const fallback = orgsArr[0]?.id ?? null
+        try { if (user?.id) localStorage.setItem(activeOrgKey(user.id), fallback ?? '') } catch {}
+        setActiveOrgId(fallback)
+        const next = orgsArr.find(o => o.id === fallback) ?? null
+        setOrg(next)
+        setScripts([])
+        setActiveScript(null)
+        setAudioPlaylist([])
+      }
+    } catch (err) {
+      console.error('[Dashboard] handleProgramDeleted refresh failed:', err?.message ?? err)
+    }
+  }
+
   // ── AD program switch ─────────────────────────────────────────────────────
   // The AD picked a different program from the header switcher. Persist
   // their choice, update the active-org id, fetch the new org row, and
@@ -909,6 +953,9 @@ export default function Dashboard() {
               checkoutError={checkoutError}
               programCount={accountProgramCount}
               onProgramCreated={handleProgramCreated}
+              allOrgs={allOrgs}
+              activeOrgId={activeOrgId}
+              onProgramDeleted={handleProgramDeleted}
             />
           )}
 

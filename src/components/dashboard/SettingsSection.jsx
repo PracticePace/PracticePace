@@ -12,7 +12,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { SPORTS } from '../../lib/sports'
+import { SPORTS, sportLabel } from '../../lib/sports'
 import { roleLabel, canRemoveCoach, canEditCoachRole } from '../../lib/permissions'
 import AddProgramDialog from './AddProgramDialog'
 
@@ -88,7 +88,14 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
   // vs "Head Coach" label decision AND whether the Add Program upgrade
   // dialog needs the AD designation step. onProgramCreated is the
   // notify-parent callback fired after a successful program insert.
-  programCount = 1, onProgramCreated }) {
+  programCount = 1, onProgramCreated,
+  // Program list + delete (this commit). allOrgs is the org list visible
+  // to the caller via RLS — for an AD that's every org in their account,
+  // which is exactly what the Programs card wants to show. activeOrgId
+  // is the AD's currently-selected program (for the "Current" badge).
+  // onProgramDeleted notifies the parent to refetch + re-sort orgs after
+  // a successful /api/delete-program call.
+  allOrgs = [], activeOrgId = null, onProgramDeleted }) {
   const { user, loading: authLoading } = useAuth()
 
   const [form, setForm] = useState({
@@ -152,6 +159,31 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
   const canAddProgram =
     profile?.role === 'ad'
     || (profile?.role === 'head_coach' && programCount === 1)
+
+  // ── Delete-program dialog state ─────────────────────────────────────────
+  // Holds the org object the user clicked "delete" on, or null when no
+  // dialog is open. The dialog itself is a typed-confirmation modal:
+  // the AD has to retype the program's name exactly before the Delete
+  // button enables. Destructive enough to deserve more than a yes/no.
+  const [pendingDeleteOrg, setPendingDeleteOrg] = useState(null)
+  const [deleteTypedName,  setDeleteTypedName]  = useState('')
+  const [deleting,         setDeleting]         = useState(false)
+  const [deleteErr,        setDeleteErr]        = useState('')
+
+  // A program row's delete button is hidden when:
+  //   • caller isn't an AD (only ADs can delete; matches the API gate)
+  //   • there's only one program left (the server refuses to delete the
+  //     last one — surface that as button-hidden, not as a server error)
+  //   • the row is the AD's home program (profile.org_id) — deleting your
+  //     own home program would null out your profile.org_id and is
+  //     usually a mistake. Spec calls it out explicitly: "Delete button
+  //     is HIDDEN on the AD's home program row".
+  function canDeleteProgram(targetOrgId) {
+    if (profile?.role !== 'ad')        return false
+    if ((allOrgs?.length ?? 0) <= 1)   return false
+    if (targetOrgId === profile?.org_id) return false
+    return true
+  }
 
   // Sync form whenever org or subscription changes (also covers initial load
   // when either arrives async).
@@ -458,6 +490,50 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
       console.error('[Settings] removeCoach error:', err.message)
     } finally {
       setRemoving(false)
+    }
+  }
+
+  // ── Delete program (calls /api/delete-program) ──────────────────────────
+  // Fired by the typed-confirm dialog's Delete button. The server enforces
+  // every gate that matters (AD-only, account-match, refuse last program);
+  // this client wrapper just plumbs the JWT and surfaces errors. On
+  // success, parent's onProgramDeleted refetches the orgs list + tier
+  // count and re-points the active program if we just deleted it.
+  async function confirmDeleteProgram() {
+    if (!pendingDeleteOrg) return
+    setDeleting(true); setDeleteErr('')
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
+      if (!token) {
+        setDeleteErr('Your session expired — please reload and try again.')
+        setDeleting(false)
+        return
+      }
+      const res = await fetch('/api/delete-program', {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ org_id: pendingDeleteOrg.id }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setDeleteErr(data?.error ?? `Could not delete program (${res.status}).`)
+        setDeleting(false)
+        return
+      }
+      // Notify parent → it refetches orgs + count, re-points active org.
+      const deletedId = pendingDeleteOrg.id
+      setPendingDeleteOrg(null)
+      setDeleteTypedName('')
+      onProgramDeleted?.(deletedId)
+    } catch (err) {
+      console.error('[Settings] delete-program error:', err?.message ?? err)
+      setDeleteErr('Could not delete program — try again in a moment.')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -870,6 +946,104 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
               >
                 + Add Program
               </button>
+
+              {/* ── Program list ─────────────────────────────────────────
+                  Lists every org visible to the viewer (RLS already
+                  filters: AD sees account-wide, head_coach sees just
+                  their own, etc.). Sorted alphabetically by name. Each
+                  row shows: name, sport label (friendly Title Case),
+                  a "Current" badge on the active program, and — for
+                  ADs on multi-program accounts — a trash button. The
+                  trash is hidden on the AD's home org row, on the only-
+                  one-program-left case, and for non-AD viewers. The
+                  click opens a typed-confirmation dialog (further
+                  down this file). */}
+              {Array.isArray(allOrgs) && allOrgs.length > 0 && (
+                <div className="flex flex-col divide-y mt-1" style={{ '--tw-divide-opacity': 1 }}>
+                  {[...allOrgs]
+                    .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
+                    .map((o, i) => {
+                      const isActive = o.id === activeOrgId
+                      const isHome   = o.id === profile?.org_id
+                      const showDel  = canDeleteProgram(o.id)
+                      const sportText = o.sport === 'custom'
+                        ? sportLabel('custom', o.sport_custom_label)
+                        : sportLabel(o.sport)
+                      return (
+                        <div
+                          key={o.id}
+                          className="flex items-center gap-3 py-2.5"
+                          style={{ borderTop: i === 0 ? 'none' : '1px solid #1a0000' }}
+                        >
+                          {/* Identity */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-semibold text-white truncate">
+                                {o.name || '(unnamed program)'}
+                              </p>
+                              {isActive && (
+                                <span
+                                  className="text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-full"
+                                  style={{
+                                    backgroundColor: `${orgColor}22`,
+                                    color:           orgColor,
+                                    border:          `1px solid ${orgColor}66`,
+                                  }}
+                                >
+                                  Current
+                                </span>
+                              )}
+                              {isHome && profile?.role === 'ad' && !isActive && (
+                                <span
+                                  className="text-[10px] font-bold uppercase tracking-widest"
+                                  style={{ color: '#6a4040' }}
+                                  title="Your home program — you can't delete this from here"
+                                >
+                                  Home
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs truncate" style={{ color: '#9a8080' }}>
+                              {sportText || '—'}
+                            </p>
+                          </div>
+
+                          {/* Delete trash — AD only, never on home or
+                              the last surviving program. Hidden entirely
+                              when not allowed (no greyed-out state — the
+                              row is just inert). */}
+                          {showDel && (
+                            <button
+                              onClick={() => {
+                                setDeleteTypedName('')
+                                setDeleteErr('')
+                                setPendingDeleteOrg(o)
+                              }}
+                              aria-label={`Delete ${o.name || 'program'}`}
+                              title={`Delete ${o.name || 'program'}`}
+                              className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 transition-all hover:bg-[rgba(220,80,80,0.14)] hover:scale-105"
+                              style={{
+                                color:        'rgba(220,80,80,0.85)',
+                                border:       '1px solid #3a0000',
+                                opacity:      0.85,
+                              }}
+                            >
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" strokeWidth="2.2"
+                                strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                <path d="M10 11v6"/>
+                                <path d="M14 11v6"/>
+                                <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
+                </div>
+              )}
             </Section>
           )}
 
@@ -1311,6 +1485,92 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
         orgColor={orgColor}
         sports={SPORTS}
       />
+
+      {/* ── Delete program — typed-confirmation modal ──────────────────
+          Destructive enough that we require the user to retype the
+          exact program name before the Delete button enables. Mirrors
+          the GitHub "Delete this repository" pattern. The server
+          enforces every gate as well (AD-only, account match, refuse
+          last program); this dialog is purely UX scaffolding to slow
+          down an accidental click. */}
+      {pendingDeleteOrg && (() => {
+        const targetName = pendingDeleteOrg.name ?? ''
+        const typedMatches = deleteTypedName.trim() === targetName.trim() && targetName.length > 0
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            style={{ backgroundColor: 'rgba(0,0,0,0.88)' }}
+            onClick={() => { if (!deleting) { setPendingDeleteOrg(null); setDeleteTypedName(''); setDeleteErr('') } }}
+          >
+            <div
+              className="w-full max-w-md rounded-2xl p-6 flex flex-col gap-4"
+              style={{ backgroundColor: '#110000', border: '1px solid #3a0000' }}
+              onClick={e => e.stopPropagation()}
+            >
+              <h3 className="font-bold text-white text-lg">Delete this program?</h3>
+              <p className="text-sm leading-relaxed" style={{ color: '#9a8080' }}>
+                Deleting{' '}
+                <span className="font-semibold text-white">{targetName || 'this program'}</span>{' '}
+                will permanently remove all of its scripts, music, videos,
+                whiteboards, and scoreboard configuration. Coaches assigned
+                to this program will lose their pinned program but keep
+                their accounts.
+              </p>
+              <p className="text-xs leading-relaxed rounded-lg px-3 py-2"
+                 style={{ backgroundColor: '#2a0000', color: '#ff9a9a', border: '1px solid #4a0000' }}>
+                This cannot be undone. Type the program name exactly to
+                confirm.
+              </p>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold uppercase tracking-widest"
+                       style={{ color: '#9a8080' }}>
+                  Type "{targetName}" to confirm
+                </label>
+                <input
+                  autoFocus
+                  value={deleteTypedName}
+                  onChange={e => setDeleteTypedName(e.target.value)}
+                  placeholder={targetName}
+                  disabled={deleting}
+                  className="rounded-lg px-3 py-2.5 text-sm outline-none"
+                  style={{
+                    backgroundColor: '#1a0000',
+                    border:          `1px solid ${typedMatches ? '#cc4444' : '#2a0000'}`,
+                    color:           '#fff',
+                  }}
+                />
+              </div>
+
+              {deleteErr && (
+                <p className="text-xs rounded-lg px-3 py-2"
+                   style={{ backgroundColor: '#2a0000', color: '#ff6666' }}>
+                  {deleteErr}
+                </p>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setPendingDeleteOrg(null); setDeleteTypedName(''); setDeleteErr('') }}
+                  disabled={deleting}
+                  className="flex-1 py-3 rounded-lg text-sm font-semibold disabled:opacity-50"
+                  style={{ border: '1px solid #2a0000', color: '#9a8080' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDeleteProgram}
+                  disabled={deleting || !typedMatches}
+                  className="flex-1 py-3 rounded-lg text-sm font-bold text-white disabled:opacity-40"
+                  style={{ backgroundColor: '#cc1111' }}
+                >
+                  {deleting ? 'Deleting…' : 'Delete Program'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
