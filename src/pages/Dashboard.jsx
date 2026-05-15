@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { isAd } from '../lib/permissions'
+import { getSampleScriptForSport } from '../lib/sampleScripts'
 import Logo from '../components/Logo'
 import AudioSection from '../components/dashboard/AudioSection'
 import { setPlaylist as setAudioPlaylist } from '../lib/audioPlayer'
@@ -469,18 +470,13 @@ export default function Dashboard() {
   }
 
   async function seedSampleScript(orgId, userId, sport = 'football') {
-    const drills = [
-      { name: 'Warm Up & Stretch',      duration: 10 * 60 },
-      { name: 'Individual / Position',  duration: 20 * 60 },
-      { name: 'Group / Unit Period',    duration: 15 * 60 },
-      { name: 'Team Period',            duration: 25 * 60 },
-      { name: 'Special Teams',          duration: 10 * 60 },
-      { name: 'Conditioning',           duration:  8 * 60 },
-      { name: 'Cool Down',              duration:  2 * 60 },
-    ]
+    // Sport-aware seed — see src/lib/sampleScripts.js. cheerleading
+    // programs get a comp-week-shaped 15-drill script; every other
+    // sport gets the legacy "Sample Practice — 90 min" default.
+    const { name, drills } = getSampleScriptForSport(sport)
     const { data, error } = await supabase
       .from('scripts')
-      .insert({ org_id: orgId, created_by: userId, name: 'Sample Practice — 90 min', sport: sport.toLowerCase(), drills })
+      .insert({ org_id: orgId, created_by: userId, name, sport: sport.toLowerCase(), drills })
       .select()
       .single()
     if (error) return null

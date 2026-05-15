@@ -2,6 +2,8 @@
 // All guest data lives in localStorage. Keys are prefixed with "pp_guest_".
 // Nothing touches Supabase for guest (anonymous) users.
 
+import { getSampleScriptForSport } from './sampleScripts'
+
 const SCRIPTS_KEY   = 'pp_guest_scripts'
 const VIDEOS_KEY    = 'pp_guest_videos'
 const ACTIVE_KEY    = 'pp_guest_active_id'
@@ -75,20 +77,19 @@ export function deleteGuestVideo(id) {
 
 // ── Sample script seed ────────────────────────────────────────────────────────
 // Called once on first guest login. Returns the active script.
+//
+// Guest mode is always seeded as 'football' (guests don't have a Settings
+// page where they could pick a sport on signup), so this currently always
+// resolves to the default branch of getSampleScriptForSport. Routing
+// through the helper anyway keeps the seed shape in lock-step with the
+// auth-path seed — if we later let guests pick a sport, this just works.
 
 export function seedGuestIfEmpty() {
   if (getGuestScripts().length > 0) return null // already seeded
+  const { name, drills } = getSampleScriptForSport('football')
   return saveGuestScript({
-    name: 'Sample Practice — 90 min',
+    name,
     sport: 'Football',
-    drills: [
-      { name: 'Warm Up & Stretch',     duration: 10 * 60 },
-      { name: 'Individual / Position', duration: 20 * 60 },
-      { name: 'Group / Unit Period',   duration: 15 * 60 },
-      { name: 'Team Period',           duration: 25 * 60 },
-      { name: 'Special Teams',         duration: 10 * 60 },
-      { name: 'Conditioning',          duration:  8 * 60 },
-      { name: 'Cool Down',             duration:  2 * 60 },
-    ],
+    drills,
   })
 }
