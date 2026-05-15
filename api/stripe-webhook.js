@@ -148,8 +148,11 @@ export default async function handler(req, res) {
     verifyStripeSignature(rawBody, req.headers['stripe-signature'], webhookSecret)
     console.log('[webhook] Signature verified OK')
   } catch (err) {
-    console.error('[webhook] Signature verification failed:', err.message)
-    res.status(400).json({ error: `Webhook signature error: ${err.message}` })
+    // Log the raw error server-side; return a generic message so a
+    // probing attacker can't learn which signature step failed (timestamp
+    // skew vs key mismatch vs malformed header, etc.).
+    console.error('[webhook] Signature verification failed:', err?.message ?? err)
+    res.status(400).json({ error: 'Invalid webhook signature' })
     return
   }
 

@@ -4,7 +4,7 @@ import { saveGuestScript, deleteGuestScript } from '../../lib/guestStorage'
 import { playCue, stopCue } from '../../lib/cuePlayer'
 import { useAuth } from '../../context/AuthContext'
 import { canEdit } from '../../lib/permissions'
-import { SPORTS as LAUNCH_SPORTS } from '../../lib/sports'
+import { SPORTS as LAUNCH_SPORTS, sportLabel } from '../../lib/sports'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function pad(n) { return String(n).padStart(2, '0') }
@@ -1566,7 +1566,7 @@ export default function ScriptsSection({
                       )}
                     </div>
                     <p className="text-xs mt-0.5" style={{ color: '#9a8080' }}>
-                      {script.sport} · {drillCount} segment{drillCount !== 1 ? 's' : ''} · {fmt(sec)}
+                      {sportLabel(script.sport)} · {drillCount} segment{drillCount !== 1 ? 's' : ''} · {fmt(sec)}
                     </p>
                     <p className="text-xs mt-0.5" style={{ color: '#4a2020' }}>Updated {updated}</p>
                   </div>

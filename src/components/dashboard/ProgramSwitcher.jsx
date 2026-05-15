@@ -24,6 +24,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useRef, useState } from 'react'
+import { sportLabel } from '../../lib/sports'
 
 export default function ProgramSwitcher({ orgs, activeOrgId, onSelect, orgColor = '#cc1111' }) {
   const [open, setOpen] = useState(false)
@@ -123,7 +124,7 @@ export default function ProgramSwitcher({ orgs, activeOrgId, onSelect, orgColor 
                   {o.sport && (
                     <span className="block text-[11px] uppercase tracking-widest"
                           style={{ color: '#9a8080' }}>
-                      {o.sport}
+                      {sportLabel(o.sport, o.sport_custom_label)}
                     </span>
                   )}
                 </span>

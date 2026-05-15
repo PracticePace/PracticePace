@@ -137,7 +137,10 @@ export default async function handler(req) {
     console.log('[stripe-checkout] Checkout Session created:', session.id, '→', session.url ? 'has URL' : 'NO URL')
     return json({ url: session.url })
   } catch (err) {
-    console.error('[stripe-checkout] Error:', err.message)
-    return json({ error: err.message ?? 'Checkout session creation failed' }, 500)
+    // Log the raw error server-side for diagnostics; return a generic
+    // message to the client so we don't leak Stripe internals or DB
+    // schema text. See the audit report for the rationale.
+    console.error('[stripe-checkout] error:', err?.message ?? err)
+    return json({ error: 'Unable to start checkout. Please try again.' }, 500)
   }
 }

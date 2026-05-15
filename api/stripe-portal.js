@@ -56,7 +56,10 @@ export default async function handler(req) {
 
     return json({ url: data.url })
   } catch (err) {
-    console.error('[stripe-portal]', err.message)
-    return json({ error: err.message ?? 'Portal session creation failed' }, 500)
+    // Log the raw error server-side for diagnostics; return a generic
+    // message to the client so we don't leak Stripe internals or DB
+    // schema text. See the audit report for the rationale.
+    console.error('[stripe-portal] error:', err?.message ?? err)
+    return json({ error: 'Unable to open billing portal. Please try again.' }, 500)
   }
 }
