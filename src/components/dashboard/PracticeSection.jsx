@@ -219,7 +219,7 @@ function ToggleBtn({ label, active, onColor = '#22c55e', onClick }) {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function PracticeSection({ activeScript, orgColor, backgroundUrl }) {
+export default function PracticeSection({ activeScript, orgColor, backgroundUrl, backgroundDim = 0 }) {
 
   // Subscribe to the singleton — re-render on every tick
   const [snap, setSnap] = useState(() => getSnapshot())
@@ -492,8 +492,18 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
           paddingBottom:      'calc(env(safe-area-inset-bottom, 0px) + 86px)',
         }}
       >
-      {backgroundUrl && (
-        <div className="absolute inset-0 pointer-events-none" style={{ backgroundColor: 'rgba(0,0,0,0.72)' }} />
+      {/* Adjustable dim overlay. Pre-2026-05-15 this was a hardcoded
+          rgba(0,0,0,0.72) overlay that made every uploaded image look
+          washed out. Coaches now control the level (0-100) via the
+          Settings → Practice Screen Background slider; the new default
+          is 0 (image as uploaded). We skip rendering the overlay when
+          backgroundDim is 0 so the DOM stays minimal in the common
+          case. */}
+      {backgroundUrl && backgroundDim > 0 && (
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{ backgroundColor: `rgba(0,0,0,${Math.max(0, Math.min(100, backgroundDim)) / 100})` }}
+        />
       )}
 
       <div className="relative z-10 flex-1 flex flex-col overflow-hidden px-4 gap-0">

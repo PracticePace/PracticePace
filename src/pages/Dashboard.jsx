@@ -884,6 +884,7 @@ export default function Dashboard() {
               activeScript={activeScript}
               orgColor={orgColor}
               backgroundUrl={org?.background_url ?? null}
+              backgroundDim={org?.background_dim ?? 0}
             />
           )}
 

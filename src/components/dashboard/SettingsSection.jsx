@@ -23,6 +23,7 @@ import {
   isHeadCoach,
 } from '../../lib/permissions'
 import AddProgramDialog from './AddProgramDialog'
+import CropDialog       from './CropDialog'
 
 // Allowed role values (DB-side). Order matters for the invite dropdown:
 // the default selection is assistant_coach (most-common invite). Athletic
@@ -144,6 +145,16 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
   const [bgError, setBgError]         = useState('')
   const [bgSuccess, setBgSuccess]     = useState(false)
   const bgInputRef = useRef(null)
+  // The File the coach just picked, held while the crop dialog is open.
+  // Cleared on cancel + on confirm-after-upload. Renders <CropDialog>
+  // when set.
+  const [pendingBgFile, setPendingBgFile] = useState(null)
+  // Adjustable dim level (0-100). Mirrors organizations.background_dim
+  // added in migration 20260525000000. 0 = no overlay (image as
+  // uploaded). The slider writes back to the DB with a debounce so we
+  // don't fire an UPDATE on every pixel.
+  const [bgDim, setBgDim]           = useState(org?.background_dim ?? 0)
+  const dimSaveTimerRef             = useRef(null)
 
   const [logoUploading, setLogoUploading] = useState(false)
   const [logoError, setLogoError]         = useState('')
@@ -205,9 +216,10 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
         secondaryColor:   org.secondary_color ?? '#ffffff',
         programNameColor: subscription?.program_name_color ?? '#ffffff',
       })
+      setBgDim(org.background_dim ?? 0)
       loadCoaches()
     }
-  }, [org?.id, org?.name, org?.sport, org?.sport_custom_label, org?.primary_color, org?.secondary_color, subscription?.id, subscription?.program_name_color])
+  }, [org?.id, org?.name, org?.sport, org?.sport_custom_label, org?.primary_color, org?.secondary_color, org?.background_dim, subscription?.id, subscription?.program_name_color])
 
   async function loadCoaches() {
     if (!org?.id) return
@@ -309,41 +321,43 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
     }
   }
 
-  async function uploadBackground(e) {
+  // STEP 1 of the upload flow: file <input> change handler. Validates,
+  // then stashes the File so <CropDialog> mounts. The actual Supabase
+  // upload doesn't fire until the coach confirms the crop.
+  function onBackgroundFilePick(e) {
     const file = e.target.files?.[0]
     if (!file) return
-
-    // Guard: org must be loaded before we can save the URL
     if (!org?.id) {
       setBgError('Organization not loaded yet — please wait a moment and try again.')
       return
     }
     if (!file.type.startsWith('image/')) { setBgError('Please select an image file.'); return }
-    if (file.size > 10 * 1024 * 1024) { setBgError('Image must be under 10 MB.'); return }
+    if (file.size > 10 * 1024 * 1024)    { setBgError('Image must be under 10 MB.');   return }
+    setBgError(''); setBgSuccess(false)
+    setPendingBgFile(file)
+  }
 
+  // STEP 2: <CropDialog> confirmed with a JPEG Blob. Upload it.
+  // Refactored from the previous uploadBackground — same Supabase
+  // Storage shape, just takes a Blob and a fixed .jpg extension since
+  // the crop output is always JPEG.
+  async function performBackgroundUpload(blob) {
+    if (!org?.id) {
+      setBgError('Organization not loaded yet — please wait a moment and try again.')
+      return
+    }
     setBgUploading(true); setBgError(''); setBgSuccess(false)
-
-    // ── HOW TO CREATE THE BUCKET ────────────────────────────────────────────
-    // 1. Go to Supabase → Storage → New bucket
-    // 2. Name it exactly:  backgrounds
-    // 3. Toggle "Public bucket" ON
-    // 4. Click Create
-    // ────────────────────────────────────────────────────────────────────────
-
     try {
-      const ext  = file.name.split('.').pop()
       // Path convention: <org_id>/practice-bg.<ext>. Must match the
       // backgrounds bucket RLS (migration 20260517000000) which gates
       // writes on split_part(name,'/',1) = caller's profile.org_id (or
-      // any org in the AD's account). The legacy `org-<uuid>/...` paths
-      // from before this migration become write-orphans but are still
-      // publicly readable via existing org.background_url values, so the
-      // app keeps working — we just can't replace those exact files.
-      const path = `${org.id}/practice-bg.${ext}`
+      // any org in the AD's account). Crop output is JPEG, so the
+      // extension is always .jpg now.
+      const path = `${org.id}/practice-bg.jpg`
 
       const { error: upErr } = await supabase.storage
         .from('backgrounds')
-        .upload(path, file, { upsert: true, contentType: file.type })
+        .upload(path, blob, { upsert: true, contentType: 'image/jpeg' })
 
       if (upErr) {
         const msg = upErr.message ?? ''
@@ -374,12 +388,45 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
       setBgSuccess(true)
       onOrgUpdate?.({ ...org, background_url: bgUrl })
       setTimeout(() => setBgSuccess(false), 5000)
+      setPendingBgFile(null)
       if (bgInputRef.current) bgInputRef.current.value = ''
     } catch (err) {
       setBgError(err.message ?? 'Upload failed. Please try again.')
     } finally {
       setBgUploading(false)
     }
+  }
+
+  // Cancel out of the crop dialog. Clear the pending file AND the file
+  // input ref so the coach can re-pick the same file (otherwise the
+  // <input> won't fire onChange on an identical filename).
+  function onBackgroundCropCancel() {
+    setPendingBgFile(null)
+    if (bgInputRef.current) bgInputRef.current.value = ''
+  }
+
+  // Slider handler. Optimistic local UI + debounced DB write. We push
+  // the new dim to the parent via onOrgUpdate immediately so the
+  // practice tab (mounted in parallel) and the preview thumbnail in
+  // this card reflect the change without waiting for the DB round-trip.
+  function handleDimChange(rawVal) {
+    const v = Math.max(0, Math.min(100, Math.round(Number(rawVal) || 0)))
+    setBgDim(v)
+    onOrgUpdate?.({ ...org, background_dim: v })
+    if (dimSaveTimerRef.current) clearTimeout(dimSaveTimerRef.current)
+    dimSaveTimerRef.current = setTimeout(async () => {
+      if (!org?.id) return
+      const { error } = await supabase
+        .from('organizations')
+        .update({ background_dim: v })
+        .eq('id', org.id)
+      if (error) {
+        console.warn('[Settings] background_dim save failed:', error.message)
+        // Non-fatal — slider state stays at the user's pick; next save
+        // will retry. Could surface inline but the cost of a missed
+        // dim save is low (refresh = re-fetch from DB anyway).
+      }
+    }, 600)
   }
 
   async function clearBackground() {
@@ -867,14 +914,23 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
               {' '}(JPG or PNG, max 10 MB). A darker image works best.
             </p>
 
+            {/* Live preview — mirrors the practice screen rendering:
+                image at full opacity + a black overlay whose alpha
+                tracks the bgDim slider. Coaches see exactly what the
+                practice tab will show. */}
             {org?.background_url && (
               <div className="relative rounded-xl overflow-hidden" style={{ aspectRatio: '16/9' }}>
                 <img
                   src={org.background_url}
                   alt="Practice background"
                   className="w-full h-full object-cover"
-                  style={{ opacity: 0.7 }}
                 />
+                {bgDim > 0 && (
+                  <div
+                    className="absolute inset-0 pointer-events-none"
+                    style={{ backgroundColor: `rgba(0,0,0,${bgDim / 100})` }}
+                  />
+                )}
                 <div className="absolute inset-0 flex items-end p-3 justify-end">
                   <button
                     onClick={clearBackground}
@@ -887,8 +943,50 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
               </div>
             )}
 
+            {/* Dim slider — only shown once a background exists. 0 =
+                image as uploaded (the new default); 100 = solid
+                black. Optimistic local UI + 600 ms debounced save
+                via supabase.update(background_dim). */}
+            {org?.background_url && (
+              <div className="flex flex-col gap-1">
+                <label htmlFor="bg-dim" className="text-xs font-semibold tracking-widest uppercase"
+                       style={{ color: '#9a8080' }}>
+                  Image Darkening
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    id="bg-dim"
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={bgDim}
+                    onChange={e => handleDimChange(e.target.value)}
+                    aria-label="Practice screen background darkening level"
+                    className="flex-1"
+                    style={{ accentColor: orgColor }}
+                  />
+                  <span className="text-xs font-mono tabular-nums"
+                        style={{ color: '#9a8080', minWidth: '4ch', textAlign: 'right' }}>
+                    {bgDim}%
+                  </span>
+                </div>
+                <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
+                  0% = image as uploaded. Slide right to darken for
+                  better text readability on the practice screen.
+                </p>
+              </div>
+            )}
+
             <div className="flex flex-col gap-2">
-              <input ref={bgInputRef} type="file" accept="image/*" onChange={uploadBackground} className="hidden" id="bg-upload" />
+              <input
+                ref={bgInputRef}
+                type="file"
+                accept="image/*"
+                onChange={onBackgroundFilePick}
+                className="hidden"
+                id="bg-upload"
+              />
               <label
                 htmlFor="bg-upload"
                 className="flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-bold cursor-pointer transition-all"
@@ -1510,6 +1608,23 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
           </div>
         )
       })()}
+
+      {/* ── Crop dialog for the practice-screen background upload ──
+          Sits between file-pick and the Supabase Storage upload.
+          16:9 aspect locked (matches the practice screen surface).
+          Cancel clears the pending file + resets the <input> ref so
+          re-picking the same filename refires onChange. Confirm
+          hands a JPEG Blob to performBackgroundUpload(). */}
+      {pendingBgFile && (
+        <CropDialog
+          file={pendingBgFile}
+          orgColor={orgColor}
+          onCancel={onBackgroundCropCancel}
+          onConfirm={async (blob) => {
+            await performBackgroundUpload(blob)
+          }}
+        />
+      )}
 
       {/* ── Add Program dialog ── */}
       <AddProgramDialog
