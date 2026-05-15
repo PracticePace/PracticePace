@@ -4,10 +4,10 @@
 //   The destructive twin of /api/add-program. Removes an organization
 //   row and (via FK CASCADE on every dependent table) all of its
 //   scripts / songs / videos / whiteboards / scoreboard_configs /
-//   backgrounds / coach_invites. profiles.org_id has ON DELETE SET NULL,
-//   so any coach pinned to the deleted org keeps their profile but
-//   loses their pinned org_id (they fall back to whichever remaining
-//   org Dashboard resolves first on next mount).
+//   backgrounds. profiles.org_id has ON DELETE SET NULL, so any coach
+//   pinned to the deleted org keeps their profile but loses their
+//   pinned org_id (they fall back to whichever remaining org Dashboard
+//   resolves first on next mount).
 //
 //   This is irreversible. The endpoint adds two safety gates on top
 //   of the RLS one (organizations DELETE policy from migration
