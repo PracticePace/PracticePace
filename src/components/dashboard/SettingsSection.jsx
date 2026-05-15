@@ -13,7 +13,15 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { SPORTS, sportLabel } from '../../lib/sports'
-import { roleLabel, canRemoveCoach, canEditCoachRole } from '../../lib/permissions'
+import {
+  roleLabel,
+  canRemoveCoach,
+  canEditCoachRole,
+  canManageBilling,
+  canAddProgram,
+  isAd,
+  isHeadCoach,
+} from '../../lib/permissions'
 import AddProgramDialog from './AddProgramDialog'
 
 // Allowed role values (DB-side). Order matters for the invite dropdown:
@@ -116,12 +124,14 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
 
   const [coaches, setCoaches]         = useState([])
   // Edit-role inline state
-  const [editingId,   setEditingId]   = useState(null)   // coach id being edited
-  const [editRole,    setEditRole]    = useState('')      // draft role value
-  const [savingRole,  setSavingRole]  = useState(false)
+  const [editingId,    setEditingId]    = useState(null)   // coach id being edited
+  const [editRole,     setEditRole]     = useState('')     // draft role value
+  const [savingRole,   setSavingRole]   = useState(false)
+  const [editRoleErr,  setEditRoleErr]  = useState('')     // surfaced when saveRole fails
   // Remove confirmation
   const [removeId,    setRemoveId]    = useState(null)   // coach id pending removal
   const [removing,    setRemoving]    = useState(false)
+  const [removeErr,   setRemoveErr]   = useState('')      // surfaced when confirmRemove fails
 
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteName, setInviteName]   = useState('')
@@ -156,9 +166,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
   // Eligibility (button visibility) is computed at render time. Open state
   // is toggled by the button + the dialog's close handler.
   const [showAddProgram, setShowAddProgram] = useState(false)
-  const canAddProgram =
-    profile?.role === 'ad'
-    || (profile?.role === 'head_coach' && programCount === 1)
+  const userCanAddProgram = canAddProgram(profile?.role, programCount)
 
   // ── Delete-program dialog state ─────────────────────────────────────────
   // Holds the org object the user clicked "delete" on, or null when no
@@ -452,11 +460,12 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
   function startEditRole(coach) {
     setEditingId(coach.id)
     setEditRole(coach.role)
+    setEditRoleErr('')
   }
 
   async function saveRole() {
     if (!editingId) return
-    setSavingRole(true)
+    setSavingRole(true); setEditRoleErr('')
     try {
       const { error } = await supabase
         .from('profiles')
@@ -466,7 +475,10 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
       setEditingId(null)
       await loadCoaches()
     } catch (err) {
-      console.error('[Settings] saveRole error:', err.message)
+      console.error('[Settings] saveRole error:', err?.message ?? err)
+      // Surface to the user — the inline edit row stays open with the
+      // error message so they can retry or cancel. Don't auto-close.
+      setEditRoleErr(err?.message ?? "Couldn't save — try again.")
     } finally {
       setSavingRole(false)
     }
@@ -474,7 +486,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
 
   async function confirmRemove() {
     if (!removeId) return
-    setRemoving(true)
+    setRemoving(true); setRemoveErr('')
     try {
       // Delete the profile row — removes org access.
       // Their Supabase auth account remains (they can still sign in but
@@ -487,7 +499,12 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
       setRemoveId(null)
       await loadCoaches()
     } catch (err) {
-      console.error('[Settings] removeCoach error:', err.message)
+      console.error('[Settings] removeCoach error:', err?.message ?? err)
+      // Surface inline so the user can retry or cancel; don't auto-
+      // close the dialog. Most likely cause is RLS rejection
+      // (head_coach trying to remove an AD) — the message helps the
+      // maintainer figure out which gate fired in support logs.
+      setRemoveErr(err?.message ?? "Couldn't remove — try again.")
     } finally {
       setRemoving(false)
     }
@@ -915,7 +932,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
               For an AD on a multi-program account, this card also lists
               the existing programs so they can see what's in scope at a
               glance. */}
-          {canAddProgram && (
+          {userCanAddProgram && (
             <Section title="Programs">
               {programCount > 1 && (
                 <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
@@ -925,14 +942,14 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                   them. Add another program below.
                 </p>
               )}
-              {programCount === 1 && profile?.role === 'head_coach' && (
+              {programCount === 1 && isHeadCoach(profile?.role) && (
                 <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
                   Want to run a second program from the same account
                   (e.g. football + basketball)? Add a program and we'll
                   walk you through the Athletic Director designation.
                 </p>
               )}
-              {programCount === 1 && profile?.role === 'ad' && (
+              {programCount === 1 && isAd(profile?.role) && (
                 <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
                   You can run multiple programs from this one account.
                   Add another program below — for example, a different
@@ -993,7 +1010,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                                   Current
                                 </span>
                               )}
-                              {isHome && profile?.role === 'ad' && !isActive && (
+                              {isHome && isAd(profile?.role) && !isActive && (
                                 <span
                                   className="text-[10px] font-bold uppercase tracking-widest"
                                   style={{ color: '#6a4040' }}
@@ -1127,6 +1144,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                             <select
                               value={editRole}
                               onChange={e => setEditRole(e.target.value)}
+                              aria-label={`Role for ${c.full_name || c.email || 'this coach'}`}
                               className="flex-1 rounded-lg px-3 py-2 text-sm font-bold outline-none"
                               style={{ backgroundColor: '#1a0000', border: '1px solid #3a0000', color: '#fff' }}
                             >
@@ -1143,7 +1161,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                               {savingRole ? 'Saving…' : 'Save'}
                             </button>
                             <button
-                              onClick={() => setEditingId(null)}
+                              onClick={() => { setEditingId(null); setEditRoleErr('') }}
                               disabled={savingRole}
                               className="px-3 py-2 rounded-lg text-xs font-semibold shrink-0"
                               style={{ border: '1px solid #2a0000', color: '#9a8080' }}
@@ -1152,13 +1170,28 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                             </button>
                           </div>
                         )}
+                        {/* Error state for a failed saveRole. Only rendered
+                            while this row is the one being edited — moves
+                            with the inline edit affordance, doesn't leak
+                            to other rows. */}
+                        {isEditing && editRoleErr && (
+                          <p className="text-xs rounded-lg px-3 py-2"
+                             style={{ backgroundColor: '#2a0000', color: '#ff6666' }}>
+                            {editRoleErr}
+                          </p>
+                        )}
                       </div>
                     )
                   })}
                 </div>
               )}
 
-              {/* ── Invite form ── */}
+              {/* ── Invite form ────────────────────────────────────────
+                  aria-label on each input is the a11y label (WCAG 2.1 A
+                  requires inputs to have an accessible name). Visible
+                  design intentionally uses placeholder-only text — the
+                  "Invite Coach" heading directly above acts as the form
+                  group label for sighted users. */}
               <form onSubmit={handleInvite} className="flex flex-col gap-3 pt-3" style={{ borderTop: '1px solid #2a0000' }}>
                 <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#9a8080' }}>Invite Coach</p>
 
@@ -1167,6 +1200,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                   value={inviteName}
                   onChange={e => setInviteName(e.target.value)}
                   placeholder="Coach full name (optional)"
+                  aria-label="Coach full name (optional)"
                   className="rounded-lg px-3 py-3 text-sm outline-none"
                   style={inputStyle}
                 />
@@ -1178,12 +1212,14 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                     value={inviteEmail}
                     onChange={e => setInviteEmail(e.target.value)}
                     placeholder="coach@school.edu"
+                    aria-label="Coach email address"
                     className="flex-1 rounded-lg px-3 py-3 text-sm outline-none"
                     style={inputStyle}
                   />
                   <select
                     value={inviteRole}
                     onChange={e => setInviteRole(e.target.value)}
+                    aria-label="Invited coach's role"
                     className="rounded-lg px-2 py-3 text-xs font-bold outline-none"
                     style={{ backgroundColor: '#1a0000', border: '1px solid #2a0000', color: '#fff' }}
                   >
@@ -1225,7 +1261,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
               billing. assistant_coach / team_manager should never see this
               card. Matches the RLS gate on accounts UPDATE (get_my_role()
               = 'ad'). */}
-          {profile?.role === 'ad' && (
+          {canManageBilling(profile?.role) && (
           <Section title="Subscription & Billing">
             {(() => {
               const sub      = subscription
@@ -1446,9 +1482,15 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
               <p className="text-xs" style={{ color: '#4a2020' }}>
                 Their account is not deleted — they just lose access to this org.
               </p>
+              {removeErr && (
+                <p className="text-xs rounded-lg px-3 py-2"
+                   style={{ backgroundColor: '#2a0000', color: '#ff6666' }}>
+                  {removeErr}
+                </p>
+              )}
               <div className="flex gap-3">
                 <button
-                  onClick={() => setRemoveId(null)}
+                  onClick={() => { setRemoveId(null); setRemoveErr('') }}
                   disabled={removing}
                   className="flex-1 py-3 rounded-lg text-sm font-semibold disabled:opacity-50"
                   style={{ border: '1px solid #2a0000', color: '#9a8080' }}

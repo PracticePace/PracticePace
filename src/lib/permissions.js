@@ -38,6 +38,33 @@ export function canManageBilling(role) {
   return role === 'ad'
 }
 
+// ── Pure role identity checks ────────────────────────────────────────────────
+// Boolean utilities for "is this user X?". Distinct from the canX helpers
+// above: these don't claim a permission semantic, they're just typed
+// equality checks. Use them when the surrounding logic is UI-affordance
+// branching — "show the AD intro copy variant", "render the Home hint
+// only for the AD", "is this user an AD so we run the program-switcher
+// resolution path on load" — rather than a permission gate. For
+// permission gates use canAdminister / canManageBilling / canEdit etc.,
+// so the semantic match shows up in grep later.
+export function isAd(role)        { return role === 'ad' }
+export function isHeadCoach(role) { return role === 'head_coach' }
+
+// ── Combined gate: Add Program eligibility ───────────────────────────────────
+// AD can add a program at any account size. A head_coach can only add a
+// program when the account currently has exactly 1 (the 1→2 upgrade
+// path — they're the de facto AD on a single-program account). Anyone
+// else: no.
+//
+// `accountProgramCount` is the live count of organizations on the
+// caller's account (Dashboard.accountProgramCount, served by the
+// get_my_account_program_count() RPC).
+export function canAddProgram(role, accountProgramCount) {
+  if (role === 'ad') return true
+  if (role === 'head_coach' && accountProgramCount === 1) return true
+  return false
+}
+
 // ── Coach-management gates ───────────────────────────────────────────────────
 // Decide whether VIEWER is allowed to remove TARGET from the Coaches & Staff
 // list. Both arguments are profile shapes — must carry { id, role, org_id }.

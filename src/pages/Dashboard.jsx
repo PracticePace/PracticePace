@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import { isAd } from '../lib/permissions'
 import Logo from '../components/Logo'
 import AudioSection from '../components/dashboard/AudioSection'
 import { setPlaylist as setAudioPlaylist } from '../lib/audioPlayer'
@@ -74,6 +75,10 @@ export default function Dashboard() {
 
   const [section, setSection]           = useState('practice')
   const [org, setOrg]                   = useState(null)
+  // Surfaced by the loadAll outer catch when an unexpected error prevents
+  // the dashboard from initialising. Renders a top banner with a Refresh
+  // button so the user has a path other than reload-by-hand.
+  const [loadAllErr, setLoadAllErr]     = useState('')
   // Multi-program (Commit 2b): the list of orgs visible to the current
   // user. For an AD, this is all orgs in their account; for everyone else
   // it's just their one org. Drives the program switcher in the header.
@@ -253,7 +258,7 @@ export default function Dashboard() {
       //     back to first alphabetical org.
       // Everyone else: just use profile.org_id (their only org).
       let resolvedOrgId
-      if (prof?.role === 'ad') {
+      if (isAd(prof?.role)) {
         let saved = null
         try { saved = localStorage.getItem(activeOrgKey(user.id)) } catch {}
         const savedIsVisible = saved && orgsArr.some(o => o.id === saved)
@@ -355,6 +360,11 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('[Dashboard] loadAll error:', err)
+      // Surface a user-visible signal. The dashboard sections will render
+      // with whatever partial state we managed to set before the throw —
+      // the banner gives the user a path to retry rather than a silent
+      // blank surface.
+      setLoadAllErr("Couldn't load your data. Refresh to try again.")
     } finally {
       setLoading(false)
     }
@@ -696,7 +706,7 @@ export default function Dashboard() {
             the AD can pivot context quickly. Head coaches and other roles
             never see this — for them activeOrgId === profile.org_id and
             there's nothing to switch to anyway. */}
-        {!isGuest && profile?.role === 'ad' && allOrgs.length >= 2 && (
+        {!isGuest && isAd(profile?.role) && allOrgs.length >= 2 && (
           <div className="ml-3 shrink-0">
             <ProgramSwitcher
               orgs={allOrgs}
@@ -755,6 +765,26 @@ export default function Dashboard() {
           <span className="hidden sm:inline">{isGuest ? 'Exit' : 'Sign out'}</span>
         </button>
       </header>
+
+      {/* ── Data-load error banner — surfaced when loadAll throws.
+          Sections may render with partial / stale state; the banner
+          gives the user a path to retry. Refresh clears the banner and
+          re-runs loadAll. */}
+      {loadAllErr && (
+        <div
+          className="shrink-0 flex items-center justify-center gap-3 px-4 py-2 text-xs font-semibold flex-wrap"
+          style={{ backgroundColor: '#2a0000', borderBottom: '1px solid #4a0000' }}
+        >
+          <span style={{ color: '#ff9a9a' }}>⚠ {loadAllErr}</span>
+          <button
+            onClick={() => { setLoadAllErr(''); setLoading(true); loadAll() }}
+            className="px-3 py-1.5 rounded-lg font-bold text-white transition-all active:scale-95"
+            style={{ backgroundColor: '#cc1111' }}
+          >
+            Refresh
+          </button>
+        </div>
+      )}
 
       {/* ── Trial expiry banner — amber, shown only in last 3 days ── */}
       {showTrialBanner && (
