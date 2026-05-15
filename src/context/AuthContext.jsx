@@ -44,8 +44,6 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
-    console.log('[ACTIVE] AuthProvider mounted — calling getSession()')
-
     // Safety net: force loading=false after 5 s no matter what
     const timeout = setTimeout(() => {
       console.warn('[Auth] Loading timeout — forcing loading=false')
@@ -56,7 +54,6 @@ export function AuthProvider({ children }) {
     supabase.auth.getSession()
       .then(async ({ data: { session } }) => {
         const authUser = session?.user ?? null
-        console.log('[ACTIVE] AuthProvider getSession resolved — userId:', authUser?.id ?? null, 'isAnon:', authUser?.is_anonymous ?? null)
         setUser(authUser)
         // Race fetchProfile against a 4 s timeout — the outer 5 s safety
         // setTimeout still acts as a final guarantee, but capping the
@@ -69,7 +66,6 @@ export function AuthProvider({ children }) {
       })
       .finally(() => {
         clearTimeout(timeout)
-        console.log('[ACTIVE] AuthProvider getSession .finally — setLoading(false)')
         setLoading(false)
       })
 
@@ -86,16 +82,13 @@ export function AuthProvider({ children }) {
     // update silently without touching loading.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       const authUser = session?.user ?? null
-      console.log('[ACTIVE] onAuthStateChange event:', event, 'userId:', authUser?.id ?? null, 'isAnon:', authUser?.is_anonymous ?? null)
 
       if (event === 'SIGNED_IN') {
-        console.log('[ACTIVE] onAuthStateChange SIGNED_IN — setLoading(true), then fetchProfile')
         setLoading(true)
         setUser(authUser)
         // Race fetchProfile against a 4 s timeout so a flaky network on
         // iPad resume can never leave loading=true indefinitely.
         await fetchProfileWithTimeout(authUser)
-        console.log('[ACTIVE] onAuthStateChange SIGNED_IN — fetchProfile done, setLoading(false)')
         setLoading(false)
       } else if (event === 'SIGNED_OUT') {
         setUser(null)
@@ -123,7 +116,6 @@ export function AuthProvider({ children }) {
     })
 
     return () => {
-      console.log('[ACTIVE] AuthProvider unmount — unsubscribing')
       subscription.unsubscribe()
     }
   }, [])

@@ -227,7 +227,6 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl 
 
   // Tell the singleton when the script prop changes (only resets if script changed)
   useEffect(() => {
-    console.log('[ACTIVE] PracticeSection effect — pushing activeScript prop to timer singleton, id:', activeScript?.id ?? null, 'name:', activeScript?.name ?? null)
     setActiveScript(activeScript)
   }, [activeScript])
 

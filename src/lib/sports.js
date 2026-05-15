@@ -48,17 +48,3 @@ export function sportLabel(value, customLabel = null) {
     .replace(/\b\w/g, c => c.toUpperCase())
 }
 
-// Set of "competition routine" sports kept for backwards compatibility.
-// Previously drove the auto-default to CheerScoreboard in the scoreboard
-// picker; the picker was removed in the same commit that introduced
-// this launch list, and the cheer scoreboard is no longer wired —
-// cheerleading now falls back to the generic clock+score scoreboard
-// per spec. Set is unreferenced today; kept exported so existing
-// callers don't break, and so we can re-wire CheerScoreboard later
-// without a renaming round.
-export const COMPETITION_SPORTS = new Set([
-  'cheerleading',
-  'stunt',
-  'dance',
-  'dance team',
-])

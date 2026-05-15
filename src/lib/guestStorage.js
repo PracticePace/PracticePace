@@ -44,17 +44,13 @@ export function deleteGuestScript(id) {
 }
 
 export function getGuestActiveId() {
-  const v = localStorage.getItem(ACTIVE_KEY) ?? null
-  console.log('[ACTIVE] localStorage read:', ACTIVE_KEY, '=', v, '(getGuestActiveId)')
-  return v
+  return localStorage.getItem(ACTIVE_KEY) ?? null
 }
 
 export function setGuestActiveId(id) {
   if (id) {
-    console.log('[ACTIVE] localStorage write:', ACTIVE_KEY, '=', id, '(setGuestActiveId)')
     localStorage.setItem(ACTIVE_KEY, id)
   } else {
-    console.log('[ACTIVE] localStorage clear:', ACTIVE_KEY, '(setGuestActiveId)')
     localStorage.removeItem(ACTIVE_KEY)
   }
 }
