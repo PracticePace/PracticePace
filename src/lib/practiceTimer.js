@@ -327,9 +327,33 @@ export function jumpTo(i) {
  * starts without requiring another press of Start.
  */
 export function next() {
-  duckForHorn(playAirHorn)   // horn fires immediately
-
   const drills = s.activeScript?.drills ?? []
+  if (drills.length === 0) return
+
+  // PRE-START / CLEARED path: practice hasn't begun this run. Tapping
+  // Next from pre-start (or from the post-End-Practice background-only
+  // state) should fire DRILL 1, not advance to drill 2. The pre-Commit
+  // behaviour unconditionally did `currentDrillIdx + 1`, which silently
+  // skipped drill 1 in pre-start; the practice-arc-UX commit makes
+  // Next a universal "start the next thing" action across pre-start /
+  // cleared / mid-practice.
+  if (!s.hasStarted) {
+    duckForHorn(playAirHorn)
+    s.currentDrillIdx = 0
+    s.isOverrun       = false
+    s.overrunSeconds  = 0
+    const dur      = Number(drills[0].duration) || 0
+    s.secondsLeft  = dur
+    s.totalSeconds = dur
+    s.isRunning    = true
+    s.hasStarted   = true
+    startInterval()
+    emit()
+    return
+  }
+
+  // MID-PRACTICE path: advance one drill.
+  duckForHorn(playAirHorn)   // horn fires immediately
   const nxt    = s.currentDrillIdx + 1
 
   if (nxt < drills.length) {

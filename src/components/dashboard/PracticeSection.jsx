@@ -302,6 +302,24 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
   // at commit time. Used together with the console logs further down.
   const stripRef = useRef(null)
 
+  // ── Practice-arc UI state ─────────────────────────────────────────────────
+  // Two local flags drive the "complete → cleared" sequence and the
+  // post-End-Practice background-only display. Neither lives in the
+  // timer singleton — they're purely UI presentation, derived from
+  // timer transitions plus user actions.
+  //
+  // showingCompleteBanner — true for the 5 s celebration window when the
+  //   final drill's timer hits 0 with no overrun. Cleared automatically.
+  // cleared — true while the screen should show ONLY the background image
+  //   (no drill, no timer, no Up Next). Set automatically after the
+  //   complete banner times out, or set immediately by manual End
+  //   Practice confirm. Cleared on any forward action (Next / Start).
+  // showEndConfirm — open state for the End Practice confirmation modal.
+  const [showingCompleteBanner, setShowingCompleteBanner] = useState(false)
+  const [cleared,                setCleared]                = useState(false)
+  const [showEndConfirm,         setShowEndConfirm]         = useState(false)
+  const completeFadeTimerRef = useRef(null)
+
   function clearHideTimer() {
     if (hideTimerRef.current) {
       clearTimeout(hideTimerRef.current)
@@ -396,6 +414,93 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
   const isDone       = hasStarted && !isRunning && secondsLeft === 0 && !isOverrun && isLastDrill && drills.length > 0
   const clockDisplay = isOverrun ? `+${fmt(overrunSeconds)}` : fmt(secondsLeft)
 
+  // ── Practice arc derivation ───────────────────────────────────────────────
+  // Five phases. Maps from the timer-singleton state + the local UI flags:
+  //   idle      — no script loaded
+  //   cleared   — script loaded but the screen should show only the
+  //               background (post-complete fadeout, or post-End-Practice).
+  //   complete  — the 5 s "Practice Complete ✓" celebration window.
+  //   pre-start — script loaded, no drill has begun this run. Shows Up Next
+  //               pointing at drill 0 plus a blank-background canvas.
+  //   active    — a drill is running (or paused mid-drill, or in overrun).
+  const hasScript    = !!snap.activeScript
+  const practicePhase =
+    !hasScript              ? 'idle'      :
+    cleared                  ? 'cleared'   :
+    showingCompleteBanner    ? 'complete'  :
+    hasStarted               ? 'active'    :
+                                'pre-start'
+
+  // ── State-transition effects ──────────────────────────────────────────────
+  // Auto-flow: isDone goes true → show "Practice Complete ✓" for 5 s →
+  // transition to cleared (background-only). Cleared and the banner are
+  // mutually exclusive; both clear on any forward action below.
+  useEffect(() => {
+    if (!isDone) return
+    if (completeFadeTimerRef.current) clearTimeout(completeFadeTimerRef.current)
+    setShowingCompleteBanner(true)
+    setCleared(false)
+    completeFadeTimerRef.current = setTimeout(() => {
+      setShowingCompleteBanner(false)
+      setCleared(true)
+      completeFadeTimerRef.current = null
+    }, 5000)
+    return () => {
+      if (completeFadeTimerRef.current) {
+        clearTimeout(completeFadeTimerRef.current)
+        completeFadeTimerRef.current = null
+      }
+    }
+  }, [isDone])
+
+  // ── Local timer-action wrappers ───────────────────────────────────────────
+  // Every "forward" action (Next, Start/Pause, Jump-to-drill) clears the
+  // post-complete UI flags so the screen leaves cleared/banner state
+  // immediately. Without this, tapping Next from cleared would fire drill
+  // 1 in the timer but the UI would stay blank waiting for the next
+  // unrelated render. The wrappers run synchronously before the timer
+  // call so React renders the cleared screen → active screen in one
+  // commit.
+  function handleNext() {
+    if (cleared || showingCompleteBanner) {
+      setCleared(false)
+      setShowingCompleteBanner(false)
+    }
+    next()
+  }
+  function handleStartPause() {
+    if (cleared || showingCompleteBanner) {
+      setCleared(false)
+      setShowingCompleteBanner(false)
+    }
+    startPause()
+  }
+  function handleJumpTo(i) {
+    if (cleared || showingCompleteBanner) {
+      setCleared(false)
+      setShowingCompleteBanner(false)
+    }
+    jumpTo(i)
+  }
+  function handleReset() {
+    if (cleared || showingCompleteBanner) {
+      setCleared(false)
+      setShowingCompleteBanner(false)
+    }
+    reset()
+  }
+
+  // Manual End Practice — quiet reset. Brings the timer back to pre-start
+  // shape (via reset()), but sets the UI to `cleared` so the screen shows
+  // ONLY the background. No horn. No music stop (the user's music-related
+  // toggle behaviour is preserved). Closes the confirm modal.
+  function confirmEndPractice() {
+    reset()
+    setShowingCompleteBanner(false)
+    setCleared(true)
+    setShowEndConfirm(false)
+  }
+
   // ── Render ──────────────────────────────────────────────────────────────────
   // Stage-mode layout. The DISPLAY ZONE fills the entire practice section so
   // the timer + drill names read across the field/gym. The CONTROLS PANEL is
@@ -452,7 +557,48 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
 
       <div className="relative z-10 flex-1 flex flex-col overflow-hidden px-4 gap-0">
 
-        {/* ── 1. Script name + period dots ──────────────────────────────────── */}
+        {/* ── Practice Complete banner ─────────────────────────────────────────
+            Shown for ~5 s after the final drill's timer hits 0 with no
+            overrun. Centered over the whole content area; absolutely
+            positioned so it doesn't shift any other layout that might
+            momentarily still be present. After 5 s the effect flips
+            practicePhase from 'complete' to 'cleared' and the screen
+            settles into background-only. */}
+        {practicePhase === 'complete' && (
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center px-6 pointer-events-none z-20"
+          >
+            <p
+              className="text-center font-black leading-tight"
+              style={{
+                fontFamily:    "'Bebas Neue', sans-serif",
+                fontSize:      'clamp(3.5rem, 9vw, 7rem)',
+                color:         '#22c55e',
+                letterSpacing: '0.04em',
+                textShadow:    '0 4px 32px rgba(34,197,94,0.55), 0 0 80px rgba(34,197,94,0.35)',
+              }}
+            >
+              Practice Complete ✓
+            </p>
+            <p
+              className="text-center mt-3 font-bold tracking-widest uppercase"
+              style={{
+                fontSize:      'clamp(0.85rem, 1.4vw, 1.1rem)',
+                color:         'rgba(255,255,255,0.7)',
+                letterSpacing: '0.22em',
+              }}
+            >
+              Great work
+            </p>
+          </div>
+        )}
+
+        {/* ── 1. Script name + period dots ────────────────────────────────────
+            Visible during ACTIVE practice only. Pre-start / cleared /
+            complete all hide it — the practice-arc spec wants those
+            states to read as quiet, with only the background image
+            (plus the Up Next preview in pre-start). */}
+        {practicePhase === 'active' && (
         <div className="shrink-0 flex flex-col items-center gap-1.5 pt-2 pb-1">
           {snap.activeScript ? (
             <>
@@ -491,8 +637,11 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
             </div>
           )}
         </div>
+        )}
 
-        {/* ── 2. Current segment name (+ optional note) ─────────────────────── */}
+        {/* ── 2. Current segment name (+ optional note) ───────────────────────
+            Same visibility rule as block 1 — active only. */}
+        {practicePhase === 'active' && (
         <div className="shrink-0 flex flex-col items-center pb-1" style={{ minHeight: 52 }}>
           {currentDrill ? (
             <>
@@ -571,14 +720,23 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
             </h1>
           )}
         </div>
+        )}
 
         {/* ── 3. Timer ────────────────────────────────────────────────────────
-            Previously this wrapper had a rounded green rectangle border +
-            outer glow + inner glow (border / boxShadow), and a thin green
-            progress bar lived directly below it. Both were removed for a
-            cleaner stage-mode look — the timer numbers stand on their own.
-            The wrapper is still a flex container so the clock stays
-            vertically centered inside flex-1 space; just no chrome. */}
+            Active phase only. In pre-start / cleared / complete the
+            timer is hidden so the background reads cleanly. The
+            block is `flex-1 min-h-0` when shown, which means hiding
+            it lets the surrounding `flex-col` collapse around the
+            visible elements — the pre-start screen gets a clean
+            top-aligned Up Next over an otherwise empty canvas, and
+            the cleared screen gets a fully empty canvas.
+
+            Previously this wrapper had a rounded green rectangle
+            border + outer glow + inner glow (border / boxShadow), and
+            a thin green progress bar lived directly below it. Both
+            were removed for a cleaner stage-mode look — the timer
+            numbers stand on their own. */}
+        {practicePhase === 'active' && (
         <div className="flex-1 min-h-0 flex items-center justify-center">
           <span
             className="font-mono font-black leading-none select-none"
@@ -598,6 +756,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
             {clockDisplay}
           </span>
         </div>
+        )}
 
         {/* (Divider removed — was a stray 1 px line between the timer and
             the "Next Up" block, leftover from the previous timer-frame
@@ -605,9 +764,28 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
             now floats cleanly above "Next Up" with no horizontal rule
             bisecting the display.) */}
 
-        {/* ── 5. Next up ────────────────────────────────────────────────────── */}
+        {/* ── 5. Next up ──────────────────────────────────────────────────────
+            Visible in ACTIVE (pointing at drills[currentDrillIdx + 1])
+            and in PRE-START (pointing at drills[0] — the first thing
+            the coach is about to run). Hidden in cleared and complete
+            so those states show only the background.
+
+            In pre-start the block also acts as the "tap Next/Start to
+            begin" affordance — coaches see drill 1 queued and hit
+            Next to fire it (the practiceTimer's next() now special-
+            cases pre-start to fire drill 0 instead of skipping to
+            drill 2). */}
+        {(practicePhase === 'active' || practicePhase === 'pre-start') && (() => {
+          // Re-point Up Next at drill 0 when we're in pre-start; the
+          // rest of the rendering below uses `displayedNextDrill` so
+          // the JSX stays a single shape.
+          const displayedNextDrill = practicePhase === 'pre-start'
+            ? drills[0]
+            : nextDrill
+          const showLastSegmentTag = practicePhase === 'active' && !displayedNextDrill && snap.activeScript && !isDone
+          return (
         <div className="shrink-0 flex flex-col items-center gap-0.5" style={{ minHeight: 56 }}>
-          {nextDrill ? (
+          {displayedNextDrill ? (
             <>
               <p
                 className="tracking-widest uppercase font-bold"
@@ -627,34 +805,32 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
                   textTransform: 'uppercase',
                 }}
               >
-                {nextDrill.name}
+                {displayedNextDrill.name}
               </p>
               <p
                 className="font-mono font-bold"
                 style={{ fontSize: 'clamp(0.9rem, 1.6vw, 1.1rem)', color: '#9a8080' }}
               >
-                {fmt(nextDrill.duration ?? 0)}
+                {fmt(displayedNextDrill.duration ?? 0)}
               </p>
             </>
-          ) : snap.activeScript && !isDone ? (
+          ) : showLastSegmentTag ? (
             <p
               className="tracking-widest uppercase font-bold"
               style={{ fontSize: '0.65rem', color: '#2a1010', letterSpacing: '0.16em' }}
             >
               Last Segment
             </p>
-          ) : isDone ? (
-            <p className="text-base font-black" style={{ color: '#22c55e' }}>
-              ✓ Practice Complete!
-            </p>
           ) : null}
 
-          {isOverrun && (
+          {practicePhase === 'active' && isOverrun && (
             <p className="text-sm font-black animate-pulse mt-1" style={{ color: '#ef4444' }}>
               ⚠ OVERRUN — {fmt(overrunSeconds)} past end
             </p>
           )}
         </div>
+          )
+        })()}
 
       </div>
     </div>
@@ -829,7 +1005,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
 
           {/* Reset */}
           <button
-            onClick={reset}
+            onClick={handleReset}
             title="Reset"
             className="w-11 h-11 rounded-xl flex items-center justify-center text-xl transition-opacity"
             style={{
@@ -843,16 +1019,20 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
 
           {/* Start / Pause */}
           <button
-            onClick={startPause}
+            onClick={handleStartPause}
             className="h-11 px-8 rounded-xl font-black text-white transition-all"
             style={{ backgroundColor: orgColor, minWidth: 130, fontSize: '1.1rem' }}
           >
             {isRunning ? '⏸ Pause' : isDone ? '✓ Done' : '▶ Start'}
           </button>
 
-          {/* Next → blows horn + auto-starts next drill */}
+          {/* Next → blows horn + auto-starts next drill. From pre-start
+              and cleared this starts drill 1; from mid-practice it
+              advances by one. The local handler clears the post-complete
+              UI flags before delegating so cleared → active happens in
+              a single React commit. */}
           <button
-            onClick={next}
+            onClick={handleNext}
             disabled={isLastDrill && !isRunning && secondsLeft === 0}
             className="h-11 px-5 rounded-xl font-black transition-all disabled:opacity-30"
             style={{
@@ -937,6 +1117,22 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
             onColor={orgColor}
             onClick={() => setStopMusicOnEnd(!stopMusicOnEnd)}
           />
+
+          {/* End Practice — visually subdued and placed at the far end
+              of the coach-toggles row, well away from Start / Pause /
+              Next so an accidental tap is unlikely. Opens a typed-free
+              confirm modal (two buttons, destructive style on Confirm)
+              before doing anything. The action itself is a quiet
+              reset — no horn, no music change, screen settles into
+              background-only via the cleared phase. */}
+          <button
+            onClick={() => setShowEndConfirm(true)}
+            className="ml-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-opacity opacity-70 hover:opacity-100"
+            style={{ border: '1px solid #3a0000', color: '#cc4444' }}
+            aria-label="End the current practice and clear the screen"
+          >
+            × End Practice
+          </button>
         </div>
 
       </div>
@@ -950,6 +1146,50 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
 
     </div>
     {/* ─ end CONTROLS PANEL (slide wrapper) ─ */}
+
+    {/* ── End Practice confirm modal ─────────────────────────────────────
+        Quiet reset — no horn, no music change. On Confirm, the timer
+        is reset() (back to drill 1 armed at full duration) AND the
+        UI flips to cleared (background-only). The script stays
+        loaded so the coach can resume later via Next/Start (which
+        will fire drill 1 thanks to the !hasStarted branch in
+        practiceTimer.next()). */}
+    {showEndConfirm && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        style={{ backgroundColor: 'rgba(0,0,0,0.88)' }}
+        onClick={() => setShowEndConfirm(false)}
+      >
+        <div
+          className="w-full max-w-sm rounded-2xl p-6 flex flex-col gap-4"
+          style={{ backgroundColor: '#110000', border: '1px solid #2a0000' }}
+          onClick={e => e.stopPropagation()}
+        >
+          <h3 className="font-bold text-white text-lg">End the current practice?</h3>
+          <p className="text-sm leading-relaxed" style={{ color: '#9a8080' }}>
+            The timer and drills will clear and the screen will return
+            to the background only. Your script stays loaded, so you
+            can start again whenever you're ready.
+          </p>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setShowEndConfirm(false)}
+              className="flex-1 py-3 rounded-lg text-sm font-semibold"
+              style={{ border: '1px solid #2a0000', color: '#9a8080' }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={confirmEndPractice}
+              className="flex-1 py-3 rounded-lg text-sm font-bold text-white"
+              style={{ backgroundColor: '#cc1111' }}
+            >
+              End Practice
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
 
     </div>
   )
