@@ -577,19 +577,36 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
               >
                 {currentDrill.name}
               </h1>
-              {/* Drill note — small secondary text under the name, only when
-                  THIS drill's own show_notes flag is ON and the note is
-                  non-empty. Each drill is opt-in independently. */}
+              {/* Drill note — coaching cue under the name, only when THIS
+                  drill's own show_notes flag is ON and the note is
+                  non-empty. Each drill is opt-in independently.
+                  Rendered with:
+                    - 2× larger type than before (clamp 1.1–2.2 rem,
+                      stage-mode-aware like the drill name) — small
+                      enough to stay subordinate to the drill name,
+                      large enough to read across a gym;
+                    - near-full-white text;
+                    - a dark rounded background plate so the note stays
+                      legible against any uploaded background image
+                      regardless of the bgDim setting. The plate makes
+                      the note actually visible — pre-fix it sat at
+                      0.85–1 rem in 70 % white with only a text shadow,
+                      which on a default-0-dim background was
+                      functionally invisible. */}
               {currentDrill.show_notes
                 && currentDrill.notes
                 && currentDrill.notes.trim() && (
                   <p
-                    className="text-center mt-1.5 px-4 max-w-3xl whitespace-pre-wrap"
+                    className="text-center mt-2 px-4 py-1.5 max-w-3xl whitespace-pre-wrap rounded-xl"
                     style={{
-                      fontSize:    'clamp(0.85rem, 1.2vw, 1rem)',
-                      color:       'rgba(255,255,255,0.7)',
-                      lineHeight:  1.35,
-                      textShadow:  '0 1px 6px rgba(0,0,0,0.7)',
+                      fontSize:        panelOpen
+                        ? 'clamp(1.1rem, 1.8vw, 1.4rem)'
+                        : 'clamp(1.4rem, 2.6vw, 2.2rem)',
+                      color:           'rgba(255,255,255,0.96)',
+                      lineHeight:      1.3,
+                      backgroundColor: 'rgba(0,0,0,0.55)',
+                      textShadow:      '0 2px 10px rgba(0,0,0,0.85)',
+                      transition:      'font-size 220ms ease-out',
                     }}
                   >
                     {currentDrill.notes}
