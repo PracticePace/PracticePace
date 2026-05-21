@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
+import StadiumNoiseToggle from '../StadiumNoiseToggle'
 
 function pad(n) { return String(n).padStart(2, '0') }
 function fmtClock(s) { return `${pad(Math.floor(Math.abs(s) / 60))}:${pad(Math.abs(s) % 60)}` }
@@ -1468,8 +1469,12 @@ export default function ScoreboardSection({
       .replace(/\b\w/g, c => c.toUpperCase())
   }
 
+  // Pick the right sub-scoreboard for the program's sport. Each one
+  // already returns a `flex-1 flex flex-col ...` root, so they render
+  // cleanly inside the shared wrapper below.
+  let surfaceEl
   if (surface === 'football') {
-    return (
+    surfaceEl = (
       <FootballScoreboard
         orgColor={orgColor}
         accountId={accountId}
@@ -1478,20 +1483,40 @@ export default function ScoreboardSection({
         programName={programName}
       />
     )
+  } else if (surface === 'basketball') {
+    surfaceEl = <BasketballScoreboard orgColor={orgColor} />
+  } else if (surface === 'cheer') {
+    surfaceEl = <CheerScoreboard orgColor={orgColor} programName={programName} />
+  } else {
+    surfaceEl = (
+      <GenericScoreboard
+        orgColor={orgColor}
+        homeTeamName={homeTeamName}
+        awayTeamName={awayTeamName}
+        programName={programName}
+        sportDisplayLabel={sportDisplayLabel}
+      />
+    )
   }
-  if (surface === 'basketball') {
-    return <BasketballScoreboard orgColor={orgColor} />
-  }
-  if (surface === 'cheer') {
-    return <CheerScoreboard orgColor={orgColor} programName={programName} />
-  }
+
+  // Shared wrapper for every scoreboard surface: a small `shrink-0`
+  // header bar at the top-right that hosts the StadiumNoiseToggle,
+  // then the chosen sub-scoreboard taking the rest of the vertical
+  // space. The header is the same shape across all four scoreboards
+  // (Football, Basketball, Cheer, Generic) so the crowd-noise button
+  // lives in a predictable spot regardless of which surface is
+  // rendered — and it never collides with sport-specific top-right
+  // content (e.g. Basketball's Period Controls box). Audio state
+  // lives in the stadiumNoise singleton, so toggling here mirrors
+  // toggling from the Practice tab and vice-versa.
   return (
-    <GenericScoreboard
-      orgColor={orgColor}
-      homeTeamName={homeTeamName}
-      awayTeamName={awayTeamName}
-      programName={programName}
-      sportDisplayLabel={sportDisplayLabel}
-    />
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      <div className="shrink-0 flex justify-end items-start px-3 py-2">
+        <StadiumNoiseToggle orgColor={orgColor} />
+      </div>
+      <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+        {surfaceEl}
+      </div>
+    </div>
   )
 }

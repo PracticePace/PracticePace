@@ -20,11 +20,7 @@ import {
   stopCue,
   isCuePlaying,
 } from '../../lib/cuePlayer'
-import {
-  subscribe as subscribeStadium,
-  getSnapshot as getStadiumSnapshot,
-  toggle as toggleStadium,
-} from '../../lib/stadiumNoise'
+import StadiumNoiseToggle from '../StadiumNoiseToggle'
 
 function pad(n) { return String(n).padStart(2, '0') }
 function fmt(s) { return `${pad(Math.floor(Math.abs(s) / 60))}:${pad(Math.abs(s) % 60)}` }
@@ -136,58 +132,6 @@ function MusicMiniControls({ orgColor }) {
           {songName}
         </span>
       )}
-    </div>
-  )
-}
-
-// ── Stadium noise toggle (bottom-right of practice tab) ──────────────────────
-// Standalone widget. Wires to the stadiumNoise singleton — does NOT participate
-// in horn/voice ducking or the music player. Looped playback at full volume;
-// tap to start, tap again to stop. Uses the lucide Megaphone glyph (rendered as
-// inline SVG, same convention as the rest of this app's icons) so the affordance
-// reads unambiguously as "crowd noise" rather than "mute". Permanent CROWD label
-// underneath so coaches always know what the button does.
-const MegaphoneIcon = () => (
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="m3 11 18-5v12L3 14v-3z" />
-    <path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" />
-  </svg>
-)
-
-function StadiumNoiseToggle({ orgColor }) {
-  const [snap, setSnap] = useState(() => getStadiumSnapshot())
-  useEffect(() => subscribeStadium(setSnap), [])
-  const isOn = !!snap.isPlaying
-
-  return (
-    <div className="shrink-0 flex flex-col items-center gap-1">
-      <button
-        type="button"
-        onClick={() => toggleStadium().catch(() => {})}
-        aria-label={isOn ? 'Stop stadium noise' : 'Play stadium noise'}
-        // 44x44 touch-target. Visual emphasis flips with state: filled in
-        // orgColor + glow when ON, dim outline when OFF.
-        className="w-11 h-11 rounded-2xl flex items-center justify-center transition-all active:scale-95"
-        style={{
-          backgroundColor: isOn ? orgColor : 'transparent',
-          border:          `1px solid ${isOn ? orgColor : `${orgColor}55`}`,
-          color:           isOn ? '#ffffff' : '#9a8080',
-          boxShadow:       isOn ? `0 0 12px ${orgColor}66` : 'none',
-        }}
-      >
-        <MegaphoneIcon />
-      </button>
-      <span
-        className="font-semibold transition-colors"
-        style={{
-          fontSize:      11,
-          letterSpacing: '0.12em',
-          color:         isOn ? orgColor : '#7a6060',
-        }}
-      >
-        CROWD
-      </span>
     </div>
   )
 }
