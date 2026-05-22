@@ -169,9 +169,28 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
   const [snap, setSnap] = useState(() => getSnapshot())
   useEffect(() => subscribe(setSnap), [])
 
-  // Tell the singleton when the script prop changes (only resets if script changed)
+  // Tell the singleton when the script prop changes (only resets if
+  // script id changed; same-id reload preserves timer state for in-
+  // flight script edits).
+  //
+  // Also clears the post-complete UI flags so a script load (new OR
+  // same — Dashboard hands us a fresh object reference on every load)
+  // returns the screen to pre-start with Up Next, per the practice-arc
+  // spec. If we WERE showing the Practice Complete banner, fire reset()
+  // explicitly so hasStarted flips back to false: otherwise same-id
+  // reload would leave hasStarted=true and we'd fall through to the
+  // 'active' phase showing the last drill stuck at 0:00.
+  //
+  // `isDone` intentionally not in the dep array — we only want this
+  // effect to run when activeScript reference changes; the `isDone`
+  // value read here is the latest closure value, which is what we
+  // want for the reset-on-was-complete check.
   useEffect(() => {
+    if (isDone) reset()
+    setShowingCompleteBanner(false)
+    setCleared(false)
     setActiveScript(activeScript)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeScript])
 
   // Derive display values from snapshot — declared HERE (before the cue
@@ -318,7 +337,6 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
   const [showingCompleteBanner, setShowingCompleteBanner] = useState(false)
   const [cleared,                setCleared]                = useState(false)
   const [showEndConfirm,         setShowEndConfirm]         = useState(false)
-  const completeFadeTimerRef = useRef(null)
 
   function clearHideTimer() {
     if (hideTimerRef.current) {
@@ -432,25 +450,19 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
                                 'pre-start'
 
   // ── State-transition effects ──────────────────────────────────────────────
-  // Auto-flow: isDone goes true → show "Practice Complete ✓" for 5 s →
-  // transition to cleared (background-only). Cleared and the banner are
-  // mutually exclusive; both clear on any forward action below.
+  // Show the "Practice Complete ✓" banner the moment the final drill
+  // hits 0 with no overrun. The banner now PERSISTS — no auto-fade.
+  // It clears only when the coach takes an explicit action:
+  //   • Loads a script (handled by the activeScript-push effect above,
+  //     which also clears cleared/banner state on any prop reference
+  //     change — new id OR same id with a fresh fetch).
+  //   • Taps End Practice (handled by confirmEndPractice below).
+  //   • Taps any forward control (Start / Next / Reset / Jump-to-drill),
+  //     handled by the local wrappers below.
   useEffect(() => {
     if (!isDone) return
-    if (completeFadeTimerRef.current) clearTimeout(completeFadeTimerRef.current)
     setShowingCompleteBanner(true)
     setCleared(false)
-    completeFadeTimerRef.current = setTimeout(() => {
-      setShowingCompleteBanner(false)
-      setCleared(true)
-      completeFadeTimerRef.current = null
-    }, 5000)
-    return () => {
-      if (completeFadeTimerRef.current) {
-        clearTimeout(completeFadeTimerRef.current)
-        completeFadeTimerRef.current = null
-      }
-    }
   }, [isDone])
 
   // ── Local timer-action wrappers ───────────────────────────────────────────
