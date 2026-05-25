@@ -74,7 +74,14 @@ export default function Dashboard() {
   // org_id comes directly from the profile row — no join required
   const contextOrgId = authProfile?.org_id ?? null
 
-  const [section, setSection]           = useState('practice')
+  // Default landing tab is Scripts. The Practice tab is one click away on
+  // the bottom nav, and handleSetActive() still auto-jumps to Practice when
+  // a coach taps "Set Active" on a script — so the run-a-practice flow is
+  // unchanged. Switching the default to Scripts makes the first-load view
+  // match how coaches actually start a session (pick a script, then run it)
+  // and avoids landing in an empty Practice screen when no script is set
+  // active yet.
+  const [section, setSection]           = useState('scripts')
   const [org, setOrg]                   = useState(null)
   // Surfaced by the loadAll outer catch when an unexpected error prevents
   // the dashboard from initialising. Renders a top banner with a Refresh
