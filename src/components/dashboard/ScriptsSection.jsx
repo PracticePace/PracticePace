@@ -5,6 +5,9 @@ import { playCue, stopCue } from '../../lib/cuePlayer'
 import { useAuth } from '../../context/AuthContext'
 import { canEdit } from '../../lib/permissions'
 import { SPORTS as LAUNCH_SPORTS, sportLabel } from '../../lib/sports'
+import WhiteboardImageFrameDialog   from './WhiteboardImageFrameDialog'
+import WhiteboardImageNameDialog    from './WhiteboardImageNameDialog'
+import WhiteboardImageLibraryDialog from './WhiteboardImageLibraryDialog'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function pad(n) { return String(n).padStart(2, '0') }
@@ -933,7 +936,15 @@ function AddDrillForm({ orgColor, orgId, isGuest, onAdd }) {
 
 function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId, isGuest,
   canEdit: userCanEdit = true,
-  rowRef, onStartDrag, onEditStart, onEditSave, onEditCancel, onDelete }) {
+  rowRef, onStartDrag, onEditStart, onEditSave, onEditCancel, onDelete,
+  // Per-drill image attachment. Resolved by ScriptEditor via the
+  // Dashboard-level whiteboardImages map and passed in as
+  // { image_url, name } or null. The Image control on this row opens
+  // the picker via onOpenImagePicker(index); the editor owns the
+  // dialog and the upload chain.
+  attachedImage    = null,
+  onOpenImagePicker,
+}) {
   const [editName,      setEditName]      = useState(drill.name ?? '')
   const [editMins,      setEditMins]      = useState(drill.duration ? String(Math.floor(drill.duration / 60)) : '')
   const [editSecs,      setEditSecs]      = useState(drill.duration ? String(drill.duration % 60) : '')
@@ -1060,6 +1071,49 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
             isGuest={isGuest}
           />
 
+          {/* Image control — opens the library picker. Attachment
+              commits immediately on Select (independent of the row's
+              Save button), so this control reflects whatever's
+              currently saved on the drill, not local edit state. */}
+          {!isGuest && (
+            <button
+              type="button"
+              onClick={() => onOpenImagePicker?.(index)}
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors text-left"
+              style={{
+                backgroundColor: '#0d0000',
+                color:           attachedImage ? '#e8d8d8' : '#9a8080',
+                border:          `1px solid ${attachedImage ? orgColor + '88' : '#3a1414'}`,
+              }}
+              title={attachedImage ? 'Change or remove attached image' : 'Attach an image from the library'}
+            >
+              {attachedImage ? (
+                <>
+                  <img
+                    src={attachedImage.image_url}
+                    alt=""
+                    className="rounded"
+                    style={{ width: 28, height: 28, objectFit: 'cover', backgroundColor: '#fff' }}
+                  />
+                  <span className="truncate" style={{ maxWidth: 220 }}>
+                    Image: {attachedImage.name}
+                  </span>
+                  <span className="ml-auto" style={{ color: '#7a6060' }}>Change…</span>
+                </>
+              ) : (
+                <>
+                  <span
+                    className="inline-flex items-center justify-center rounded"
+                    style={{ width: 28, height: 28, border: '1px dashed #3a1414', color: '#7a6060' }}
+                  >
+                    🖼
+                  </span>
+                  <span>+ Attach image (optional)</span>
+                </>
+              )}
+            </button>
+          )}
+
           <div className="flex gap-2 justify-end">
             <button onClick={onEditCancel}
               className="px-3 py-2 rounded-lg text-xs font-semibold"
@@ -1109,6 +1163,25 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
             >
               {drill.name || <span style={{ color: '#7a4040', fontStyle: 'italic', fontWeight: 400 }}>Untitled drill</span>}
             </span>
+            {/* Image attached indicator — passive thumbnail + name pill
+                so coaches can scan the script and see which drills have
+                images at a glance. Not clickable in display mode — use
+                ✎ Edit to open the picker. */}
+            {attachedImage && (
+              <span
+                className="inline-flex items-center gap-1.5 text-xs shrink-0 px-1.5 py-1 rounded-md"
+                style={{ color: '#c8a0a0', border: '1px solid #3a1414', backgroundColor: '#0d0000' }}
+                title={`Image: ${attachedImage.name}`}
+              >
+                <img
+                  src={attachedImage.image_url}
+                  alt=""
+                  className="rounded"
+                  style={{ width: 18, height: 18, objectFit: 'cover', backgroundColor: '#fff' }}
+                />
+                <span className="truncate" style={{ maxWidth: 120 }}>{attachedImage.name}</span>
+              </span>
+            )}
             {/* Cue attached indicator — clickable to preview without entering edit mode */}
             {drill.cue_mp3_url && (
               <button
@@ -1169,7 +1242,10 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
 function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
   canEdit: userCanEdit = true,
   programName, programNameColor, programLogoUrl,
-  onBack, onSetActive, onSwitchTab, onReload }) {
+  onBack, onSetActive, onSwitchTab, onReload,
+  whiteboardImages         = {},
+  onWhiteboardImagesReload = () => {},
+}) {
   const [name,   setName]   = useState(script.name  ?? '')
   const [sport,  setSport]  = useState(script.sport ?? 'football')
   const [drills, setDrills] = useState(script.drills ?? [])
@@ -1179,6 +1255,173 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
   const [showPrint, setShowPrint] = useState(false)
   const saveTimer = useRef(null)
   const scriptId  = useRef(script.id)
+
+  // ── Drill image picker + upload chain ─────────────────────────────────────
+  // pickingDrillIdx — the index in the current drills array whose
+  //                   image-picker dialog is open (or null). The picker
+  //                   commits the attachment immediately on Select (no
+  //                   Cancel; matches the semantic of "pick one from
+  //                   the library").
+  // pendingFile,
+  // pendingNamedBlob,
+  // imageBusy / imageError — mirror the WhiteboardSection upload chain
+  //                   so the script editor can upload directly from the
+  //                   picker without bouncing the coach over to the
+  //                   whiteboard tab. After successful upload the new
+  //                   image is auto-attached to the drill that opened
+  //                   the picker.
+  // libraryReloadKey — bumped after upload so the library refetches.
+  const [pickingDrillIdx,  setPickingDrillIdx]  = useState(null)
+  const [pendingFile,      setPendingFile]      = useState(null)
+  const [pendingNamedBlob, setPendingNamedBlob] = useState(null)
+  const [imageBusy,        setImageBusy]        = useState(false)
+  const [imageError,       setImageError]       = useState('')
+  const [libraryReloadKey, setLibraryReloadKey] = useState(0)
+  const fileInputRef = useRef(null)
+
+  // ── Drill image picker handlers ──────────────────────────────────────────
+  // Mutate the drill at `idx` with a new whiteboard_image_id (or strip
+  // it if newId is null). Uses the same updateDrills path other drill
+  // edits use, so the debounced save fires automatically.
+  function attachImageToDrill(idx, newId) {
+    setDrills(prev => {
+      const next = prev.map((d, i) => {
+        if (i !== idx) return d
+        if (newId == null) {
+          const { whiteboard_image_id, ...rest } = d
+          return rest
+        }
+        return { ...d, whiteboard_image_id: newId }
+      })
+      schedSave(name, sport, next)
+      return next
+    })
+  }
+
+  function openImagePickerForDrill(idx) {
+    setImageError('')
+    setPickingDrillIdx(idx)
+  }
+
+  function closeImagePicker() {
+    setPickingDrillIdx(null)
+  }
+
+  function handlePickerSelect(row) {
+    if (pickingDrillIdx == null) return
+    attachImageToDrill(pickingDrillIdx, row.id)
+    setPickingDrillIdx(null)
+  }
+
+  function handlePickerClearAttach() {
+    if (pickingDrillIdx == null) return
+    attachImageToDrill(pickingDrillIdx, null)
+    setPickingDrillIdx(null)
+  }
+
+  // Library-side delete-cleanup runs inside WhiteboardImageLibraryDialog
+  // and strips refs across all org scripts. To make sure THIS editor's
+  // in-memory drills also reflect that cleanup, refresh the drills
+  // array if any of them referenced the deleted image, and refresh
+  // the Dashboard-level library map.
+  function handlePickerDeleted(row) {
+    setDrills(prev => prev.map(d => {
+      if (d?.whiteboard_image_id === row.id) {
+        const { whiteboard_image_id, ...rest } = d
+        return rest
+      }
+      return d
+    }))
+    onWhiteboardImagesReload()
+  }
+
+  // ── Upload chain (same pattern as WhiteboardSection) ─────────────────────
+  function openFilePicker() {
+    setImageError('')
+    fileInputRef.current?.click()
+  }
+
+  function onFileChosen(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    // Close the library while frame → name runs so they don't stack
+    // (same fix that landed in WhiteboardSection commit c1bd329).
+    // pickingDrillIdx is preserved — we re-mount the library after the
+    // upload completes (or the coach cancels) so the picker reopens
+    // automatically.
+    setPendingFile(file)
+  }
+
+  function deriveDefaultName(file) {
+    const raw   = file?.name ?? ''
+    const noExt = raw.replace(/\.[^.]+$/, '').trim()
+    return noExt || 'Whiteboard image'
+  }
+
+  function onFrameConfirm(blob) {
+    if (!pendingFile) return
+    setPendingNamedBlob({ blob, defaultName: deriveDefaultName(pendingFile) })
+    setPendingFile(null)
+  }
+
+  async function onNameConfirm(nm) {
+    if (!pendingNamedBlob || !orgId) return
+    setImageBusy(true)
+    setImageError('')
+    try {
+      const { blob } = pendingNamedBlob
+      const ts   = Date.now()
+      const mime = blob.type || 'image/jpeg'
+      const ext  = mime === 'image/png' ? 'png' : 'jpg'
+      const path = `${orgId}/${ts}.${ext}`
+
+      const { error: upErr } = await supabase.storage
+        .from('whiteboard-images')
+        .upload(path, blob, {
+          contentType:  mime,
+          cacheControl: '3600',
+          upsert:       false,
+        })
+      if (upErr) throw new Error(upErr.message || 'Upload failed')
+
+      const { data: urlData } = supabase.storage.from('whiteboard-images').getPublicUrl(path)
+      const publicUrl = urlData?.publicUrl
+      if (!publicUrl) throw new Error('Could not resolve public URL for uploaded image')
+      const bustUrl = `${publicUrl}?v=${ts}`
+
+      const { data: inserted, error: insErr } = await supabase
+        .from('whiteboard_images')
+        .insert({
+          org_id:       orgId,
+          image_url:    bustUrl,
+          storage_path: path,
+          name:         nm,
+        })
+        .select('id')
+        .single()
+      if (insErr) {
+        try { await supabase.storage.from('whiteboard-images').remove([path]) } catch {}
+        throw new Error(insErr.message || 'Could not save to library')
+      }
+
+      // Auto-attach to the drill that opened this picker session.
+      if (pickingDrillIdx != null && inserted?.id) {
+        attachImageToDrill(pickingDrillIdx, inserted.id)
+      }
+      // Refresh the Dashboard-level map so the new image is resolvable
+      // immediately. Also bump reloadKey so the library refetches if
+      // the coach reopens it.
+      await onWhiteboardImagesReload()
+      setPendingNamedBlob(null)
+      setLibraryReloadKey(k => k + 1)
+    } catch (err) {
+      console.error('[ScriptEditor] image upload failed:', err?.message ?? err)
+      setImageError(err?.message ?? 'Could not upload image.')
+    } finally {
+      setImageBusy(false)
+    }
+  }
 
   // ── Save (debounced) ────────────────────────────────────────────────────────
   const save = useCallback(async (nextName, nextSport, nextDrills) => {
@@ -1193,13 +1436,21 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
       // one-shot MP3 that interrupts the main playlist when the drill
       // becomes active). Missing/undefined for any of these is treated as
       // empty/false.
-      drills: nextDrills.map(d => ({
-        name:        d.name.trim(),
-        duration:    Number(d.duration) || 0,
-        notes:       typeof d.notes === 'string' ? d.notes.trim() : '',
-        show_notes:  !!d.show_notes,
-        cue_mp3_url: typeof d.cue_mp3_url === 'string' ? d.cue_mp3_url : '',
-      })),
+      drills: nextDrills.map(d => {
+        const out = {
+          name:        d.name.trim(),
+          duration:    Number(d.duration) || 0,
+          notes:       typeof d.notes === 'string' ? d.notes.trim() : '',
+          show_notes:  !!d.show_notes,
+          cue_mp3_url: typeof d.cue_mp3_url === 'string' ? d.cue_mp3_url : '',
+        }
+        // Carry whiteboard_image_id only when set — keeps the JSON
+        // shape lean for drills that don't use the per-drill image
+        // feature. PracticeSection / DrillRow read with `?? null`,
+        // so absence == "no image" everywhere.
+        if (d.whiteboard_image_id) out.whiteboard_image_id = d.whiteboard_image_id
+        return out
+      }),
     }
 
     try {
@@ -1421,6 +1672,10 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
               onEditSave={saveDrill}
               onEditCancel={() => setEditingIndex(null)}
               onDelete={deleteDrill}
+              attachedImage={drill?.whiteboard_image_id
+                ? whiteboardImages[drill.whiteboard_image_id] ?? null
+                : null}
+              onOpenImagePicker={openImagePickerForDrill}
             />
           ))}
 
@@ -1430,6 +1685,63 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
           )}
         </div>
       </div>
+
+      {/* ── Per-drill image picker + upload chain ─────────────────────────
+          Mounted at the editor level so the dialogs sit above the drill
+          list and can interleave: library → upload → frame → name →
+          library (with the new image now selected). pickingDrillIdx
+          gates the library mount; pendingFile / pendingNamedBlob gate
+          the frame and name dialogs respectively. */}
+      {!isGuest && (
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml,image/heic,image/heif"
+            onChange={onFileChosen}
+            style={{ display: 'none' }}
+          />
+
+          {pickingDrillIdx != null && !pendingFile && !pendingNamedBlob && (
+            <WhiteboardImageLibraryDialog
+              orgId={orgId}
+              mode="picker"
+              currentImageId={drills[pickingDrillIdx]?.whiteboard_image_id ?? null}
+              orgColor={orgColor}
+              reloadKey={libraryReloadKey}
+              onSelect={handlePickerSelect}
+              onUploadNew={openFilePicker}
+              onClearAttach={handlePickerClearAttach}
+              onDeleted={handlePickerDeleted}
+              onClose={closeImagePicker}
+            />
+          )}
+
+          {pendingFile && (
+            <WhiteboardImageFrameDialog
+              file={pendingFile}
+              orgColor={orgColor}
+              onCancel={() => setPendingFile(null)}
+              onConfirm={onFrameConfirm}
+            />
+          )}
+
+          {pendingNamedBlob && (
+            <WhiteboardImageNameDialog
+              defaultName={pendingNamedBlob.defaultName}
+              working={imageBusy}
+              error={imageError}
+              orgColor={orgColor}
+              onCancel={() => {
+                if (imageBusy) return
+                setPendingNamedBlob(null)
+                setImageError('')
+              }}
+              onConfirm={onNameConfirm}
+            />
+          )}
+        </>
+      )}
     </div>
   )
 }
@@ -1440,6 +1752,12 @@ export default function ScriptsSection({
   orgId, userId, orgColor, isGuest, orgSport,
   programName, programNameColor, programLogoUrl,
   onReload, onSwitchTab,
+  // Per-program library, threaded down from Dashboard. Editor uses it
+  // to render thumbnails on attached drill rows + populate the image
+  // picker; the reload callback refetches after upload/delete inside
+  // the picker so the gallery + drill row indicators stay fresh.
+  whiteboardImages         = {},
+  onWhiteboardImagesReload = () => {},
 }) {
   // canEdit gates every destructive control on this surface (P0 UX
   // follow-up to the RLS hardening in migration 20260515000000). readonly
@@ -1496,6 +1814,8 @@ export default function ScriptsSection({
           onSetActive={onSetActive}
           onSwitchTab={onSwitchTab}
           onReload={onReload}
+          whiteboardImages={whiteboardImages}
+          onWhiteboardImagesReload={onWhiteboardImagesReload}
         />
       </div>
     )

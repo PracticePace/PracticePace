@@ -110,6 +110,13 @@ export default function Dashboard() {
   const [activeOrgId, setActiveOrgId]   = useState(null)
   const [profile, setProfile]           = useState(null)
   const [scripts, setScripts]           = useState([])
+  // Per-program library of whiteboard images, keyed by id for cheap
+  // resolution at render time. Loaded alongside scripts (see
+  // loadWhiteboardImages); refetched on program switch and after the
+  // whiteboard library dialog mutates rows (upload/delete) via
+  // bumpWhiteboardImages(). Drills carry only the id; PracticeSection
+  // looks up { image_url, name } here.
+  const [whiteboardImages, setWhiteboardImages] = useState({})
   const [activeScript, _rawSetActiveScript] = useState(null)
   // Wrapper preserved from an earlier debug-logging pass — the call-site
   // contract is `setActiveScript(next)`. Kept as a pass-through so we can
@@ -297,6 +304,10 @@ export default function Dashboard() {
       setOrg(orgData)
 
       if (resolvedOrgId) {
+        // Per-program whiteboard image library — runs in parallel with
+        // scripts so PracticeSection / ScriptEditor have their image
+        // map ready by first render.
+        await loadWhiteboardImages(resolvedOrgId)
         const list = await loadScripts(resolvedOrgId)
         if (list.length === 0) {
           const sample = await seedSampleScript(resolvedOrgId, user.id, orgData?.sport?.toLowerCase())
@@ -450,6 +461,31 @@ export default function Dashboard() {
       setCheckoutError(err.message ?? 'Checkout failed — please try again.')
       setCheckoutLoading(false)
     }
+  }
+
+  // Pull the org's whiteboard image library — id → { image_url, name }.
+  // Used both for the script editor's drill image picker AND for
+  // PracticeSection's runtime lookup when a drill carries a
+  // whiteboard_image_id. Guests skip (no library — guests can't upload).
+  async function loadWhiteboardImages(orgId) {
+    if (isGuest) { setWhiteboardImages({}); return {} }
+    const id = orgId ?? activeOrgId ?? org?.id ?? contextOrgId
+    if (!id) { setWhiteboardImages({}); return {} }
+    const { data, error } = await supabase
+      .from('whiteboard_images')
+      .select('id, image_url, name')
+      .eq('org_id', id)
+    if (error) {
+      console.warn('[Dashboard] loadWhiteboardImages error:', error.message)
+      setWhiteboardImages({})
+      return {}
+    }
+    const map = {}
+    for (const row of (data ?? [])) {
+      map[row.id] = { image_url: row.image_url, name: row.name }
+    }
+    setWhiteboardImages(map)
+    return map
   }
 
   async function loadScripts(orgId) {
@@ -653,6 +689,8 @@ export default function Dashboard() {
     // Re-load org-scoped collections. We don't touch profile / account /
     // subscription — those are user-scoped, not org-scoped.
     await loadScripts(orgId)
+    // Whiteboard images are also per-program — refetch alongside scripts.
+    await loadWhiteboardImages(orgId)
     // Clear the activeScript pointer — it was scoped to the previous
     // program and won't exist in the new one's script list. The Scripts
     // tab will restore from localStorage on next mount if applicable.
@@ -907,6 +945,7 @@ export default function Dashboard() {
               orgColor={orgColor}
               backgroundUrl={org?.background_url ?? null}
               backgroundDim={org?.background_dim ?? 0}
+              whiteboardImages={whiteboardImages}
             />
           )}
 
@@ -924,6 +963,8 @@ export default function Dashboard() {
               programNameColor={subscription?.program_name_color ?? '#000000'}
               programLogoUrl={org?.logo_url ?? null}
               onReload={() => loadScripts(activeOrgId ?? org?.id)}
+              whiteboardImages={whiteboardImages}
+              onWhiteboardImagesReload={() => loadWhiteboardImages(activeOrgId ?? org?.id)}
             />
           )}
 

@@ -163,7 +163,7 @@ function ToggleBtn({ label, active, onColor = '#22c55e', onClick }) {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function PracticeSection({ activeScript, orgColor, backgroundUrl, backgroundDim = 0 }) {
+export default function PracticeSection({ activeScript, orgColor, backgroundUrl, backgroundDim = 0, whiteboardImages = {} }) {
 
   // Subscribe to the singleton — re-render on every tick
   const [snap, setSnap] = useState(() => getSnapshot())
@@ -449,6 +449,89 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
     hasStarted               ? 'active'    :
                                 'pre-start'
 
+  // ── Per-drill image mode ─────────────────────────────────────────────────
+  // When the active drill has a whiteboard_image_id, look up the URL in
+  // the Dashboard-provided map. PracticeSection doesn't fetch — the
+  // image library list is loaded once at the Dashboard level (and
+  // refreshed on program switch / library mutation), then passed down.
+  //
+  // Transition state machine:
+  //   wantImage  — derived: practicePhase === 'active' && image URL exists.
+  //   renderedImageUrl — what is currently mounted in the DOM. Lags
+  //                       behind wantImage during fade-outs.
+  //   imageVisible — drives the CSS opacity. Combined with a 350 ms
+  //                   transition, gives smooth fade-in / fade-out and
+  //                   fade-through-blank between consecutive image drills.
+  //
+  // Sequence on drill change A → B (both have images):
+  //   1. wantImage stays true, currentDrillImageUrl changes
+  //   2. setImageVisible(false) → A's opacity transitions to 0 (350 ms)
+  //   3. timeout: setRenderedImageUrl(B's URL)
+  //   4. rAF + setImageVisible(true) → B's opacity transitions to 1
+  // Net: short blank flash between A and B (acceptable for v1; true
+  // crossfade would need a second layer — deferred).
+  //
+  // Sequence on drill end (last drill, image fades out before Complete):
+  //   1. isDone fires → showingCompleteBanner queued; practicePhase
+  //      becomes 'complete' → wantImage flips false
+  //   2. imageVisible → false (fade)
+  //   3. timeout → renderedImageUrl → null
+  //   4. The Complete banner is gated on !renderedImageUrl so it only
+  //      appears after the image has fully unmounted.
+  const currentDrillImageId  = currentDrill?.whiteboard_image_id ?? null
+  const currentDrillImageUrl = currentDrillImageId
+    ? (whiteboardImages?.[currentDrillImageId]?.image_url ?? null)
+    : null
+  const wantImage = practicePhase === 'active' && !!currentDrillImageUrl
+
+  const [renderedImageUrl, setRenderedImageUrl] = useState(null)
+  const [imageVisible,     setImageVisible]     = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    // Case A — should show, and we're already on the right URL: snap to
+    // visible (covers re-mount + initial sync).
+    if (wantImage && renderedImageUrl === currentDrillImageUrl) {
+      setImageVisible(true)
+      return
+    }
+    // Case B — should show different URL: fade out, swap, fade in.
+    if (wantImage && renderedImageUrl && renderedImageUrl !== currentDrillImageUrl) {
+      setImageVisible(false)
+      const t = setTimeout(() => {
+        if (cancelled) return
+        setRenderedImageUrl(currentDrillImageUrl)
+        requestAnimationFrame(() => { if (!cancelled) setImageVisible(true) })
+      }, 350)
+      return () => { cancelled = true; clearTimeout(t) }
+    }
+    // Case C — nothing shown, should show: mount + fade in.
+    if (wantImage && !renderedImageUrl) {
+      setRenderedImageUrl(currentDrillImageUrl)
+      requestAnimationFrame(() => { if (!cancelled) setImageVisible(true) })
+      return () => { cancelled = true }
+    }
+    // Case D — should hide, something shown: fade out, then unmount.
+    if (!wantImage && renderedImageUrl) {
+      setImageVisible(false)
+      const t = setTimeout(() => {
+        if (cancelled) return
+        setRenderedImageUrl(null)
+      }, 350)
+      return () => { cancelled = true; clearTimeout(t) }
+    }
+    // Case E — should hide, nothing shown: no-op.
+  }, [wantImage, currentDrillImageUrl, renderedImageUrl])
+
+  // Visual "image mode is currently engaged" — drives both the rendering
+  // of the image overlay/corner timer AND the gating that hides the
+  // normal center timer / drill name / Next Up. We use renderedImageUrl
+  // rather than wantImage so that during the fade-out tail (after the
+  // drill flips away or practicePhase leaves 'active') the layout stays
+  // in image mode until the image is fully gone — avoids a layout snap
+  // mid-transition.
+  const imageMode = renderedImageUrl !== null
+
   // ── State-transition effects ──────────────────────────────────────────────
   // Show the "Practice Complete ✓" banner the moment the final drill
   // hits 0 with no overrun. The banner now PERSISTS — no auto-fade.
@@ -541,7 +624,12 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
         className="relative flex-1 flex flex-col overflow-hidden"
         onClick={panelOpen ? closePanel : undefined}
         style={{
-          backgroundImage:    backgroundUrl ? `url(${backgroundUrl})` : undefined,
+          // Per-drill image mode hides the program background — the drill
+          // image takes its place. The image overlay (below) sits over a
+          // white underfill so letterbox/pillarbox stripes around an
+          // odd-aspect image render as a clean blank rather than the
+          // program photo bleeding through.
+          backgroundImage:    (!imageMode && backgroundUrl) ? `url(${backgroundUrl})` : undefined,
           backgroundSize:     'cover',
           backgroundPosition: 'center',
           // Reserve enough room at the bottom that the inner content
@@ -559,12 +647,92 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
           Settings → Practice Screen Background slider; the new default
           is 0 (image as uploaded). We skip rendering the overlay when
           backgroundDim is 0 so the DOM stays minimal in the common
-          case. */}
-      {backgroundUrl && backgroundDim > 0 && (
+          case. Also skipped during image mode — the dim is for the
+          program background, which isn't shown then. */}
+      {backgroundUrl && backgroundDim > 0 && !imageMode && (
         <div
           className="absolute inset-0 pointer-events-none"
           style={{ backgroundColor: `rgba(0,0,0,${Math.max(0, Math.min(100, backgroundDim)) / 100})` }}
         />
+      )}
+
+      {/* ── Per-drill image mode overlay ──────────────────────────────────
+          White underfill + the drill's attached image, both fading in/out
+          together via opacity transitions. The image uses object-fit:
+          contain so portrait/landscape mismatches against the screen
+          letterbox cleanly against the white underfill (consistent with
+          the whiteboard's own image rendering). Pointer-events: none so
+          the tap-to-close-panel handler on the wrapper still works. */}
+      {renderedImageUrl && (
+        <>
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              backgroundColor: '#ffffff',
+              opacity:         imageVisible ? 1 : 0,
+              transition:      'opacity 350ms ease-in-out',
+              zIndex:          1,
+            }}
+          />
+          <img
+            src={renderedImageUrl}
+            alt=""
+            className="absolute inset-0 w-full h-full pointer-events-none"
+            style={{
+              objectFit:  'contain',
+              opacity:    imageVisible ? 1 : 0,
+              transition: 'opacity 350ms ease-in-out',
+              zIndex:     2,
+            }}
+          />
+        </>
+      )}
+
+      {/* Image-mode corner display — drill name top-center (small) and
+          timer top-right (small). Rendered above the image (z-10) and
+          gated on imageMode so they appear during fade-in and stay
+          through the fade-out tail in lockstep with the image overlay.
+          Opacity follows imageVisible so the corner text doesn't pop
+          in before the image is ready. */}
+      {imageMode && practicePhase === 'active' && (
+        <div
+          className="absolute inset-x-0 top-0 z-10 flex items-start justify-between px-4 pt-3 pointer-events-none"
+          style={{
+            opacity:    imageVisible ? 1 : 0,
+            transition: 'opacity 350ms ease-in-out',
+          }}
+        >
+          <div className="flex-1" />
+          <h1
+            className="text-center leading-none tracking-wide truncate px-3"
+            style={{
+              fontFamily:    "'Bebas Neue', sans-serif",
+              fontSize:      'clamp(1.6rem, 3vw, 2.4rem)',
+              color:         '#0a0000',
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+              maxWidth:      '60%',
+            }}
+          >
+            {currentDrill?.name ?? ''}
+          </h1>
+          <div className="flex-1 flex justify-end">
+            <span
+              className="font-mono font-black leading-none select-none"
+              style={{
+                fontSize:           'clamp(2rem, 4.5vw, 3.5rem)',
+                color,
+                textShadow:         `0 0 24px ${color}66`,
+                fontVariantNumeric: 'tabular-nums',
+                opacity:            isRunning ? 1 : 0.55,
+                transition:         'color 0.6s, text-shadow 0.6s, opacity 0.3s',
+              }}
+              title={isRunning ? undefined : 'Paused'}
+            >
+              {clockDisplay}
+            </span>
+          </div>
+        </div>
       )}
 
       <div className="relative z-10 flex-1 flex flex-col overflow-hidden px-4 gap-0">
@@ -576,7 +744,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
             momentarily still be present. After 5 s the effect flips
             practicePhase from 'complete' to 'cleared' and the screen
             settles into background-only. */}
-        {practicePhase === 'complete' && (
+        {practicePhase === 'complete' && !renderedImageUrl && (
           <div
             className="absolute inset-0 flex flex-col items-center justify-center px-6 pointer-events-none z-20"
           >
@@ -610,7 +778,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
             complete all hide it — the practice-arc spec wants those
             states to read as quiet, with only the background image
             (plus the Up Next preview in pre-start). */}
-        {practicePhase === 'active' && (
+        {practicePhase === 'active' && !imageMode && (
         <div className="shrink-0 flex flex-col items-center gap-1.5 pt-2 pb-1">
           {snap.activeScript ? (
             <>
@@ -653,7 +821,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
 
         {/* ── 2. Current segment name (+ optional note) ───────────────────────
             Same visibility rule as block 1 — active only. */}
-        {practicePhase === 'active' && (
+        {practicePhase === 'active' && !imageMode && (
         <div className="shrink-0 flex flex-col items-center pb-1" style={{ minHeight: 52 }}>
           {currentDrill ? (
             <>
@@ -748,7 +916,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
             a thin green progress bar lived directly below it. Both
             were removed for a cleaner stage-mode look — the timer
             numbers stand on their own. */}
-        {practicePhase === 'active' && (
+        {practicePhase === 'active' && !imageMode && (
         <div className="flex-1 min-h-0 flex items-center justify-center">
           <span
             className="font-mono font-black leading-none select-none"
@@ -787,7 +955,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
             Next to fire it (the practiceTimer's next() now special-
             cases pre-start to fire drill 0 instead of skipping to
             drill 2). */}
-        {(practicePhase === 'active' || practicePhase === 'pre-start') && (() => {
+        {(practicePhase === 'active' || practicePhase === 'pre-start') && !imageMode && (() => {
           // Re-point Up Next at drill 0 when we're in pre-start; the
           // rest of the rendering below uses `displayedNextDrill` so
           // the JSX stays a single shape.

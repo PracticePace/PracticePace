@@ -24,22 +24,32 @@
 // depth.
 //
 // PROPS
-//   orgId          — required for the SELECT filter.
-//   activeImageUrl — currently-active board URL (used to render a
-//                    "currently shown" tag on the matching thumbnail).
-//   orgColor       — primary-button + selected-thumbnail accent.
-//   reloadKey      — bumped by the parent after a successful upload so
-//                    we refetch the gallery.
-//   onSelect(row)  — fires when the coach taps a thumbnail. Parent
-//                    sets background = 'custom_image' + imageUrl =
-//                    row.image_url and closes the dialog.
-//   onUploadNew()  — fires when the coach taps the Upload new tile.
-//                    Parent fires its file picker.
-//   onDeleted(row) — fires after a successful row + storage delete so
-//                    the parent can clear the active board if the
-//                    deleted image was the one being shown.
-//   onClose()      — fires when the coach taps Close. Parent unmounts
-//                    this dialog without altering the active image.
+//   orgId           — required for the SELECT filter.
+//   mode            — 'whiteboard' (default) or 'picker'. Picker mode
+//                     adjusts copy + badge labels for the drill-image
+//                     attachment flow. Behaviour of onSelect / delete
+//                     / upload is identical in both modes.
+//   activeImageUrl  — whiteboard mode: currently-active board URL,
+//                     drives the "On board" badge.
+//   currentImageId  — picker mode: id currently attached to the drill.
+//                     Drives the "Attached" badge AND determines whether
+//                     a "Remove from drill" button is shown.
+//   orgColor        — primary-button + selected-thumbnail accent.
+//   reloadKey       — bumped by the parent after a successful upload so
+//                     we refetch the gallery.
+//   onSelect(row)   — fires when the coach taps a thumbnail. In
+//                     whiteboard mode the parent sets it as the active
+//                     background; in picker mode the parent saves
+//                     row.id to the drill's whiteboard_image_id.
+//   onUploadNew()   — fires when the coach taps the Upload new tile.
+//   onClearAttach() — picker mode only — coach tapped "Remove from
+//                     drill". Parent saves whiteboard_image_id = null
+//                     on the drill.
+//   onDeleted(row)  — fires after a successful row + storage delete +
+//                     cross-script cleanup. Parent clears local active-
+//                     image state if the deleted row was active.
+//   onClose()       — fires when the coach taps Close. Parent unmounts
+//                     this dialog without altering anything else.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useMemo, useState } from 'react'
@@ -67,14 +77,18 @@ const UploadIcon = () => (
 
 export default function WhiteboardImageLibraryDialog({
   orgId,
+  mode           = 'whiteboard',
   activeImageUrl = null,
+  currentImageId = null,
   orgColor       = '#cc1111',
   reloadKey      = 0,
   onSelect,
   onUploadNew,
+  onClearAttach,
   onDeleted,
   onClose,
 }) {
+  const isPicker = mode === 'picker'
   const [rows,           setRows]           = useState([])
   const [loading,        setLoading]        = useState(true)
   const [loadErr,        setLoadErr]        = useState('')
@@ -116,14 +130,71 @@ export default function WhiteboardImageLibraryDialog({
     [rows, pendingDeleteId]
   )
 
+  // Cross-script cleanup: drills live as a JSONB array on scripts.drills,
+  // so Postgres can't ON-DELETE-SET-NULL the per-drill whiteboard_image_id
+  // for us. We do it client-side BEFORE deleting the library row: pull
+  // every script in the org, walk each drill array, strip the deleted
+  // id, and UPDATE just the dirty ones. Cost is bounded — a coach's
+  // org has a handful of scripts each with a few dozen drills max. The
+  // existing scripts RLS already allows editors to update their org's
+  // rows, so no policy change is needed.
+  //
+  // We run the cleanup BEFORE the row delete so a partial failure
+  // leaves drills cleanly orphaned-able (image still exists) rather
+  // than dangling references with no library row to inspect.
+  async function stripImageIdFromScripts(imageId) {
+    if (!orgId || !imageId) return
+    const { data: orgScripts, error: selErr } = await supabase
+      .from('scripts')
+      .select('id, drills')
+      .eq('org_id', orgId)
+    if (selErr) {
+      console.warn('[WhiteboardImageLibrary] cleanup SELECT failed:',
+                   selErr.message ?? selErr)
+      // Non-fatal — drills will resolve to "no image" client-side once
+      // the row is gone. We still let the row delete proceed.
+      return
+    }
+    for (const s of (orgScripts ?? [])) {
+      if (!Array.isArray(s.drills)) continue
+      let dirty = false
+      const cleaned = s.drills.map(d => {
+        if (d && d.whiteboard_image_id === imageId) {
+          dirty = true
+          // Drop the property entirely rather than setting to null —
+          // keeps the JSON shape lean, matches what a fresh drill
+          // saves.
+          const { whiteboard_image_id, ...rest } = d
+          return rest
+        }
+        return d
+      })
+      if (dirty) {
+        const { error: upErr } = await supabase
+          .from('scripts')
+          .update({ drills: cleaned, updated_at: new Date().toISOString() })
+          .eq('id', s.id)
+        if (upErr) {
+          console.warn('[WhiteboardImageLibrary] cleanup UPDATE failed for',
+                       s.id, '—', upErr.message ?? upErr)
+          // Non-fatal — continue. PracticeSection will resolve a
+          // missing whiteboard_image_id to "no image" gracefully.
+        }
+      }
+    }
+  }
+
   async function runDelete(row) {
     setDeletingId(row.id)
     setDeleteErr('')
     try {
-      // Row first, then storage file. If the row delete fails we keep
-      // the image visible (no UI surprise); if the storage delete fails
-      // afterward we have an orphan blob but the coach experience is
-      // already clean (library no longer shows it).
+      // 1. Strip references from every script in the org.
+      await stripImageIdFromScripts(row.id)
+
+      // 2. Row first, then storage file. If the row delete fails we
+      //    keep the image visible (no UI surprise); if the storage
+      //    delete fails afterward we have an orphan blob but the coach
+      //    experience is already clean (library no longer shows it).
       const { error: rowErr } = await supabase
         .from('whiteboard_images')
         .delete()
@@ -150,7 +221,11 @@ export default function WhiteboardImageLibraryDialog({
     }
   }
 
+  // Visual "this row is the one currently in use" determination —
+  // depends on mode. Whiteboard: compare URL to the active board URL.
+  // Picker: compare id to the drill's saved whiteboard_image_id.
   function isActive(row) {
+    if (isPicker) return currentImageId && row.id === currentImageId
     return activeImageUrl && row.image_url === activeImageUrl
   }
 
@@ -167,29 +242,54 @@ export default function WhiteboardImageLibraryDialog({
           maxHeight:       '92vh',
         }}
       >
-        {/* Header */}
+        {/* Header — copy adapts to mode. Picker mode also surfaces a
+            "Remove from drill" button when there's something to clear. */}
         <div className="shrink-0 flex items-start justify-between gap-4 mb-4">
           <div className="flex flex-col gap-1">
-            <h3 className="font-bold text-white text-lg">Image library</h3>
+            <h3 className="font-bold text-white text-lg">
+              {isPicker ? 'Pick an image for this drill' : 'Image library'}
+            </h3>
             <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
-              Tap an image to use it as the whiteboard background. Upload
-              new ones from your device — they stay saved for your
-              program so you can switch between them later.
+              {isPicker
+                ? <>Tap an image to attach it to this drill — the practice screen
+                    will show it full-bleed when the drill is running. Upload
+                    new ones from your device; they save to your program&apos;s
+                    library and are reusable from the whiteboard too.</>
+                : <>Tap an image to use it as the whiteboard background. Upload
+                    new ones from your device — they stay saved for your
+                    program so you can switch between them later.</>}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close library"
-            className="shrink-0 w-9 h-9 rounded-lg text-base flex items-center justify-center transition-colors"
-            style={{
-              backgroundColor: 'transparent',
-              color:           '#c8a0a0',
-              border:          '1px solid #3a1414',
-            }}
-          >
-            ✕
-          </button>
+          <div className="shrink-0 flex items-center gap-2">
+            {isPicker && currentImageId && onClearAttach && (
+              <button
+                type="button"
+                onClick={onClearAttach}
+                className="h-9 rounded-lg px-3 text-xs font-semibold transition-colors"
+                style={{
+                  backgroundColor: 'transparent',
+                  color:           '#c8a0a0',
+                  border:          '1px solid #3a1414',
+                }}
+                title="Remove image from drill"
+              >
+                Remove from drill
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close library"
+              className="w-9 h-9 rounded-lg text-base flex items-center justify-center transition-colors"
+              style={{
+                backgroundColor: 'transparent',
+                color:           '#c8a0a0',
+                border:          '1px solid #3a1414',
+              }}
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         {/* Body — scrollable grid */}
@@ -314,7 +414,7 @@ export default function WhiteboardImageLibraryDialog({
                           color: '#ffffff',
                         }}
                       >
-                        On board
+                        {isPicker ? 'Attached' : 'On board'}
                       </span>
                     )}
                   </div>
