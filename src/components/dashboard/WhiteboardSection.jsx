@@ -41,11 +41,6 @@ const CUSTOM_IMAGE_BG    = 'custom_image'
 // the practice-screen `backgrounds` bucket. Org-scoped writes via the
 // existing split_part(name, '/', 1) = caller_org_id pattern.
 const WB_IMAGES_BUCKET   = 'whiteboard-images'
-// Sentinel value used by the toolbar <select>. Picking it opens the
-// image library dialog — it is NEVER persisted as a background; the
-// onChange handler resets the select back to the current real value
-// after firing the modal.
-const LIBRARY_SENTINEL   = '__open_image_library__'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 // Order matters here — first color is the default selection, and the
@@ -764,6 +759,10 @@ const EraserIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="n
 const UndoIcon   = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg>
 const RedoIcon   = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 15-6.7L21 13"/></svg>
 const TrashIcon  = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+// Image-frame icon for the dedicated Image Library toolbar button.
+// Standard Lucide-style image glyph (rounded rect + corner sun + ridge)
+// so it reads as "photos/images" rather than a generic gallery.
+const ImageLibraryIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
 
 // ── Main component ───────────────────────────────────────────────────────────
 export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }) {
@@ -1350,14 +1349,9 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
     }
   }
 
-  function handleBackgroundSelect(e) {
-    const v = e.target.value
-    if (v === LIBRARY_SENTINEL) {
-      openLibrary()
-      return                       // sentinel — do NOT persist as background
-    }
-    setBackground(v)
-  }
+  // (handleBackgroundSelect removed — the library entry point moved out
+  // of the dropdown to a dedicated toolbar button below. The dropdown's
+  // onChange just calls setBackground directly now.)
 
   // ── Render ─────────────────────────────────────────────────────────────────
   const canUndo = historyLen > 0
@@ -1406,7 +1400,7 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
           <select
             id="pp-wb-bg"
             value={background}
-            onChange={handleBackgroundSelect}
+            onChange={e => setBackground(e.target.value)}
             aria-label="Background"
             disabled={imageBusy}
             className="rounded-lg px-2.5 h-10 text-xs font-semibold outline-none cursor-pointer transition-colors disabled:opacity-60"
@@ -1423,23 +1417,46 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
             {/* "Custom image" — passive option that re-activates the
                 currently-stashed image. Only present when imageUrl is
                 set, otherwise it'd be a dead choice. (Coach can also
-                always reach the image via the library.) */}
+                always reach the image via the library button.) */}
             {imageUrl && (
               <option value={CUSTOM_IMAGE_BG}>Custom image</option>
             )}
-            {/* Library entry point — replaces the prior "Upload image…"
-                shortcut. Opens the gallery dialog from which the coach
-                can pick a saved image, upload a new one, or delete
-                existing ones. */}
-            <option value={LIBRARY_SENTINEL}>Image library…</option>
           </select>
         </div>
 
-        {/* Hidden file input driven by the dropdown's "Upload image…"
-            sentinel. accept covers the realistic coach scenarios — a
-            photo of a hand-drawn play (HEIC/JPG/PNG), a screenshot, a
-            chart PDF saved as PNG. SVG accepted too for diagram apps
-            that export it. */}
+        {/* Image Library — dedicated toolbar button. Lives outside the
+            background dropdown because sport courts (templates) and
+            library images (coach-saved content) are conceptually
+            different surfaces. Opens the same WhiteboardImageLibrary-
+            Dialog the upload flow uses, so the gallery, "Upload new"
+            tile, and per-thumbnail delete are unchanged. Inherits the
+            existing userCanEdit gate (whole toolbar is wrapped above),
+            so team_manager never sees it. */}
+        <div className="flex items-center pr-2 mr-1" style={{ borderRight: '1px solid #2a0a0a' }}>
+          <button
+            type="button"
+            onClick={openLibrary}
+            disabled={imageBusy}
+            aria-label="Open image library"
+            title="Open image library"
+            className="rounded-lg px-3 h-10 text-xs font-semibold outline-none cursor-pointer transition-colors flex items-center gap-1.5 disabled:opacity-60"
+            style={{
+              backgroundColor: '#110000',
+              color:           'rgba(255,255,255,0.9)',
+              border:          '1px solid #3a1414',
+            }}
+          >
+            <ImageLibraryIcon />
+            <span>Image Library</span>
+          </button>
+        </div>
+
+        {/* Hidden file input. Driven imperatively by the library
+            dialog's "Upload new" tile (which fires fireFilePicker on
+            the parent). accept covers the realistic coach scenarios —
+            a photo of a hand-drawn play (HEIC/JPG/PNG), a screenshot,
+            a chart PDF saved as PNG. SVG accepted too for diagram
+            apps that export it. */}
         <input
           ref={fileInputRef}
           type="file"
