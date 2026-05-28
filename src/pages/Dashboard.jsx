@@ -8,8 +8,9 @@ import Logo from '../components/Logo'
 import AudioSection from '../components/dashboard/AudioSection'
 import { setPlaylist as setAudioPlaylist } from '../lib/audioPlayer'
 
-import PracticeSection   from '../components/dashboard/PracticeSection'
-import ScriptsSection    from '../components/dashboard/ScriptsSection'
+import PracticeSection      from '../components/dashboard/PracticeSection'
+import PracticeTimerRibbon from '../components/dashboard/PracticeTimerRibbon'
+import ScriptsSection       from '../components/dashboard/ScriptsSection'
 import ScoreboardSection from '../components/dashboard/ScoreboardSection'
 import VideoSection      from '../components/dashboard/VideoSection'
 import SettingsSection   from '../components/dashboard/SettingsSection'
@@ -875,6 +876,20 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* ── Persistent practice timer ribbon ──────────────────────────────
+          Shows the current drill + remaining time on every tab EXCEPT
+          Practice (full timer there) and Settings (avoid clutter). The
+          timer state lives in src/lib/practiceTimer.js as a module-level
+          singleton; this ribbon and the full Practice UI both subscribe
+          to the same source, so they're always in sync. Tapping the
+          ribbon jumps the active tab back to Practice. Returns null when
+          no practice is running (pre-start, complete, cleared). */}
+      <PracticeTimerRibbon
+        section={section}
+        orgColor={orgColor}
+        onTap={() => setSection('practice')}
+      />
 
       {/* ── Body ── */}
       <div className="flex flex-1 overflow-hidden">
