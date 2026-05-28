@@ -172,11 +172,22 @@ export default function WhiteboardImageFrameDialog({
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{ backgroundColor: 'rgba(0,0,0,0.92)' }}
     >
+      {/* Inner dialog: hard-capped at 92vh and overflow-hidden so the
+          dialog itself can never exceed the viewport. Combined with the
+          flex-1 middle + shrink-0 footer below, this guarantees the
+          Cancel/Confirm buttons are always on-screen regardless of the
+          image aspect ratio (the old layout pushed them below the fold
+          on portrait images). */}
       <div
-        className="w-full max-w-2xl rounded-2xl flex flex-col gap-4 p-5"
-        style={{ backgroundColor: '#110000', border: '1px solid #2a0000' }}
+        className="w-full max-w-2xl rounded-2xl flex flex-col p-5 overflow-hidden"
+        style={{
+          backgroundColor: '#110000',
+          border:          '1px solid #2a0000',
+          maxHeight:       '92vh',
+        }}
       >
-        <div className="flex flex-col gap-1">
+        {/* Header — shrink-0 so the cropper area can't squeeze the title. */}
+        <div className="shrink-0 flex flex-col gap-1 mb-4">
           <h3 className="font-bold text-white text-lg">Frame the image</h3>
           <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
             The whole image is shown by default. Tap{' '}
@@ -187,79 +198,106 @@ export default function WhiteboardImageFrameDialog({
           </p>
         </div>
 
-        {/* Cropper viewport — matched to the image's aspect so at zoom=1
-            the image fills the frame with no dead space. */}
-        <div
-          className="relative w-full rounded-xl overflow-hidden"
-          style={{
-            aspectRatio:     String(viewportAspect),
-            backgroundColor: '#0a0000',
-            border:          '1px solid #2a0000',
-          }}
-        >
-          {readErr && (
-            <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
-              <p className="text-sm" style={{ color: '#ff6666' }}>{readErr}</p>
-            </div>
-          )}
-          {!readErr && dataUrl && imageAspect && (
-            <Cropper
-              image={dataUrl}
-              crop={crop}
-              zoom={zoom}
-              aspect={cropAspect}
-              onCropChange={setCrop}
-              onZoomChange={setZoom}
-              onCropComplete={onCropComplete}
-              minZoom={1}
-              maxZoom={4}
-              objectFit="contain"
-              showGrid={isZoomedIn}
+        {/* Scrollable middle. flex-1 + min-h-0 lets it absorb whatever
+            vertical space the dialog has left after the header and
+            footer take their natural heights. overflow-y-auto is a
+            belt-and-suspenders fallback for unusual viewports (tiny
+            phone, sideways split-screen): if the cropper + slider
+            still wouldn't fit under the cap, the coach can scroll
+            within the middle WITHOUT scrolling the pinned footer off-
+            screen. react-easy-crop's own touch-action: none on the
+            cropper area prevents pan/zoom gestures from triggering
+            outer scroll. */}
+        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4">
+          {/* Cropper viewport — keeps its image-aspect preference for
+              visual fit, but maxHeight: 55vh kicks in for portrait
+              images. When the aspectRatio-implied height would exceed
+              55vh, CSS lets maxHeight win — the box becomes shorter
+              than its aspect (with dead space on the sides), and the
+              image inside still renders contain-fit. Either way the
+              cropper stays usable AND the footer never gets pushed
+              off-screen. */}
+          <div
+            className="shrink-0 relative w-full rounded-xl overflow-hidden"
+            style={{
+              aspectRatio:     String(viewportAspect),
+              maxHeight:       '55vh',
+              backgroundColor: '#0a0000',
+              border:          '1px solid #2a0000',
+            }}
+          >
+            {readErr && (
+              <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
+                <p className="text-sm" style={{ color: '#ff6666' }}>{readErr}</p>
+              </div>
+            )}
+            {!readErr && dataUrl && imageAspect && (
+              <Cropper
+                image={dataUrl}
+                crop={crop}
+                zoom={zoom}
+                aspect={cropAspect}
+                onCropChange={setCrop}
+                onZoomChange={setZoom}
+                onCropComplete={onCropComplete}
+                minZoom={1}
+                maxZoom={4}
+                objectFit="contain"
+                showGrid={isZoomedIn}
+              />
+            )}
+          </div>
+
+          <div className="shrink-0 flex items-center gap-3">
+            <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#9a8080' }}>
+              Zoom
+            </span>
+            <input
+              type="range"
+              min={1}
+              max={4}
+              step={0.05}
+              value={zoom}
+              onChange={e => setZoom(Number(e.target.value))}
+              aria-label="Zoom level"
+              disabled={!dataUrl || !imageAspect || !!readErr || working}
+              className="flex-1"
+              style={{ accentColor: orgColor }}
             />
+            <span className="text-xs font-mono tabular-nums" style={{ color: '#9a8080', minWidth: '4ch', textAlign: 'right' }}>
+              {zoom.toFixed(2)}×
+            </span>
+            {isZoomedIn && (
+              <button
+                type="button"
+                onClick={() => { setZoom(1); setCrop({ x: 0, y: 0 }) }}
+                disabled={working}
+                className="text-xs px-2 py-1 rounded-lg disabled:opacity-50"
+                style={{ border: '1px solid #2a0000', color: '#9a8080' }}
+                title="Show the whole image"
+              >
+                Fit
+              </button>
+            )}
+          </div>
+
+          {err && (
+            <p className="shrink-0 text-xs rounded-lg px-3 py-2"
+               style={{ backgroundColor: '#2a0000', color: '#ff6666' }}>
+              {err}
+            </p>
           )}
         </div>
 
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#9a8080' }}>
-            Zoom
-          </span>
-          <input
-            type="range"
-            min={1}
-            max={4}
-            step={0.05}
-            value={zoom}
-            onChange={e => setZoom(Number(e.target.value))}
-            aria-label="Zoom level"
-            disabled={!dataUrl || !imageAspect || !!readErr || working}
-            className="flex-1"
-            style={{ accentColor: orgColor }}
-          />
-          <span className="text-xs font-mono tabular-nums" style={{ color: '#9a8080', minWidth: '4ch', textAlign: 'right' }}>
-            {zoom.toFixed(2)}×
-          </span>
-          {isZoomedIn && (
-            <button
-              type="button"
-              onClick={() => { setZoom(1); setCrop({ x: 0, y: 0 }) }}
-              disabled={working}
-              className="text-xs px-2 py-1 rounded-lg disabled:opacity-50"
-              style={{ border: '1px solid #2a0000', color: '#9a8080' }}
-              title="Show the whole image"
-            >
-              Fit
-            </button>
-          )}
-        </div>
-
-        {err && (
-          <p className="text-xs rounded-lg px-3 py-2"
-             style={{ backgroundColor: '#2a0000', color: '#ff6666' }}>
-            {err}
-          </p>
-        )}
-
-        <div className="flex gap-3">
+        {/* Footer — shrink-0 so it's never compressed, pinned at the
+            bottom of the flex column. Top border + padding give a clear
+            visual separation from the scrollable middle so the coach
+            reads it as an action surface (not part of the framing
+            controls above). */}
+        <div
+          className="shrink-0 flex gap-3 mt-4 pt-4"
+          style={{ borderTop: '1px solid #2a0000' }}
+        >
           <button
             onClick={onCancel}
             disabled={working}
