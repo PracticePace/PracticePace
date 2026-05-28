@@ -1228,6 +1228,12 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
     // still re-fires onChange (browsers suppress identical-value events).
     e.target.value = ''
     if (!file) return
+    // Close the library while the framing → name flow runs. All three
+    // dialogs share `fixed inset-0 z-50`, so leaving the library mounted
+    // would paint it on top of the frame dialog (latest sibling wins in
+    // CSS paint order). The frame/name handlers re-open the library on
+    // success OR cancel so the coach lands back in the gallery.
+    setLibraryOpen(false)
     setPendingFile(file)
   }
 
@@ -1310,10 +1316,12 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
       setImageUrl(bustUrl)
       setBackground(CUSTOM_IMAGE_BG)
       setPendingNamedBlob(null)
-      // Nudge the library to refresh — if it's still open behind this
-      // dialog the new thumbnail appears immediately. Cost: a single
-      // SELECT.
+      // Re-open the library so the coach lands back in the gallery and
+      // sees their newly-saved image with the "On board" badge. The
+      // reload key bump triggers a fresh SELECT inside the dialog so
+      // the new thumbnail appears without a manual close+reopen.
       setLibraryReloadKey(k => k + 1)
+      setLibraryOpen(true)
     } catch (err) {
       console.error('[Whiteboard] image upload failed:', err?.message ?? err)
       setImageError(err?.message ?? 'Could not upload image.')
@@ -1587,7 +1595,13 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
           <WhiteboardImageFrameDialog
             file={pendingFile}
             orgColor={orgColor}
-            onCancel={() => setPendingFile(null)}
+            onCancel={() => {
+              setPendingFile(null)
+              // Cancel from framing returns the coach to the library
+              // they entered through. (onFileChosen closed it; we now
+              // restore it.)
+              setLibraryOpen(true)
+            }}
             onConfirm={onFrameConfirm}
           />
         )}
@@ -1607,6 +1621,10 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
               if (imageBusy) return  // can't cancel mid-upload
               setPendingNamedBlob(null)
               setImageError('')
+              // Cancel from naming returns the coach to the library —
+              // same as cancel from framing. No storage upload has
+              // happened yet at this point, so nothing to roll back.
+              setLibraryOpen(true)
             }}
             onConfirm={onNameConfirm}
           />
