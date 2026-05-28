@@ -25,19 +25,27 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { canEdit } from '../../lib/permissions'
-import WhiteboardImageFrameDialog from './WhiteboardImageFrameDialog'
+import WhiteboardImageFrameDialog   from './WhiteboardImageFrameDialog'
+import WhiteboardImageNameDialog    from './WhiteboardImageNameDialog'
+import WhiteboardImageLibraryDialog from './WhiteboardImageLibraryDialog'
 
 // ── Custom-image background ──────────────────────────────────────────────────
 // Special background value persisted in public.whiteboards.background when
-// the coach has uploaded an image. Image bytes live in Supabase Storage at
-// <org_id>/whiteboard-images/<timestamp>-<file>; the public URL lives in
-// the row's image_url column (migration 20260528000000).
-const CUSTOM_IMAGE_BG  = 'custom_image'
-// Sentinel value used by the toolbar <select>. Picking this option fires
-// the file picker — it is NEVER persisted as a background; the onChange
-// handler resets the select back to the current real value after firing
-// the picker.
-const UPLOAD_SENTINEL  = '__upload_image__'
+// the coach has an image active on the board. Image bytes live in the
+// dedicated Supabase Storage bucket "whiteboard-images" at
+// <org_id>/<timestamp>.<ext>; the public URL lives in whiteboards.image_url
+// (migration 20260528000000), and the per-program library of named images
+// lives in public.whiteboard_images (migration 20260528010000).
+const CUSTOM_IMAGE_BG    = 'custom_image'
+// Dedicated bucket added in 20260528010000. Replaces the prior re-use of
+// the practice-screen `backgrounds` bucket. Org-scoped writes via the
+// existing split_part(name, '/', 1) = caller_org_id pattern.
+const WB_IMAGES_BUCKET   = 'whiteboard-images'
+// Sentinel value used by the toolbar <select>. Picking it opens the
+// image library dialog — it is NEVER persisted as a background; the
+// onChange handler resets the select back to the current real value
+// after firing the modal.
+const LIBRARY_SENTINEL   = '__open_image_library__'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 // Order matters here — first color is the default selection, and the
@@ -791,26 +799,38 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
   const [saveStatus, setSaveStatus] = useState('')  // '' | 'saving' | 'saved' | error string
 
   // ── Custom-image background state ────────────────────────────────────────
-  // imageUrl       — persisted public URL of the active uploaded image, or
-  //                  null if the coach has never uploaded / has removed it.
-  //                  Independent of `background` so a coach who switches
-  //                  to a sport court can switch BACK to the same image
-  //                  via the "Custom image" dropdown option.
-  // pendingFile    — File chosen by the picker, awaiting confirmation in
-  //                  the frame dialog. null when no dialog is open.
-  // imageBusy      — true during the Storage upload + DB write; disables
-  //                  the upload button so the coach can't double-fire.
-  // imageError     — inline error to show in the toolbar after a failed
-  //                  upload (file too large, network drop, RLS reject).
-  // customImgRef   — HTMLImageElement loaded from imageUrl. Held on a ref
-  //                  so the redraw loop can read it without re-rendering
-  //                  when only the loaded-state changes.
-  // fileInputRef   — hidden <input type="file"> driven imperatively from
-  //                  the dropdown's "Upload image…" sentinel.
-  const [imageUrl,    setImageUrl]    = useState(null)
-  const [pendingFile, setPendingFile] = useState(null)
-  const [imageBusy,   setImageBusy]   = useState(false)
-  const [imageError,  setImageError]  = useState('')
+  // imageUrl         — persisted public URL of the currently-active image,
+  //                    or null if no image is active. Survives switching
+  //                    the dropdown to a sport court so the coach can
+  //                    one-tap return via the "Custom image" option.
+  // pendingFile      — File chosen from the picker, opens the framing
+  //                    dialog. Discarded when the coach cancels or after
+  //                    framing hands off the blob to the name dialog.
+  // pendingNamedBlob — { blob, defaultName } produced by the framing
+  //                    dialog, opens the name prompt. defaultName is the
+  //                    source file's base name (extension stripped).
+  // imageBusy        — true during Storage upload + library insert; the
+  //                    name dialog mirrors this in its Save button.
+  // imageError       — error message surfaced in whatever upload-flow
+  //                    dialog is currently open (frame → name).
+  // libraryOpen      — true while the per-program image library dialog
+  //                    is mounted.
+  // libraryReloadKey — bumped after a successful upload so the library
+  //                    dialog refetches its rows without the coach
+  //                    having to close + reopen.
+  // customImgRef     — HTMLImageElement decoded from imageUrl. Held on a
+  //                    ref so the canvas redraw can read it without
+  //                    re-rendering when only the loaded-state changes.
+  // fileInputRef     — hidden <input type="file"> driven imperatively
+  //                    from either the dropdown's "Image library" sentinel
+  //                    or the library dialog's "Upload new" button.
+  const [imageUrl,         setImageUrl]         = useState(null)
+  const [pendingFile,      setPendingFile]      = useState(null)
+  const [pendingNamedBlob, setPendingNamedBlob] = useState(null)
+  const [imageBusy,        setImageBusy]        = useState(false)
+  const [imageError,       setImageError]       = useState('')
+  const [libraryOpen,      setLibraryOpen]      = useState(false)
+  const [libraryReloadKey, setLibraryReloadKey] = useState(0)
   const customImgRef = useRef(null)
   const fileInputRef = useRef(null)
 
@@ -1177,18 +1197,27 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
     }
   }, [])
 
-  // ── Custom-image upload handlers ───────────────────────────────────────────
-  // Three-step flow:
-  //   1. Coach picks "Upload image…" from the dropdown → fileInputRef.click()
-  //   2. Coach picks a file → onFileChosen captures the live canvas aspect
-  //      and stages the File in pendingFile, which opens the frame dialog.
-  //   3. Coach frames + confirms → uploadFramedBlob pushes the JPEG to
-  //      Supabase Storage (re-using the existing `backgrounds` bucket
-  //      with an org-scoped path), resolves the public URL, and flips
-  //      the in-memory state. Persistence then follows the standard
-  //      save-effect debounce.
+  // ── Custom-image upload + library handlers ─────────────────────────────────
+  // Four-step flow:
+  //   1. Coach picks "Image library…" from the dropdown → library dialog
+  //      opens. From there: tap a saved thumbnail to set it active, or
+  //      tap "Upload new" to fire the file picker.
+  //   2. File picker → onFileChosen stages the File in pendingFile, which
+  //      opens the frame dialog (image-aspect cropper).
+  //   3. Frame dialog → onFrameConfirm receives a JPEG Blob, derives a
+  //      default name from the source file (extension stripped), and
+  //      opens the name dialog.
+  //   4. Name dialog → onNameConfirm uploads the Blob to the dedicated
+  //      whiteboard-images bucket, inserts a public.whiteboard_images
+  //      row, sets the new image active, and bumps libraryReloadKey so
+  //      the library refetches its grid.
 
-  function openFilePicker() {
+  function openLibrary() {
+    setImageError('')
+    setLibraryOpen(true)
+  }
+
+  function fireFilePicker() {
     setImageError('')
     fileInputRef.current?.click()
   }
@@ -1199,31 +1228,43 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
     // still re-fires onChange (browsers suppress identical-value events).
     e.target.value = ''
     if (!file) return
-    // The framing dialog uses the IMAGE's own aspect (not the canvas's)
-    // so the default frame shows the whole image. The board's
-    // drawCustomImageFitted then letterboxes/pillarboxes when the saved
-    // image's aspect differs from the canvas's. No canvas-aspect
-    // measurement needed here.
     setPendingFile(file)
   }
 
-  async function uploadFramedBlob(blob) {
-    if (!orgId) return
+  // Default name = the source file's base name, extension stripped.
+  // ("trips-right.jpg" → "trips-right"). Falls back to a generic label
+  // if the file had no usable name.
+  function deriveDefaultName(file) {
+    const raw = file?.name ?? ''
+    const noExt = raw.replace(/\.[^.]+$/, '').trim()
+    return noExt || 'Whiteboard image'
+  }
+
+  function onFrameConfirm(blob) {
+    if (!pendingFile) return
+    const defaultName = deriveDefaultName(pendingFile)
+    setPendingNamedBlob({ blob, defaultName })
+    setPendingFile(null)   // close framing dialog, name dialog mounts next
+  }
+
+  async function onNameConfirm(name) {
+    if (!pendingNamedBlob || !orgId) return
     setImageBusy(true)
     setImageError('')
     try {
+      const { blob } = pendingNamedBlob
       const ts   = Date.now()
       const mime = blob.type || 'image/jpeg'
       const ext  = mime === 'image/png' ? 'png' : 'jpg'
-      // Org-id MUST be the first path segment — the existing
-      // `backgrounds` bucket RLS (migration 20260517000000) gates writes
-      // via split_part(name, '/', 1) = caller_org_id (with an AD
-      // account-wide carve-out). Storing whiteboard images under a
-      // dedicated subfolder keeps them out of the practice-screen and
-      // program-logo paths.
-      const path = `${orgId}/whiteboard-images/${ts}.${ext}`
+      // Dedicated bucket; first path segment must be org_id to satisfy
+      // the bucket's INSERT policy (migration 20260528010000:
+      // split_part(name, '/', 1) = caller_org_id with an AD account-wide
+      // carve-out). Timestamp ensures uniqueness; the coach's friendly
+      // name lives in the library row instead of the file name.
+      const path = `${orgId}/${ts}.${ext}`
+
       const { error: upErr } = await supabase.storage
-        .from('backgrounds')
+        .from(WB_IMAGES_BUCKET)
         .upload(path, blob, {
           contentType:  mime,
           cacheControl: '3600',
@@ -1233,44 +1274,78 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
         const m = String(upErr.message ?? '')
         throw new Error(
           m.includes('Bucket not found')
-            ? 'Storage bucket "backgrounds" is missing. Ask your admin to create it.'
+            ? `Storage bucket "${WB_IMAGES_BUCKET}" is missing. Apply migration 20260528010000.`
             : m || 'Upload failed'
         )
       }
-      const { data: urlData } = supabase.storage.from('backgrounds').getPublicUrl(path)
+
+      const { data: urlData } = supabase.storage.from(WB_IMAGES_BUCKET).getPublicUrl(path)
       const publicUrl = urlData?.publicUrl
       if (!publicUrl) throw new Error('Could not resolve public URL for uploaded image')
-      // Cache-buster — defensive even though the timestamp already lives
-      // in the path. Mirrors the program-logo / practice-background
-      // upload paths in SettingsSection.
       const bustUrl = `${publicUrl}?v=${ts}`
+
+      // Persist to the per-program library. If this fails we roll back
+      // the storage upload so we don't accumulate orphan blobs — the
+      // coach sees the error in the name dialog and can retry.
+      const { error: insErr } = await supabase
+        .from('whiteboard_images')
+        .insert({
+          org_id:       orgId,
+          image_url:    bustUrl,
+          storage_path: path,
+          name,
+        })
+      if (insErr) {
+        try {
+          await supabase.storage.from(WB_IMAGES_BUCKET).remove([path])
+        } catch (rollbackErr) {
+          console.warn('[Whiteboard] orphan blob — storage rollback failed:',
+                       rollbackErr?.message ?? rollbackErr)
+        }
+        throw new Error(insErr.message || 'Could not save to library')
+      }
+
+      // Set active on the board. The standard save-effect debounce will
+      // upsert the new image_url onto the whiteboards row shortly.
       setImageUrl(bustUrl)
       setBackground(CUSTOM_IMAGE_BG)
-      setPendingFile(null)
+      setPendingNamedBlob(null)
+      // Nudge the library to refresh — if it's still open behind this
+      // dialog the new thumbnail appears immediately. Cost: a single
+      // SELECT.
+      setLibraryReloadKey(k => k + 1)
     } catch (err) {
       console.error('[Whiteboard] image upload failed:', err?.message ?? err)
       setImageError(err?.message ?? 'Could not upload image.')
-      setPendingFile(null)
+      // Leave pendingNamedBlob set so the coach can retry from the
+      // name dialog without re-framing.
     } finally {
       setImageBusy(false)
     }
   }
 
-  function removeImage() {
-    setImageUrl(null)
-    // If the image was the active underlay, fall back to Blank so the
-    // canvas stays usable. Sport-court selections are preserved (coach
-    // had explicitly switched to one — don't override that choice).
-    if (background === CUSTOM_IMAGE_BG) setBackground('blank')
-    // Note: the file in Storage is intentionally NOT deleted here. The
-    // org keeps a small history of past uploads; Commit 2 (per-program
-    // image library) will surface them for reuse.
+  // Library callbacks — bound to the library dialog while open.
+
+  function handleLibrarySelect(row) {
+    setImageUrl(row.image_url)
+    setBackground(CUSTOM_IMAGE_BG)
+    setLibraryOpen(false)
+  }
+
+  function handleLibraryDeleted(row) {
+    // If the deleted row was the active image, clear it from the board
+    // so the coach isn't left looking at a deleted image until they
+    // pick another. Sport-court selections are preserved.
+    if (imageUrl && row.image_url === imageUrl) {
+      setImageUrl(null)
+      if (background === CUSTOM_IMAGE_BG) setBackground('blank')
+    }
   }
 
   function handleBackgroundSelect(e) {
     const v = e.target.value
-    if (v === UPLOAD_SENTINEL) {
-      openFilePicker()
+    if (v === LIBRARY_SENTINEL) {
+      openLibrary()
       return                       // sentinel — do NOT persist as background
     }
     setBackground(v)
@@ -1337,55 +1412,19 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
             {BACKGROUND_OPTIONS.map(opt => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
-            {/* "Custom image" only appears once the org actually has one
-                staged — keeps the dropdown honest. A coach who has never
-                uploaded sees Upload directly without a dead option above
-                it; a coach who switched to a sport court can switch
-                back to the image without having to re-upload. */}
+            {/* "Custom image" — passive option that re-activates the
+                currently-stashed image. Only present when imageUrl is
+                set, otherwise it'd be a dead choice. (Coach can also
+                always reach the image via the library.) */}
             {imageUrl && (
               <option value={CUSTOM_IMAGE_BG}>Custom image</option>
             )}
-            <option value={UPLOAD_SENTINEL}>
-              {imageUrl ? 'Upload different image…' : 'Upload image…'}
-            </option>
+            {/* Library entry point — replaces the prior "Upload image…"
+                shortcut. Opens the gallery dialog from which the coach
+                can pick a saved image, upload a new one, or delete
+                existing ones. */}
+            <option value={LIBRARY_SENTINEL}>Image library…</option>
           </select>
-
-          {/* Remove-image control — only when the image is the active
-              underlay. Switching to a sport court "stashes" the image
-              (still selectable via the dropdown), so Remove is reserved
-              for "I want this gone from storage state for good". */}
-          {background === CUSTOM_IMAGE_BG && imageUrl && (
-            <button
-              type="button"
-              onClick={removeImage}
-              disabled={imageBusy}
-              aria-label="Remove uploaded image"
-              title="Remove uploaded image"
-              className="rounded-lg px-2 h-10 text-xs font-semibold outline-none cursor-pointer transition-colors disabled:opacity-60"
-              style={{
-                backgroundColor: 'transparent',
-                color:           '#c8a0a0',
-                border:          '1px solid #3a1414',
-              }}
-            >
-              ✕
-            </button>
-          )}
-
-          {imageBusy && (
-            <span className="text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>
-              Uploading…
-            </span>
-          )}
-          {imageError && (
-            <span
-              className="text-xs px-2 py-1 rounded"
-              style={{ backgroundColor: '#2a0000', color: '#ff8a8a', border: '1px solid #4a0000' }}
-              title={imageError}
-            >
-              ⚠ {imageError.length > 64 ? imageError.slice(0, 61) + '…' : imageError}
-            </span>
-          )}
         </div>
 
         {/* Hidden file input driven by the dropdown's "Upload image…"
@@ -1540,15 +1579,55 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
           </div>
         )}
 
-        {/* Framing dialog — opens after the coach picks a file. Renders
-            inside the canvas-container so it floats over the board, but
-            its own backdrop is full-viewport (z-50 fixed inset-0). */}
+        {/* Framing dialog — opens after the coach picks a file. On
+            confirm, the framed Blob is handed off to the name dialog
+            below; the actual Storage upload + library insert happens
+            after the coach names the image. */}
         {pendingFile && (
           <WhiteboardImageFrameDialog
             file={pendingFile}
             orgColor={orgColor}
             onCancel={() => setPendingFile(null)}
-            onConfirm={uploadFramedBlob}
+            onConfirm={onFrameConfirm}
+          />
+        )}
+
+        {/* Name dialog — collects the coach's label for the image
+            before the upload+insert. Default value = source file's
+            base name, extension stripped. Save runs the actual upload
+            (busy/error pass through here so the coach sees them in
+            context). Cancel discards the framed blob entirely. */}
+        {pendingNamedBlob && (
+          <WhiteboardImageNameDialog
+            defaultName={pendingNamedBlob.defaultName}
+            working={imageBusy}
+            error={imageError}
+            orgColor={orgColor}
+            onCancel={() => {
+              if (imageBusy) return  // can't cancel mid-upload
+              setPendingNamedBlob(null)
+              setImageError('')
+            }}
+            onConfirm={onNameConfirm}
+          />
+        )}
+
+        {/* Image library dialog — gallery of saved images for this
+            program. Tap a thumbnail to set it active; Upload new fires
+            the same file picker; trash icon removes the row + storage
+            file (and clears the board if the deleted image was active).
+            Only mounted for editors — the toolbar that owns the
+            dropdown sentinel is already gated behind userCanEdit. */}
+        {libraryOpen && (
+          <WhiteboardImageLibraryDialog
+            orgId={orgId}
+            activeImageUrl={imageUrl}
+            orgColor={orgColor}
+            reloadKey={libraryReloadKey}
+            onSelect={handleLibrarySelect}
+            onUploadNew={fireFilePicker}
+            onDeleted={handleLibraryDeleted}
+            onClose={() => setLibraryOpen(false)}
           />
         )}
 
