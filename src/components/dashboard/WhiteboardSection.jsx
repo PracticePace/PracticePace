@@ -25,6 +25,19 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { canEdit } from '../../lib/permissions'
+import WhiteboardImageFrameDialog from './WhiteboardImageFrameDialog'
+
+// ── Custom-image background ──────────────────────────────────────────────────
+// Special background value persisted in public.whiteboards.background when
+// the coach has uploaded an image. Image bytes live in Supabase Storage at
+// <org_id>/whiteboard-images/<timestamp>-<file>; the public URL lives in
+// the row's image_url column (migration 20260528000000).
+const CUSTOM_IMAGE_BG  = 'custom_image'
+// Sentinel value used by the toolbar <select>. Picking this option fires
+// the file picker — it is NEVER persisted as a background; the onChange
+// handler resets the select back to the current real value after firing
+// the picker.
+const UPLOAD_SENTINEL  = '__upload_image__'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 // Order matters here — first color is the default selection, and the
@@ -670,6 +683,37 @@ function drawCheerMat(ctx, w, h) {
   }
 }
 
+// Draw a coach-uploaded image as the underlay, fit-to-contain inside the
+// canvas. Image is already cropped to the canvas aspect at upload-time
+// (see WhiteboardImageFrameDialog), so on a same-aspect viewport it fills
+// edge-to-edge; on a different-aspect viewport (e.g. flipped from
+// landscape iPad to portrait jumbotron) it letterboxes against the white
+// underfill instead of distorting. White underfill matches the Blank
+// surface so eraser strokes (destination-out) reveal a consistent colour
+// regardless of where the punch lands.
+function drawCustomImageFitted(ctx, w, h, img) {
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, w, h)
+  if (!img || !img.complete || !img.naturalWidth) return
+  const ir = img.naturalWidth / img.naturalHeight
+  const cr = w / h
+  let drawW, drawH, drawX, drawY
+  if (ir > cr) {
+    // Image is wider than canvas — fit to width, letterbox top/bottom
+    drawW = w
+    drawH = w / ir
+    drawX = 0
+    drawY = (h - drawH) / 2
+  } else {
+    // Image is taller than canvas — fit to height, letterbox left/right
+    drawH = h
+    drawW = h * ir
+    drawX = (w - drawW) / 2
+    drawY = 0
+  }
+  ctx.drawImage(img, drawX, drawY, drawW, drawH)
+}
+
 const BACKGROUNDS = {
   blank:                  drawBlank,
   football:               drawFootballField,
@@ -746,6 +790,35 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
   const [isLoading,  setIsLoading]  = useState(true)
   const [saveStatus, setSaveStatus] = useState('')  // '' | 'saving' | 'saved' | error string
 
+  // ── Custom-image background state ────────────────────────────────────────
+  // imageUrl       — persisted public URL of the active uploaded image, or
+  //                  null if the coach has never uploaded / has removed it.
+  //                  Independent of `background` so a coach who switches
+  //                  to a sport court can switch BACK to the same image
+  //                  via the "Custom image" dropdown option.
+  // pendingFile    — File chosen by the picker, awaiting confirmation in
+  //                  the frame dialog. null when no dialog is open.
+  // imageBusy      — true during the Storage upload + DB write; disables
+  //                  the upload button so the coach can't double-fire.
+  // imageError     — inline error to show in the toolbar after a failed
+  //                  upload (file too large, network drop, RLS reject).
+  // customImgRef   — HTMLImageElement loaded from imageUrl. Held on a ref
+  //                  so the redraw loop can read it without re-rendering
+  //                  when only the loaded-state changes.
+  // fileInputRef   — hidden <input type="file"> driven imperatively from
+  //                  the dropdown's "Upload image…" sentinel.
+  const [imageUrl,    setImageUrl]    = useState(null)
+  const [pendingFile, setPendingFile] = useState(null)
+  const [imageBusy,   setImageBusy]   = useState(false)
+  const [imageError,  setImageError]  = useState('')
+  const customImgRef = useRef(null)
+  const fileInputRef = useRef(null)
+  // Live aspect ratio of the canvas container — captured when the frame
+  // dialog opens so react-easy-crop crops to whatever the coach's
+  // current viewport looks like (iPad portrait vs. landscape vs.
+  // jumbotron). Defaults to 16:9 if the container hasn't measured yet.
+  const [frameAspect, setFrameAspect] = useState(16 / 9)
+
   // (Background options are no longer filtered by program sport — the
   // dropdown lists every surface and lets the coach pick. `sport` is still
   // accepted as a prop for backwards-compat but no longer read here.)
@@ -779,9 +852,17 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
     const cssW = canvas.clientWidth
     const cssH = canvas.clientHeight
 
-    // Underlay
-    const drawBg = BACKGROUNDS[background] || drawBlank
-    drawBg(ctx, cssW, cssH)
+    // Underlay. Custom image is drawn via the ref-held HTMLImageElement
+    // (loaded asynchronously by the image-load effect below). If the
+    // image hasn't decoded yet drawCustomImageFitted falls back to a
+    // white underfill, then the load effect calls redrawCanvas() once
+    // the bitmap is ready.
+    if (background === CUSTOM_IMAGE_BG) {
+      drawCustomImageFitted(ctx, cssW, cssH, customImgRef.current)
+    } else {
+      const drawBg = BACKGROUNDS[background] || drawBlank
+      drawBg(ctx, cssW, cssH)
+    }
 
     // Strokes
     const { width: storedW, height: storedH } = storedSizeRef.current
@@ -976,6 +1057,12 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
           background,
           width,
           height,
+          // imageUrl is independent of the active background — coach can
+          // stash an image and switch to a sport court without losing it.
+          // Explicitly null on the upsert (vs. omit) so Remove Image
+          // actually clears the column rather than leaving the previous
+          // URL behind.
+          image_url:  imageUrl,
         }, { onConflict: 'org_id' })
       if (error) {
         console.error('[Whiteboard] save error:', error.message)
@@ -985,7 +1072,7 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
         setTimeout(() => setSaveStatus(s => s === 'saved' ? '' : s), 1500)
       }
     }, SAVE_DEBOUNCE_MS)
-  }, [orgId, background])
+  }, [orgId, background, imageUrl])
 
   // ── Mount: load existing whiteboard + wire resize observer ─────────────────
   useEffect(() => {
@@ -997,7 +1084,7 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
     ;(async () => {
       const { data, error } = await supabase
         .from('whiteboards')
-        .select('strokes, background, width, height')
+        .select('strokes, background, width, height, image_url')
         .eq('org_id', orgId)
         .maybeSingle()
       if (cancelled) return
@@ -1006,6 +1093,10 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
       } else if (data) {
         strokesRef.current = Array.isArray(data.strokes) ? data.strokes : []
         if (data.background) setBackground(data.background)
+        // image_url drives the custom-image underlay. Setting it triggers
+        // the image-load effect which decodes the bitmap into
+        // customImgRef.current and re-redraws once ready.
+        if (data.image_url) setImageUrl(data.image_url)
         storedSizeRef.current = {
           width:  data.width  ?? 0,
           height: data.height ?? 0,
@@ -1035,11 +1126,51 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [background, isLoading])
 
-  // Save the chosen background even if there are no new strokes
+  // Save the chosen background even if there are no new strokes. Same
+  // logic applies to imageUrl flips (upload completed / remove clicked) —
+  // the persisted value must follow the in-memory one even when the
+  // coach hasn't drawn anything new.
   useEffect(() => {
     if (!isLoading) scheduleSave()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [background])
+  }, [background, imageUrl])
+
+  // ── Custom image loader ────────────────────────────────────────────────────
+  // When imageUrl changes (initial load OR upload completes OR removal),
+  // decode the bitmap into customImgRef.current so the redraw loop can
+  // call ctx.drawImage(img). Null URL clears the ref and forces a redraw
+  // so any stale image disappears immediately rather than waiting for
+  // the next viewport-resize repaint.
+  //
+  // Cross-origin: Supabase Storage returns Access-Control-Allow-Origin:*
+  // for public buckets, so setting crossOrigin = 'anonymous' lets us
+  // draw to a tainted-free canvas — important if we later want to
+  // toBlob() the whiteboard for export. (Not exported in Commit 1, but
+  // the cost of setting the attribute now is zero.)
+  useEffect(() => {
+    if (!imageUrl) {
+      customImgRef.current = null
+      if (!isLoading) redrawCanvas()
+      return
+    }
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    let cancelled = false
+    img.onload = () => {
+      if (cancelled) return
+      customImgRef.current = img
+      redrawCanvas()
+    }
+    img.onerror = () => {
+      if (cancelled) return
+      console.warn('[Whiteboard] custom image failed to load:', imageUrl)
+      customImgRef.current = null
+      redrawCanvas()
+    }
+    img.src = imageUrl
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageUrl])
 
   // Flush pending save on unmount
   useEffect(() => {
@@ -1050,6 +1181,110 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
       }
     }
   }, [])
+
+  // ── Custom-image upload handlers ───────────────────────────────────────────
+  // Three-step flow:
+  //   1. Coach picks "Upload image…" from the dropdown → fileInputRef.click()
+  //   2. Coach picks a file → onFileChosen captures the live canvas aspect
+  //      and stages the File in pendingFile, which opens the frame dialog.
+  //   3. Coach frames + confirms → uploadFramedBlob pushes the JPEG to
+  //      Supabase Storage (re-using the existing `backgrounds` bucket
+  //      with an org-scoped path), resolves the public URL, and flips
+  //      the in-memory state. Persistence then follows the standard
+  //      save-effect debounce.
+
+  function openFilePicker() {
+    setImageError('')
+    fileInputRef.current?.click()
+  }
+
+  function onFileChosen(e) {
+    const file = e.target.files?.[0]
+    // Clear the input value so picking the same file twice in a row
+    // still re-fires onChange (browsers suppress identical-value events).
+    e.target.value = ''
+    if (!file) return
+    // Capture the live canvas aspect so react-easy-crop frames the image
+    // to whatever the coach is looking at right now (iPad portrait, iPad
+    // landscape, jumbotron, etc.). Falls back to 16:9 if the container
+    // hasn't measured yet (very unlikely — the canvas mounted long ago).
+    const container = containerRef.current
+    if (container && container.clientWidth > 0 && container.clientHeight > 0) {
+      setFrameAspect(container.clientWidth / container.clientHeight)
+    } else {
+      setFrameAspect(16 / 9)
+    }
+    setPendingFile(file)
+  }
+
+  async function uploadFramedBlob(blob) {
+    if (!orgId) return
+    setImageBusy(true)
+    setImageError('')
+    try {
+      const ts   = Date.now()
+      const mime = blob.type || 'image/jpeg'
+      const ext  = mime === 'image/png' ? 'png' : 'jpg'
+      // Org-id MUST be the first path segment — the existing
+      // `backgrounds` bucket RLS (migration 20260517000000) gates writes
+      // via split_part(name, '/', 1) = caller_org_id (with an AD
+      // account-wide carve-out). Storing whiteboard images under a
+      // dedicated subfolder keeps them out of the practice-screen and
+      // program-logo paths.
+      const path = `${orgId}/whiteboard-images/${ts}.${ext}`
+      const { error: upErr } = await supabase.storage
+        .from('backgrounds')
+        .upload(path, blob, {
+          contentType:  mime,
+          cacheControl: '3600',
+          upsert:       false,
+        })
+      if (upErr) {
+        const m = String(upErr.message ?? '')
+        throw new Error(
+          m.includes('Bucket not found')
+            ? 'Storage bucket "backgrounds" is missing. Ask your admin to create it.'
+            : m || 'Upload failed'
+        )
+      }
+      const { data: urlData } = supabase.storage.from('backgrounds').getPublicUrl(path)
+      const publicUrl = urlData?.publicUrl
+      if (!publicUrl) throw new Error('Could not resolve public URL for uploaded image')
+      // Cache-buster — defensive even though the timestamp already lives
+      // in the path. Mirrors the program-logo / practice-background
+      // upload paths in SettingsSection.
+      const bustUrl = `${publicUrl}?v=${ts}`
+      setImageUrl(bustUrl)
+      setBackground(CUSTOM_IMAGE_BG)
+      setPendingFile(null)
+    } catch (err) {
+      console.error('[Whiteboard] image upload failed:', err?.message ?? err)
+      setImageError(err?.message ?? 'Could not upload image.')
+      setPendingFile(null)
+    } finally {
+      setImageBusy(false)
+    }
+  }
+
+  function removeImage() {
+    setImageUrl(null)
+    // If the image was the active underlay, fall back to Blank so the
+    // canvas stays usable. Sport-court selections are preserved (coach
+    // had explicitly switched to one — don't override that choice).
+    if (background === CUSTOM_IMAGE_BG) setBackground('blank')
+    // Note: the file in Storage is intentionally NOT deleted here. The
+    // org keeps a small history of past uploads; Commit 2 (per-program
+    // image library) will surface them for reuse.
+  }
+
+  function handleBackgroundSelect(e) {
+    const v = e.target.value
+    if (v === UPLOAD_SENTINEL) {
+      openFilePicker()
+      return                       // sentinel — do NOT persist as background
+    }
+    setBackground(v)
+  }
 
   // ── Render ─────────────────────────────────────────────────────────────────
   const canUndo = historyLen > 0
@@ -1098,9 +1333,10 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
           <select
             id="pp-wb-bg"
             value={background}
-            onChange={e => setBackground(e.target.value)}
+            onChange={handleBackgroundSelect}
             aria-label="Background"
-            className="rounded-lg px-2.5 h-10 text-xs font-semibold outline-none cursor-pointer transition-colors"
+            disabled={imageBusy}
+            className="rounded-lg px-2.5 h-10 text-xs font-semibold outline-none cursor-pointer transition-colors disabled:opacity-60"
             style={{
               backgroundColor: '#110000',
               color:           'rgba(255,255,255,0.9)',
@@ -1111,8 +1347,69 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
             {BACKGROUND_OPTIONS.map(opt => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
+            {/* "Custom image" only appears once the org actually has one
+                staged — keeps the dropdown honest. A coach who has never
+                uploaded sees Upload directly without a dead option above
+                it; a coach who switched to a sport court can switch
+                back to the image without having to re-upload. */}
+            {imageUrl && (
+              <option value={CUSTOM_IMAGE_BG}>Custom image</option>
+            )}
+            <option value={UPLOAD_SENTINEL}>
+              {imageUrl ? 'Upload different image…' : 'Upload image…'}
+            </option>
           </select>
+
+          {/* Remove-image control — only when the image is the active
+              underlay. Switching to a sport court "stashes" the image
+              (still selectable via the dropdown), so Remove is reserved
+              for "I want this gone from storage state for good". */}
+          {background === CUSTOM_IMAGE_BG && imageUrl && (
+            <button
+              type="button"
+              onClick={removeImage}
+              disabled={imageBusy}
+              aria-label="Remove uploaded image"
+              title="Remove uploaded image"
+              className="rounded-lg px-2 h-10 text-xs font-semibold outline-none cursor-pointer transition-colors disabled:opacity-60"
+              style={{
+                backgroundColor: 'transparent',
+                color:           '#c8a0a0',
+                border:          '1px solid #3a1414',
+              }}
+            >
+              ✕
+            </button>
+          )}
+
+          {imageBusy && (
+            <span className="text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>
+              Uploading…
+            </span>
+          )}
+          {imageError && (
+            <span
+              className="text-xs px-2 py-1 rounded"
+              style={{ backgroundColor: '#2a0000', color: '#ff8a8a', border: '1px solid #4a0000' }}
+              title={imageError}
+            >
+              ⚠ {imageError.length > 64 ? imageError.slice(0, 61) + '…' : imageError}
+            </span>
+          )}
         </div>
+
+        {/* Hidden file input driven by the dropdown's "Upload image…"
+            sentinel. accept covers the realistic coach scenarios — a
+            photo of a hand-drawn play (HEIC/JPG/PNG), a screenshot, a
+            chart PDF saved as PNG. SVG accepted too for diagram apps
+            that export it. */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/svg+xml,image/heic,image/heif"
+          onChange={onFileChosen}
+          style={{ display: 'none' }}
+        />
 
         {/* Pen / Eraser */}
         <ToolBtn active={tool === 'pen'} onClick={() => setTool('pen')} ariaLabel="Pen" title="Pen">
@@ -1210,7 +1507,15 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
         ref={containerRef}
         className="flex-1 relative"
         style={{
-          backgroundColor: background === 'blank' ? '#ffffff' : '#0a1a0a',
+          // Custom-image background also gets a white container under-
+          // colour: the framing dialog underfills with white before
+          // drawing the image, so eraser strokes (destination-out)
+          // punching through reveal white — consistent with how the
+          // Blank board behaves.
+          backgroundColor:
+            (background === 'blank' || background === CUSTOM_IMAGE_BG)
+              ? '#ffffff'
+              : '#0a1a0a',
           touchAction: 'none',
         }}
       >
@@ -1235,12 +1540,27 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
               style={{
                 // Loading text needs a colour that reads against the
                 // current canvas background — white on white wouldn't.
-                color: background === 'blank' ? '#7a5050' : '#c8a0a0',
+                color: (background === 'blank' || background === CUSTOM_IMAGE_BG)
+                  ? '#7a5050'
+                  : '#c8a0a0',
               }}
             >
               Loading…
             </p>
           </div>
+        )}
+
+        {/* Framing dialog — opens after the coach picks a file. Renders
+            inside the canvas-container so it floats over the board, but
+            its own backdrop is full-viewport (z-50 fixed inset-0). */}
+        {pendingFile && (
+          <WhiteboardImageFrameDialog
+            file={pendingFile}
+            aspect={frameAspect}
+            orgColor={orgColor}
+            onCancel={() => setPendingFile(null)}
+            onConfirm={uploadFramedBlob}
+          />
         )}
 
         {/* Clear confirm — small inline confirmation, not a full modal */}
