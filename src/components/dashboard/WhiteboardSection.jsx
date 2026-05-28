@@ -813,11 +813,6 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
   const [imageError,  setImageError]  = useState('')
   const customImgRef = useRef(null)
   const fileInputRef = useRef(null)
-  // Live aspect ratio of the canvas container — captured when the frame
-  // dialog opens so react-easy-crop crops to whatever the coach's
-  // current viewport looks like (iPad portrait vs. landscape vs.
-  // jumbotron). Defaults to 16:9 if the container hasn't measured yet.
-  const [frameAspect, setFrameAspect] = useState(16 / 9)
 
   // (Background options are no longer filtered by program sport — the
   // dropdown lists every surface and lets the coach pick. `sport` is still
@@ -1204,16 +1199,11 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
     // still re-fires onChange (browsers suppress identical-value events).
     e.target.value = ''
     if (!file) return
-    // Capture the live canvas aspect so react-easy-crop frames the image
-    // to whatever the coach is looking at right now (iPad portrait, iPad
-    // landscape, jumbotron, etc.). Falls back to 16:9 if the container
-    // hasn't measured yet (very unlikely — the canvas mounted long ago).
-    const container = containerRef.current
-    if (container && container.clientWidth > 0 && container.clientHeight > 0) {
-      setFrameAspect(container.clientWidth / container.clientHeight)
-    } else {
-      setFrameAspect(16 / 9)
-    }
+    // The framing dialog uses the IMAGE's own aspect (not the canvas's)
+    // so the default frame shows the whole image. The board's
+    // drawCustomImageFitted then letterboxes/pillarboxes when the saved
+    // image's aspect differs from the canvas's. No canvas-aspect
+    // measurement needed here.
     setPendingFile(file)
   }
 
@@ -1556,7 +1546,6 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
         {pendingFile && (
           <WhiteboardImageFrameDialog
             file={pendingFile}
-            aspect={frameAspect}
             orgColor={orgColor}
             onCancel={() => setPendingFile(null)}
             onConfirm={uploadFramedBlob}
