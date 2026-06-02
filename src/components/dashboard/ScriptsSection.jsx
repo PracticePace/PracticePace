@@ -8,6 +8,7 @@ import { SPORTS as LAUNCH_SPORTS, sportLabel } from '../../lib/sports'
 import WhiteboardImageFrameDialog   from './WhiteboardImageFrameDialog'
 import WhiteboardImageNameDialog    from './WhiteboardImageNameDialog'
 import WhiteboardImageLibraryDialog from './WhiteboardImageLibraryDialog'
+import DuplicateScriptDialog        from './DuplicateScriptDialog'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function pad(n) { return String(n).padStart(2, '0') }
@@ -1245,6 +1246,10 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
   onBack, onSetActive, onSwitchTab, onReload,
   whiteboardImages         = {},
   onWhiteboardImagesReload = () => {},
+  // Editor-view Duplicate. Parent owns the actual rename dialog +
+  // INSERT; we bubble a snapshot of local state (which may include
+  // unsaved edits) so the duplicate captures what the coach SEES.
+  onDuplicate,
 }) {
   const [name,   setName]   = useState(script.name  ?? '')
   const [sport,  setSport]  = useState(script.sport ?? 'football')
@@ -1615,9 +1620,29 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
           {fmt(sec)} total
         </span>
 
+        {/* Duplicate — bubbles a snapshot of LOCAL state so unsaved
+            edits are captured in the copy. Hidden for readonly; the
+            ml-auto sits here so Duplicate + Print Script + Active
+            badge cluster right-aligned. */}
+        {userCanEdit && (
+          <button
+            onClick={() => onDuplicate?.({
+              name, sport,
+              // Deep-enough clone — drill objects are flat JSON, shallow
+              // spread is sufficient. Parent re-clones again inside its
+              // INSERT, so this is just to avoid aliasing local state.
+              drills: drills.map(d => ({ ...d })),
+            })}
+            className="ml-auto text-xs font-bold px-3 py-1.5 rounded-lg"
+            style={{ border: '1px solid #3a1414', color: '#c8a0a0', backgroundColor: 'transparent' }}
+            title="Duplicate this script (with all drills, cues, images, notes)">
+            ⧉ Duplicate
+          </button>
+        )}
+
         {/* Print script — opens a dialog asking for the practice start time. */}
         <button onClick={() => setShowPrint(true)}
-          className="ml-auto text-xs font-bold px-3 py-1.5 rounded-lg"
+          className={`${userCanEdit ? '' : 'ml-auto'} text-xs font-bold px-3 py-1.5 rounded-lg`}
           style={{ border: `1px solid ${orgColor}66`, color: orgColor, backgroundColor: 'transparent' }}>
           🖨 Print Script
         </button>
@@ -1772,6 +1797,14 @@ export default function ScriptsSection({
   const [deleteId,       setDeleteId]      = useState(null)
   const [deleting,       setDeleting]      = useState(false)
 
+  // Duplicate flow (list-view entry point). source = the script object
+  // the coach tapped Duplicate on. duplicating = busy flag for the
+  // dialog's primary button; dupErr surfaces a friendly message inline
+  // in the dialog rather than an alert(). Both reset on close.
+  const [dupSource,    setDupSource]    = useState(null)
+  const [duplicating,  setDuplicating]  = useState(false)
+  const [dupErr,       setDupErr]       = useState('')
+
   function openEditor(script) {
     setEditingScript(script)
     setView('editor')
@@ -1781,6 +1814,63 @@ export default function ScriptsSection({
     setShowNew(false)
     // Create a temporary script object with no id — editor will persist it on first save
     openEditor({ id: null, ...fields })
+  }
+
+  function openDuplicateDialog(source) {
+    setDupErr('')
+    setDupSource(source)
+  }
+
+  function closeDuplicateDialog() {
+    if (duplicating) return  // can't cancel mid-INSERT
+    setDupSource(null)
+    setDupErr('')
+  }
+
+  async function confirmDuplicate(newName) {
+    if (!dupSource) return
+    setDuplicating(true)
+    setDupErr('')
+    try {
+      // Deep-clone drills so the source's array isn't aliased on the
+      // new row. Each drill is a flat JSON object — shallow spread is
+      // sufficient. Preserves order, durations, notes, show_notes,
+      // cue_mp3_url, AND whiteboard_image_id (if present from the
+      // per-drill image commit).
+      const clonedDrills = (dupSource.drills ?? []).map(d => ({ ...d }))
+      const payload = {
+        org_id:     orgId,
+        created_by: userId,
+        name:       newName,
+        sport:      dupSource.sport ?? 'football',
+        drills:     clonedDrills,
+      }
+      let newScript
+      if (isGuest) {
+        // saveGuestScript returns the saved object including the
+        // generated id. id:null → it'll create a fresh entry.
+        newScript = saveGuestScript({ id: null, ...payload })
+      } else {
+        const { data, error } = await supabase
+          .from('scripts')
+          .insert(payload)
+          .select()
+          .single()
+        if (error) throw new Error(error.message ?? 'Insert failed')
+        newScript = data
+      }
+      // Single-row INSERT is atomic at the DB level — no partial state
+      // possible. Refresh the list and jump into the new script's
+      // editor so the coach's next tap is "edit the differences".
+      setDupSource(null)
+      await onReload()
+      openEditor(newScript)
+    } catch (err) {
+      console.error('[ScriptsSection] duplicate failed:', err?.message ?? err)
+      setDupErr(err?.message ?? 'Could not duplicate this script. Try again.')
+    } finally {
+      setDuplicating(false)
+    }
   }
 
   async function confirmDelete() {
@@ -1795,11 +1885,33 @@ export default function ScriptsSection({
     onReload()
   }
 
+  // Shared dialog JSX — rendered inside both the editor view and the
+  // list view branches below so a Duplicate triggered from the editor
+  // (onDuplicate → openDuplicateDialog) still mounts the prompt even
+  // though the list-view return is skipped via the early return.
+  const duplicateDialog = dupSource && (
+    <DuplicateScriptDialog
+      defaultName={`${dupSource.name ?? 'Untitled Script'} (copy)`}
+      working={duplicating}
+      error={dupErr}
+      orgColor={orgColor}
+      onCancel={closeDuplicateDialog}
+      onConfirm={confirmDuplicate}
+    />
+  )
+
   // ── Editor view ─────────────────────────────────────────────────────────────
   if (view === 'editor' && editingScript) {
     return (
       <div className="flex-1 flex flex-col overflow-hidden">
         <ScriptEditor
+          // key on the script id (or 'new' for unsaved drafts) so when
+          // the parent swaps editingScript to a freshly-duplicated row,
+          // the editor remounts cleanly. Otherwise local state (name,
+          // sport, drills) and scriptId ref are init-once and would
+          // stay tied to the previous script after a duplicate-from-
+          // inside-editor jump.
+          key={editingScript.id ?? 'new'}
           script={editingScript}
           orgId={orgId}
           userId={userId}
@@ -1816,7 +1928,13 @@ export default function ScriptsSection({
           onReload={onReload}
           whiteboardImages={whiteboardImages}
           onWhiteboardImagesReload={onWhiteboardImagesReload}
+          // Editor-view Duplicate uses the same dialog as list-view by
+          // bubbling a synthetic source built from local state (which
+          // may include unsaved edits — the duplicate captures what
+          // the coach SEES).
+          onDuplicate={openDuplicateDialog}
         />
+        {duplicateDialog}
       </div>
     )
   }
@@ -1916,6 +2034,17 @@ export default function ScriptsSection({
                       style={{ border: '1px solid #2a0000', color: '#9a8080' }}>
                       {userCanEdit ? 'Edit' : 'View'}
                     </button>
+                    {/* Duplicate — deep-clones the script + all drills
+                        (incl. cue and image attachments). Same gate as
+                        Edit/Delete: writers only. */}
+                    {userCanEdit && (
+                      <button
+                        onClick={() => openDuplicateDialog(script)}
+                        className="px-4 py-2 rounded-lg text-xs font-semibold"
+                        style={{ border: '1px solid #2a0000', color: '#9a8080' }}>
+                        Duplicate
+                      </button>
+                    )}
                     {/* Delete — hidden for readonly */}
                     {userCanEdit && (
                       <button
@@ -1985,6 +2114,12 @@ export default function ScriptsSection({
           </div>
         </div>
       )}
+
+      {/* Duplicate Script rename prompt — same JSX as the editor-view
+          branch above (shared via the `duplicateDialog` variable so a
+          Duplicate triggered from inside the editor still mounts the
+          prompt even though the editor branch returns early). */}
+      {duplicateDialog}
     </div>
   )
 }
