@@ -16,18 +16,21 @@
     <!-- Open Graph / social sharing. Defaults apply to every page of
          the SPA (sufficient for the marketing-front-door case; per-
          page tags would require SSR or react-helmet-async, neither of
-         which is wired up). Matt: replace og:image with a real
-         1200×630 social card when ready. -->
+         which is wired up).
+         INTERIM og:image — points at the real hero screenshot so
+         Twitter / iMessage share previews show the practice screen
+         instead of a 404. Matt: replace with a purpose-built 1200×630
+         social card later. -->
     <meta property="og:type"        content="website" />
     <meta property="og:site_name"   content="Practice:Pace" />
     <meta property="og:title"       content="Practice:Pace — Coach Better Practices, Run Better Games" />
     <meta property="og:description" content="Practice timer, scoreboard, whiteboard, and play library for high school football, basketball, cheer, and more. Built for coaches." />
     <meta property="og:url"         content="https://practicepace.app/" />
-    <meta property="og:image"       content="https://practicepace.app/og-image-placeholder.png" />
+    <meta property="og:image"       content="https://practicepace.app/landing/hero-practice-screen.png" />
     <meta name="twitter:card"        content="summary_large_image" />
     <meta name="twitter:title"       content="Practice:Pace — Coach Better Practices, Run Better Games" />
     <meta name="twitter:description" content="Practice timer, scoreboard, whiteboard, and play library for high school football, basketball, cheer, and more. Built for coaches." />
-    <meta name="twitter:image"       content="https://practicepace.app/og-image-placeholder.png" />
+    <meta name="twitter:image"       content="https://practicepace.app/landing/hero-practice-screen.png" />
 
     <!-- PWA -->
     <link rel="manifest" href="/manifest.json" />

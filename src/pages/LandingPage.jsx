@@ -215,31 +215,24 @@ export default function LandingPage() {
               </Link>
             </div>
 
-            {/* Hero visual — large rounded screenshot placeholder. */}
+            {/* Hero visual — real screenshot of the practice screen in
+                action (Albertville Aggies install). Lives at
+                public/landing/hero-practice-screen.png. Width-capped at
+                max-w-4xl so it doesn't dominate the page on wide
+                viewports; full width on mobile. Subtle red glow + dark
+                drop shadow lift it off the page background. */}
             <div className="w-full max-w-4xl mt-8">
-              <div
-                role="img"
-                aria-label="Screenshot of the Practice:Pace practice screen showing a live drill timer, the current drill name, and an Up Next preview."
-                className="rounded-3xl overflow-hidden"
+              <img
+                src="/landing/hero-practice-screen.png"
+                alt="Practice:Pace practice screen showing a live drill timer at 4:59 remaining for Albertville Aggies Football, with the next drill 'ALL UP' queued up at 2:30."
+                className="w-full h-auto rounded-3xl block"
                 style={{
-                  aspectRatio:     '16 / 9',
-                  backgroundColor: '#110000',
-                  border:          `1px dashed ${ACCENT}55`,
-                  color:           '#6a4040',
-                  boxShadow:       `0 30px 80px ${ACCENT}22, 0 10px 30px rgba(0,0,0,0.6)`,
+                  boxShadow: `0 30px 80px ${ACCENT}22, 0 10px 30px rgba(0,0,0,0.6)`,
+                  border:    '1px solid #2a0000',
                 }}
-              >
-                <div className="w-full h-full flex flex-col items-center justify-center gap-3 p-8 text-center">
-                  <IconPlay />
-                  <p className="text-sm uppercase tracking-widest font-semibold">
-                    Hero screenshot placeholder
-                  </p>
-                  <p className="text-xs" style={{ color: '#7a5050' }}>
-                    Practice screen — drill timer, music, notes.
-                    Matt will swap this for the real one.
-                  </p>
-                </div>
-              </div>
+                loading="eager"
+                decoding="async"
+              />
             </div>
           </div>
         </section>
