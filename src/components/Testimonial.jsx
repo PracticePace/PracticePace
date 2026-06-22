@@ -40,13 +40,17 @@ export default function Testimonial({
       }}
     >
       <div className="max-w-3xl mx-auto flex flex-col items-center text-center gap-6">
-        {/* Decorative quote glyph + accent rule */}
+        {/* Decorative quote glyph + accent rule. Emphasis variant is a
+            small visual nudge over the standard — about a 10% bump in
+            glyph size, plus the radial background wash on the section
+            wrapper above — so it reads as a strong closer without
+            shouting over the rest of the page. */}
         <div className="flex flex-col items-center gap-3">
           <span
             aria-hidden="true"
             style={{
               fontFamily: "'Bebas Neue', sans-serif",
-              fontSize:   emphasis ? '5rem' : '4rem',
+              fontSize:   emphasis ? '4.4rem' : '4rem',
               lineHeight: 0.6,
               color:      orgColor,
             }}
@@ -69,8 +73,11 @@ export default function Testimonial({
           className="leading-snug"
           style={{
             fontFamily: "'Bebas Neue', sans-serif",
+            // Emphasis bump is modest (~10%) on top of the standard
+            // clamp, not the prior +40% leap that was visually
+            // dominating the page.
             fontSize:   emphasis
-              ? 'clamp(1.75rem, 4vw, 3rem)'
+              ? 'clamp(1.65rem, 3.3vw, 2.5rem)'
               : 'clamp(1.5rem, 3vw, 2.25rem)',
             color:         'rgba(255,255,255,0.96)',
             letterSpacing: '0.02em',
@@ -84,7 +91,7 @@ export default function Testimonial({
           <cite
             className="not-italic font-bold"
             style={{
-              fontSize:      emphasis ? '1.1rem' : '1rem',
+              fontSize:      emphasis ? '1.05rem' : '1rem',
               color:         '#e8d8d8',
               letterSpacing: '0.04em',
             }}

@@ -93,9 +93,16 @@ const buttonSecondary = {
 // glow + thin border so each tile sits clearly on the dark page bg.
 // Image is lazy-loaded since the gallery is below the fold; the hero
 // (above the fold) uses loading="eager" instead.
-function ScreenshotTile({ src, caption, alt }) {
+//
+// Caption is split into two parts: a bold uppercase lead-in (the
+// feature name) and the regular descriptive tail. The lead-in is
+// orgColor accent + tracking-widest so the four tiles read as a quick
+// at-a-glance scan ("scoreboard / whiteboard / scripts / music") even
+// before the eye lands on the descriptions. The previous text-xs
+// muted-gray caption was almost invisible against the page background.
+function ScreenshotTile({ src, leadIn, caption, alt }) {
   return (
-    <figure className="flex flex-col gap-2">
+    <figure className="flex flex-col gap-3">
       <img
         src={src}
         alt={alt}
@@ -108,8 +115,14 @@ function ScreenshotTile({ src, caption, alt }) {
         loading="lazy"
         decoding="async"
       />
-      <figcaption className="text-xs text-center" style={{ color: '#9a8080' }}>
-        {caption}
+      <figcaption className="text-center text-sm md:text-base leading-snug" style={{ color: '#e8d8d8' }}>
+        <span
+          className="font-black uppercase mr-1.5"
+          style={{ color: ACCENT, letterSpacing: '0.16em' }}
+        >
+          {leadIn}
+        </span>
+        — {caption}
       </figcaption>
     </figure>
   )
@@ -233,12 +246,11 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* ── TESTIMONIAL #1 ─────────────────────────────────────────────── */}
-        {/* PLACEHOLDER — replace with real coach quote from interviews */}
+        {/* ── TESTIMONIAL #1 (hook) ──────────────────────────────────────── */}
         <Testimonial
-          quote="Practice:Pace transformed how we run our Tuesday installs. Drill timing is dialed in and the kids stay locked in."
-          coachName="Coach [Last Name]"
-          program="[Program] [Sport]"
+          quote="Practice:Pace has completely changed how we run our practices. We upload our schedule and it runs directly on our video board, keeping our entire staff and players on the same page without anyone having to watch a clock. This program blows away any other practice software we have seen — if you run a football program and want to maximize every minute of practice, Practice:Pace is a tool you need."
+          coachName="Coach Adam Winegarden"
+          program="Head Football Coach, Albertville High School"
           orgColor={ACCENT}
         />
 
@@ -311,13 +323,15 @@ export default function LandingPage() {
         </section>
 
         {/* ── TESTIMONIAL #2 ─────────────────────────────────────────────── */}
-        {/* PLACEHOLDER — replace with real coach quote from interviews */}
+        {/* PLACEHOLDER — restore when real testimonial available. Kept as
+            a JSX comment so the slot is easy to find + uncomment later.
         <Testimonial
           quote="We tried to build something like this in Google Sheets. It wasn't even close. The timer alone is worth it."
           coachName="Coach [Last Name]"
           program="[Program] [Sport]"
           orgColor={ACCENT}
         />
+        */}
 
         {/* ── SCREENSHOT GALLERY ─────────────────────────────────────────── */}
         <section className="px-6 py-16 md:py-24">
@@ -343,22 +357,26 @@ export default function LandingPage() {
                   favour of the music tile. */}
               <ScreenshotTile
                 src="/landing/screenshot-scoreboard.png"
-                caption="Game-day scoreboards — built for jumbotron display"
+                leadIn="Scoreboards"
+                caption="Game-day ready, built for jumbotron display"
                 alt="Practice:Pace football scoreboard for the Albertville Aggies showing 14-10 home lead, 2nd & 4, ball on the 28, Q2 5:43 on the clock, with the play clock at 19."
               />
               <ScreenshotTile
                 src="/landing/screenshot-whiteboard.png"
-                caption="Whiteboard — draw on your own plays"
+                leadIn="Whiteboard"
+                caption="Draw on your own plays"
                 alt="Practice:Pace whiteboard with a football PUNT COVERAGE REGULAR play diagram and route lines drawn in red, blue, and black over an uploaded play image."
               />
               <ScreenshotTile
                 src="/landing/screenshot-scripts.png"
-                caption="Scripts — build once, run all season"
+                leadIn="Scripts"
+                caption="Build once, run all season"
                 alt="Practice:Pace script editor showing 'Sample Practice — 90 min' broken into 7 segments (Individual/Position, Group/Unit Period, Team Period, Special Teams, Conditioning, Cool Down, plus one), each with its own duration."
               />
               <ScreenshotTile
                 src="/landing/screenshot-music.png"
-                caption="Music — library, playlists, and drill cues"
+                leadIn="Music"
+                caption="Library, playlists, and drill cues"
                 alt="Practice:Pace music tab showing the program's song library with Metallica's Enter Sandman currently playing, plus Sandstorm and Phil Collins' In the Air Tonight queued below."
               />
             </div>
@@ -366,13 +384,15 @@ export default function LandingPage() {
         </section>
 
         {/* ── TESTIMONIAL #3 ─────────────────────────────────────────────── */}
-        {/* PLACEHOLDER — replace with real coach quote from interviews */}
+        {/* PLACEHOLDER — restore when real testimonial available. Kept as
+            a JSX comment so the slot is easy to find + uncomment later.
         <Testimonial
           quote="Our cheer routines run cleaner since we started using Practice:Pace. The image library means I'm not redrawing pyramids every week."
           coachName="Coach [Last Name]"
           program="[Program] [Sport]"
           orgColor={ACCENT}
         />
+        */}
 
         {/* ── PRICING / CTA ──────────────────────────────────────────────── */}
         <section className="px-6 py-20 md:py-28">
