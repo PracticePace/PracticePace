@@ -323,15 +323,12 @@ export default function LandingPage() {
         </section>
 
         {/* ── TESTIMONIAL #2 ─────────────────────────────────────────────── */}
-        {/* PLACEHOLDER — restore when real testimonial available. Kept as
-            a JSX comment so the slot is easy to find + uncomment later.
         <Testimonial
-          quote="We tried to build something like this in Google Sheets. It wasn't even close. The timer alone is worth it."
-          coachName="Coach [Last Name]"
-          program="[Program] [Sport]"
+          quote="Practice:Pace is a complete game changer. We started using it this past Spring and the results were phenomenal. We now have nearly seamless transitions in practice. Everyone is constantly aware of where we are in practice, how much time is remaining in the current period, and what is coming next. I highly recommend this app for any program seriously seeking next level organization."
+          coachName="Coach Antonio Ford"
+          program="Defensive Coordinator, Albertville High School"
           orgColor={ACCENT}
         />
-        */}
 
         {/* ── SCREENSHOT GALLERY ─────────────────────────────────────────── */}
         <section className="px-6 py-16 md:py-24">
