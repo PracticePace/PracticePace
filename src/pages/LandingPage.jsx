@@ -89,29 +89,25 @@ const buttonSecondary = {
   border:          '1px solid rgba(255,255,255,0.28)',
 }
 
-// Generic image-placeholder tile. Tall, rounded, dashed border, label.
-// Matt will swap each one for a real screenshot.
-function ScreenshotPlaceholder({ caption, alt, ratio = '16 / 10' }) {
+// Gallery tile — real screenshot under public/landing/. Rounded, subtle
+// glow + thin border so each tile sits clearly on the dark page bg.
+// Image is lazy-loaded since the gallery is below the fold; the hero
+// (above the fold) uses loading="eager" instead.
+function ScreenshotTile({ src, caption, alt }) {
   return (
     <figure className="flex flex-col gap-2">
-      <div
-        role="img"
-        aria-label={alt}
-        className="rounded-2xl flex items-center justify-center overflow-hidden"
+      <img
+        src={src}
+        alt={alt}
+        className="w-full h-auto rounded-2xl block"
         style={{
-          aspectRatio:     ratio,
-          backgroundColor: '#110000',
-          border:          `1px dashed ${ACCENT}55`,
-          color:           '#6a4040',
+          backgroundColor: '#0d0000',
+          border:          '1px solid #2a0000',
+          boxShadow:       `0 16px 40px ${ACCENT}1a, 0 6px 18px rgba(0,0,0,0.55)`,
         }}
-      >
-        <div className="flex flex-col items-center gap-2 px-6 text-center">
-          <IconPlay />
-          <span className="text-xs uppercase tracking-widest font-semibold">
-            Screenshot placeholder
-          </span>
-        </div>
-      </div>
+        loading="lazy"
+        decoding="async"
+      />
       <figcaption className="text-xs text-center" style={{ color: '#9a8080' }}>
         {caption}
       </figcaption>
@@ -339,22 +335,31 @@ export default function LandingPage() {
             </h2>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* PLACEHOLDERS — Matt will swap each for a real screenshot. */}
-              <ScreenshotPlaceholder
-                caption="Practice screen — drill timer, music, notes."
-                alt="Screenshot of the practice screen with a large drill timer, current drill name, and Up Next preview."
+              {/* Real screenshots — see public/landing/ for the source
+                  files. Order follows the spec: scoreboard, whiteboard,
+                  scripts, music. The practice-screen tile that used to
+                  live here was redundant with the hero above (which is
+                  already the practice screen), so it was dropped in
+                  favour of the music tile. */}
+              <ScreenshotTile
+                src="/landing/screenshot-scoreboard.png"
+                caption="Game-day scoreboards — built for jumbotron display"
+                alt="Practice:Pace football scoreboard for the Albertville Aggies showing 14-10 home lead, 2nd & 4, ball on the 28, Q2 5:43 on the clock, with the play clock at 19."
               />
-              <ScreenshotPlaceholder
-                caption="Scoreboard — game-day ready."
-                alt="Screenshot of a football scoreboard with score, quarter, possession indicator, and game clock."
+              <ScreenshotTile
+                src="/landing/screenshot-whiteboard.png"
+                caption="Whiteboard — draw on your own plays"
+                alt="Practice:Pace whiteboard with a football PUNT COVERAGE REGULAR play diagram and route lines drawn in red, blue, and black over an uploaded play image."
               />
-              <ScreenshotPlaceholder
-                caption="Whiteboard — draw on your plays."
-                alt="Screenshot of the whiteboard with a play diagram and hand-drawn annotations on top."
+              <ScreenshotTile
+                src="/landing/screenshot-scripts.png"
+                caption="Scripts — build once, run all season"
+                alt="Practice:Pace script editor showing 'Sample Practice — 90 min' broken into 7 segments (Individual/Position, Group/Unit Period, Team Period, Special Teams, Conditioning, Cool Down, plus one), each with its own duration."
               />
-              <ScreenshotPlaceholder
-                caption="Scripts — build once, run all season."
-                alt="Screenshot of the script editor showing a list of timed drills with notes, music cues, and attached play images."
+              <ScreenshotTile
+                src="/landing/screenshot-music.png"
+                caption="Music — library, playlists, and drill cues"
+                alt="Practice:Pace music tab showing the program's song library with Metallica's Enter Sandman currently playing, plus Sandstorm and Phil Collins' In the Air Tonight queued below."
               />
             </div>
           </div>
