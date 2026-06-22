@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../../lib/supabase'
 import { saveGuestScript, deleteGuestScript } from '../../lib/guestStorage'
 import { playCue, stopCue } from '../../lib/cuePlayer'
@@ -9,6 +9,7 @@ import WhiteboardImageFrameDialog   from './WhiteboardImageFrameDialog'
 import WhiteboardImageNameDialog    from './WhiteboardImageNameDialog'
 import WhiteboardImageLibraryDialog from './WhiteboardImageLibraryDialog'
 import DuplicateScriptDialog        from './DuplicateScriptDialog'
+import AutocompleteInput            from '../AutocompleteInput'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function pad(n) { return String(n).padStart(2, '0') }
@@ -802,7 +803,7 @@ function CueControl({ cueUrl, onChange, orgColor, orgId, isGuest }) {
 // reads values on Add click, calls onAdd(fields), then clears itself.
 const DURATION_PRESETS = [5, 10, 15, 20]
 
-function AddDrillForm({ orgColor, orgId, isGuest, onAdd }) {
+function AddDrillForm({ orgColor, orgId, isGuest, onAdd, drillNameSuggestions = [] }) {
   const [name,      setName]      = useState('')
   const [mins,      setMins]      = useState('')
   const [secs,      setSecs]      = useState('')
@@ -854,13 +855,20 @@ function AddDrillForm({ orgColor, orgId, isGuest, onAdd }) {
     <div className="rounded-xl p-3 flex flex-col gap-3 mt-1"
       style={{ border: `2px dashed ${orgColor}44`, backgroundColor: '#0d0000' }}>
 
-      <input
-        ref={nameInputRef}
-        value={name} onChange={e => setName(e.target.value)}
+      <AutocompleteInput
+        inputRef={nameInputRef}
+        value={name}
+        onChange={setName}
+        suggestions={drillNameSuggestions}
         placeholder="Drill name..."
+        // Preserves submit-on-Enter for the AddDrillForm flow. The
+        // AutocompleteInput swallows Enter only when a dropdown
+        // suggestion is highlighted (then it picks); otherwise it
+        // falls through here and we add the drill.
         onKeyDown={e => { if (e.key === 'Enter' && name.trim()) handleAdd() }}
-        className="rounded-lg px-3 py-2.5 text-sm outline-none w-full"
-        style={{ backgroundColor: '#1a0000', border: '1px solid #3a0000', color: '#fff' }} />
+        inputClassName="rounded-lg px-3 py-2.5 text-sm outline-none w-full"
+        inputStyle={{ backgroundColor: '#1a0000', border: '1px solid #3a0000', color: '#fff' }}
+      />
 
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-xs shrink-0" style={{ color: '#9a8080' }}>Duration:</span>
@@ -945,6 +953,11 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
   // dialog and the upload chain.
   attachedImage    = null,
   onOpenImagePicker,
+  // Drill-name autocomplete pool — same one passed to AddDrillForm.
+  // The inline-edit input below renders an AutocompleteInput backed
+  // by this list. Defaults to [] so the field works (as a plain input)
+  // even if upstream forgets to pass it.
+  drillNameSuggestions = [],
 }) {
   const [editName,      setEditName]      = useState(drill.name ?? '')
   const [editMins,      setEditMins]      = useState(drill.duration ? String(Math.floor(drill.duration / 60)) : '')
@@ -1005,11 +1018,15 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
       {isEditing ? (
         // ── Inline edit mode ──────────────────────────────────────────────────
         <div className="flex flex-col gap-2">
-          <input
-            value={editName} onChange={e => setEditName(e.target.value)}
-            placeholder="Drill name..." autoFocus
-            className="rounded-lg px-3 py-2.5 text-sm outline-none w-full"
-            style={{ backgroundColor: '#0d0000', border: '1px solid #3a0000', color: '#fff' }} />
+          <AutocompleteInput
+            value={editName}
+            onChange={setEditName}
+            suggestions={drillNameSuggestions}
+            placeholder="Drill name..."
+            autoFocus
+            inputClassName="rounded-lg px-3 py-2.5 text-sm outline-none w-full"
+            inputStyle={{ backgroundColor: '#0d0000', border: '1px solid #3a0000', color: '#fff' }}
+          />
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs shrink-0" style={{ color: '#9a8080' }}>Duration:</span>
             <input type="number" value={editMins} min={0} placeholder="Min"
@@ -1250,6 +1267,11 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
   // INSERT; we bubble a snapshot of local state (which may include
   // unsaved edits) so the duplicate captures what the coach SEES.
   onDuplicate,
+  // Org-scoped script list — mined for drill-name autocomplete
+  // suggestions. The list refreshes via onReload (after save / on
+  // program switch), so adding a drill in another script earlier in
+  // the same session shows up here on next render.
+  allOrgScripts = [],
 }) {
   const [name,   setName]   = useState(script.name  ?? '')
   const [sport,  setSport]  = useState(script.sport ?? 'football')
@@ -1283,6 +1305,57 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
   const [imageError,       setImageError]       = useState('')
   const [libraryReloadKey, setLibraryReloadKey] = useState(0)
   const fileInputRef = useRef(null)
+
+  // ── Drill-name autocomplete suggestions ──────────────────────────────────
+  // Walks the org's full script list (allOrgScripts, threaded down from
+  // Dashboard) PLUS the currently-edited local drills, counts distinct
+  // drill names case-insensitively, and returns an array of
+  // { name, usage_count } sorted by frequency. Refreshes on every
+  // render via useMemo's input deps:
+  //   • allOrgScripts changes when Dashboard reloads scripts (onReload
+  //     after this editor saves, or after the AD switches programs).
+  //   • drills changes as the coach adds / edits drills in THIS editor,
+  //     so an in-session-added drill becomes a suggestion for the
+  //     next drill the coach types.
+  //
+  // Grouping is case-insensitive but we keep the canonical "display"
+  // casing of the FIRST occurrence — coaches who initially typed
+  // "standing line" see that spelling, not "STANDING LINE" if a
+  // later occurrence happened to be shouted. usage_count is the total
+  // across all casings. Cap at 200 distinct names (spec) to keep the
+  // in-memory filter quick even for veteran programs with years of
+  // accumulated drill vocabulary.
+  const drillNameSuggestions = useMemo(() => {
+    const counts = new Map() // key = lowercased name, value = { display, usage_count }
+    function add(rawName) {
+      if (typeof rawName !== 'string') return
+      const trimmed = rawName.trim()
+      if (!trimmed) return
+      const key = trimmed.toLowerCase()
+      const existing = counts.get(key)
+      if (existing) {
+        existing.usage_count += 1
+      } else {
+        counts.set(key, { display: trimmed, usage_count: 1 })
+      }
+    }
+    for (const s of (allOrgScripts ?? [])) {
+      if (!Array.isArray(s?.drills)) continue
+      for (const d of s.drills) add(d?.name)
+    }
+    // Include the local (possibly-unsaved) drills so the autocomplete
+    // reflects what the coach has typed in THIS editor session.
+    for (const d of (drills ?? [])) add(d?.name)
+    const list = []
+    for (const { display, usage_count } of counts.values()) {
+      list.push({ name: display, usage_count })
+    }
+    list.sort((a, b) => {
+      if (b.usage_count !== a.usage_count) return b.usage_count - a.usage_count
+      return a.name.localeCompare(b.name)
+    })
+    return list.slice(0, 200)
+  }, [allOrgScripts, drills])
 
   // ── Drill image picker handlers ──────────────────────────────────────────
   // Mutate the drill at `idx` with a new whiteboard_image_id (or strip
@@ -1701,12 +1774,19 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
                 ? whiteboardImages[drill.whiteboard_image_id] ?? null
                 : null}
               onOpenImagePicker={openImagePickerForDrill}
+              drillNameSuggestions={drillNameSuggestions}
             />
           ))}
 
           {/* ── Add drill form (hidden for readonly) ────────────────────── */}
           {userCanEdit && (
-            <AddDrillForm orgColor={orgColor} orgId={orgId} isGuest={isGuest} onAdd={addDrill} />
+            <AddDrillForm
+              orgColor={orgColor}
+              orgId={orgId}
+              isGuest={isGuest}
+              onAdd={addDrill}
+              drillNameSuggestions={drillNameSuggestions}
+            />
           )}
         </div>
       </div>
@@ -1933,6 +2013,11 @@ export default function ScriptsSection({
           // may include unsaved edits — the duplicate captures what
           // the coach SEES).
           onDuplicate={openDuplicateDialog}
+          // All scripts in the current org — fed into ScriptEditor so
+          // its drill-name autocomplete can mine historical drill
+          // names. Org-scoped upstream (Dashboard.loadScripts filters
+          // by org_id), so no cross-program leakage.
+          allOrgScripts={scripts}
         />
         {duplicateDialog}
       </div>
