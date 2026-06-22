@@ -406,11 +406,10 @@ export default function LandingPage() {
         </section>
 
         {/* ── TESTIMONIAL #4 (emphasis closer) ───────────────────────────── */}
-        {/* PLACEHOLDER — replace with real coach quote from interviews */}
         <Testimonial
-          quote="As an AD, I can see every program at our school in one place. Game-day operations got a lot easier."
-          coachName="[Title] [Last Name]"
-          program="[School]"
+          quote="PracticePace has been a tremendous addition to how we run practice. I no longer find myself constantly looking down at a paper practice plan — our staff can keep our attention on teaching, correcting, and coaching players. The built-in scoreboard and shot clock have been a huge help, too. No more finding someone to run the clock during practice."
+          coachName="Patrick Harding"
+          program="Head Basketball Coach, Whitesburg Christian Academy"
           emphasis
           orgColor={ACCENT}
         />
