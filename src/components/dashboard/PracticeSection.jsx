@@ -1056,7 +1056,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
         // rows of ~44 + ~28 + py-2 padding). The 44px peek handle stays
         // visible below it. Tweakable without breaking the open state
         // because the open state translates to 0.
-        '--ctrls-h':   'calc(env(safe-area-inset-bottom, 0px) + 164px)',
+        '--ctrls-h':   'calc(env(safe-area-inset-bottom, 0px) + 120px)',
         transform:     panelOpen ? 'translateY(0)' : 'translateY(var(--ctrls-h))',
         transition:    'transform 240ms ease-out',
         // Drop shadow above the panel when open so it visually separates
