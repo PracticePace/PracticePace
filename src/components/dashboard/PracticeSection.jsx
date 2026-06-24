@@ -320,6 +320,19 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
   // [DEBUG] Ref on the handle <button> so we can probe its bounding rect
   // at commit time. Used together with the console logs further down.
   const stripRef = useRef(null)
+  // Ref on the actual controls strip body (the row that sits BELOW the
+  // peek handle — music transport + center button rows + crowd noise
+  // toggle). Used with the ResizeObserver below to drive --ctrls-h
+  // dynamically: closed-state translateY hides the strip while leaving
+  // the 44 px handle visible, regardless of wrap-induced height changes
+  // (e.g. when MusicMiniControls widens as a song name appears,
+  // narrowing CENTER and forcing flex-wrap).
+  const controlsStripRef = useRef(null)
+  // Default to the strip-height assumption baked into 05c4b0a's hard-
+  // coded "+120" formula (132 px). First ResizeObserver fire overwrites
+  // this within one frame; the default is only there so the close-state
+  // translate has a sensible value before measure.
+  const [stripHeight, setStripHeight] = useState(132)
 
   // ── Practice-arc UI state ─────────────────────────────────────────────────
   // Two local flags drive the "complete → cleared" sequence and the
@@ -406,6 +419,51 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
     const t = setTimeout(() => setShowHandlePulse(false), 8000)
     return () => clearTimeout(t)
   }, [showHandlePulse])
+
+  // ── Controls strip height measurement ────────────────────────────────────
+  // Drives --ctrls-h dynamically so the closed-state translateY adapts
+  // to the strip's actual rendered height. The previous hardcoded
+  // "+120" (05c4b0a) was tuned for the music-not-playing layout; when a
+  // song name appears next to MusicMiniControls the LEFT segment
+  // widens by up to ~168 px, the CENTER flex-1 column narrows, both
+  // flex-wrap rows in it grow by an extra line, and the strip's real
+  // height jumps to 176-220 px. ResizeObserver catches that and any
+  // future control additions without re-tuning constants.
+  //
+  // The +120 magic number was strip_height (132) − 12, where 12 =
+  // bottom_anchor's static 32 px tab-bar gap − 44 px desired handle
+  // peek. With dynamic measurement the formula is
+  //     X = env(safe) + (measured_strip_height − 12)
+  // which collapses back to "+120" exactly when measured = 132 (i.e.
+  // when music isn't widening MusicMiniControls), so close-state
+  // visuals match 05c4b0a unchanged in the music-off case.
+  //
+  // iPad Safari compat: ResizeObserver supported since Safari 13.1
+  // (2020). No polyfill needed.
+  //
+  // Loop safety: floor the measured height; skip set-state when the
+  // floored value matches the prior render so subpixel jitter doesn't
+  // trigger extra renders.
+  useEffect(() => {
+    const el = controlsStripRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(entries => {
+      const entry = entries[0]
+      if (!entry) return
+      // Prefer borderBoxSize (incl. padding + border, matching what the
+      // translate needs to push past the screen edge). Fall back to
+      // contentRect.height for older browsers.
+      const next = Math.floor(
+        entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect?.height ?? 0
+      )
+      // Guard against the 0-height blip during unmount/hidden states —
+      // keep the previous value so the drawer doesn't visibly jump.
+      if (next <= 0) return
+      setStripHeight(prev => (prev === next ? prev : next))
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // [DEBUG] Diagnostics for the missing-on-iPad handle bug. Render-time
   // log of panelOpen + showHandlePulse so we can correlate symptom
@@ -1052,11 +1110,19 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
         // here on the panel side.
         bottom:        'calc(env(safe-area-inset-bottom, 0px) + 32px)',
         // CSS var: how far to slide down so only the handle peeks out.
-        // Matches the controls strip height (estimated 132px — two stacked
-        // rows of ~44 + ~28 + py-2 padding). The 44px peek handle stays
-        // visible below it. Tweakable without breaking the open state
-        // because the open state translates to 0.
-        '--ctrls-h':   'calc(env(safe-area-inset-bottom, 0px) + 120px)',
+        // Formula generalizes 05c4b0a's hardcoded "+120" by replacing
+        // the static strip-height assumption (132 px) with the live
+        // measured value from the ResizeObserver above:
+        //     X = env(safe-area-inset-bottom) + (stripHeight − 12)
+        //   = env(safe-area-inset-bottom) + (32 px bottom_anchor gap
+        //                                  + stripHeight − 44 px handle peek)
+        // When stripHeight == 132 (music off), this collapses to the
+        // same "+120" 05c4b0a shipped — close-state visuals are
+        // identical in the music-off case. When music kicks in and
+        // pushes the strip to 176-220 px, the offset auto-adapts so
+        // the close-state translate keeps the strip fully tucked.
+        // Open-state translateY(0) is unaffected.
+        '--ctrls-h':   `calc(env(safe-area-inset-bottom, 0px) + ${stripHeight - 12}px)`,
         transform:     panelOpen ? 'translateY(0)' : 'translateY(var(--ctrls-h))',
         transition:    'transform 240ms ease-out',
         // Drop shadow above the panel when open so it visually separates
@@ -1153,8 +1219,10 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
       {/* CONTROLS STRIP ─ original content, now the body of the slide panel.
           Solid #080000 background and hard top edge same as before, so
           coaches can still crop the display zone above for ProPresenter /
-          AirPlay when the panel is open. */}
+          AirPlay when the panel is open. ResizeObserver above watches
+          this element so --ctrls-h tracks its actual rendered height. */}
     <div
+      ref={controlsStripRef}
       className="flex items-center justify-between gap-3 px-4 py-2"
       style={{ backgroundColor: '#080000', borderTop: '1px solid #1a0000' }}
     >
