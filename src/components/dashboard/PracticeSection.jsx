@@ -1109,20 +1109,38 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
         // doesn't add safe-area padding itself, so we have to clear it
         // here on the panel side.
         bottom:        'calc(env(safe-area-inset-bottom, 0px) + 32px)',
-        // CSS var: how far to slide down so only the handle peeks out.
-        // Formula generalizes 05c4b0a's hardcoded "+120" by replacing
-        // the static strip-height assumption (132 px) with the live
-        // measured value from the ResizeObserver above:
-        //     X = env(safe-area-inset-bottom) + (stripHeight − 12)
-        //   = env(safe-area-inset-bottom) + (32 px bottom_anchor gap
-        //                                  + stripHeight − 44 px handle peek)
-        // When stripHeight == 132 (music off), this collapses to the
-        // same "+120" 05c4b0a shipped — close-state visuals are
-        // identical in the music-off case. When music kicks in and
-        // pushes the strip to 176-220 px, the offset auto-adapts so
-        // the close-state translate keeps the strip fully tucked.
-        // Open-state translateY(0) is unaffected.
-        '--ctrls-h':   `calc(env(safe-area-inset-bottom, 0px) + ${stripHeight - 12}px)`,
+        // CSS var: how far to slide down to fully hide the strip while
+        // leaving the handle visible above the clip.
+        //
+        // Derivation (y increases downward; Y_clip = PracticeSection's
+        // bottom edge / overflow-hidden clip boundary):
+        //     A    = env(safe-area-inset-bottom) + 32   (panel's bottom
+        //                                                anchor = above)
+        //     Hs   = measured strip height (ResizeObserver, below)
+        //     M    = 12 px margin between handle and strip (set below
+        //            via marginBottom on the handle button)
+        //     Hh   = 44 px handle height
+        //
+        // After translateY(T):
+        //     Strip top y    = Y_clip − A − Hs + T
+        //     Handle bottom y = Strip top y − M  (handle sits above
+        //                                         strip, separated by M)
+        //
+        // For ZERO bleed (strip top exactly at clip):
+        //     T = A + Hs   →   --ctrls-h = env(safe) + (Hs + 32)
+        //
+        // With M = 12 the handle bottom lands at Y_clip − 12 — i.e.
+        // 12 px of breathing room above the clip — handle fully visible
+        // from Y_clip − 56 to Y_clip − 12.
+        //
+        // Replaces the previous "+ (stripHeight − 12)" formula whose
+        // Hs term cancelled against the bottom anchor's Hs term and
+        // left a 44 px constant content bleed regardless of how tall
+        // the strip got. The structural piece (handle marginBottom)
+        // lives outside the ResizeObserver-measured box so the formula
+        // adapts to strip growth (wrap when music plays, future
+        // control additions) without re-tuning.
+        '--ctrls-h':   `calc(env(safe-area-inset-bottom, 0px) + ${stripHeight + 32}px)`,
         transform:     panelOpen ? 'translateY(0)' : 'translateY(var(--ctrls-h))',
         transition:    'transform 240ms ease-out',
         // Drop shadow above the panel when open so it visually separates
@@ -1159,6 +1177,17 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
         style={{
           height:          44,
           gap:             10,
+          // 12 px gap between the handle and the controls strip below.
+          // In the CLOSED state this gap is what makes the handle visibly
+          // sit 12 px above the clip boundary instead of flush with it —
+          // i.e. the structural breathing room that the --ctrls-h formula
+          // above can't produce on its own (T = A + Hs lands handle bottom
+          // exactly at Y_clip). The gap is OUTSIDE the strip's measured
+          // box (it's between two siblings in the panel, not inside the
+          // strip's border-box), so ResizeObserver isn't fooled into
+          // re-translating to compensate — the formula stays correct as
+          // the strip grows.
+          marginBottom:    12,
           // Gradient fades the panel chrome into the display zone — dark
           // at the bottom, semi-transparent at the top — so the handle
           // reads as "the bottom of the screen" rather than a hard band.
