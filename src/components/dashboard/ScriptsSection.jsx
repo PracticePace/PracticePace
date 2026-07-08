@@ -803,7 +803,19 @@ function CueControl({ cueUrl, onChange, orgColor, orgId, isGuest }) {
 // reads values on Add click, calls onAdd(fields), then clears itself.
 const DURATION_PRESETS = [5, 10, 15, 20]
 
-function AddDrillForm({ orgColor, orgId, isGuest, onAdd, drillNameSuggestions = [] }) {
+function AddDrillForm({
+  orgColor, orgId, isGuest, onAdd, drillNameSuggestions = [],
+  // Per-drill image state (owned by ScriptEditor, mirrors the pattern
+  // used by DrillRow's edit-mode control). imageId is the currently-
+  // staged uuid; attachedImage is the resolved { image_url, name } or
+  // null. Tapping the control fires onOpenImagePicker() with no args —
+  // the parent's picker handlers (handlePickerSelect / etc.) know
+  // this session belongs to the add-form via its pickingForAdd flag
+  // and will update imageId when the coach picks or clears.
+  imageId = null,
+  attachedImage = null,
+  onOpenImagePicker,
+}) {
   const [name,      setName]      = useState('')
   const [mins,      setMins]      = useState('')
   const [secs,      setSecs]      = useState('')
@@ -840,6 +852,11 @@ function AddDrillForm({ orgColor, orgId, isGuest, onAdd, drillNameSuggestions = 
       notes:       notes.trim(),
       show_notes:  effectiveShowNotes,
       cue_mp3_url: cueUrl,
+      // Only set when actually attached — keeps the drill JSON lean.
+      // Parent's addDrill(fields) reads this and also resets its
+      // addFormImageId state so the next add-form iteration starts
+      // fresh.
+      whiteboard_image_id: imageId || undefined,
     })
     setName('')
     setMins('')
@@ -931,6 +948,51 @@ function AddDrillForm({ orgColor, orgId, isGuest, onAdd, drillNameSuggestions = 
         orgId={orgId}
         isGuest={isGuest}
       />
+
+      {/* Image attach control — mirrors the edit-mode control below on
+          DrillRow. Guest gate matches (guests can't upload to the
+          library either), so this control simply isn't rendered for
+          guests. The picker + upload chain live at ScriptEditor level;
+          this button just signals "open the picker for the add-form"
+          via onOpenImagePicker(). */}
+      {!isGuest && (
+        <button
+          type="button"
+          onClick={onOpenImagePicker}
+          className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors text-left"
+          style={{
+            backgroundColor: '#0d0000',
+            color:           attachedImage ? '#e8d8d8' : '#9a8080',
+            border:          `1px solid ${attachedImage ? orgColor + '88' : '#3a1414'}`,
+          }}
+          title={attachedImage ? 'Change or remove attached image' : 'Attach an image from the library'}
+        >
+          {attachedImage ? (
+            <>
+              <img
+                src={attachedImage.image_url}
+                alt=""
+                className="rounded"
+                style={{ width: 28, height: 28, objectFit: 'cover', backgroundColor: '#fff' }}
+              />
+              <span className="truncate" style={{ maxWidth: 220 }}>
+                Image: {attachedImage.name}
+              </span>
+              <span className="ml-auto" style={{ color: '#7a6060' }}>Change…</span>
+            </>
+          ) : (
+            <>
+              <span
+                className="inline-flex items-center justify-center rounded"
+                style={{ width: 28, height: 28, border: '1px dashed #3a1414', color: '#7a6060' }}
+              >
+                🖼
+              </span>
+              <span>+ Attach image (optional)</span>
+            </>
+          )}
+        </button>
+      )}
 
       <button onClick={handleAdd} disabled={!name.trim()}
         className="w-full py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-40"
@@ -1181,24 +1243,61 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
             >
               {drill.name || <span style={{ color: '#7a4040', fontStyle: 'italic', fontWeight: 400 }}>Untitled drill</span>}
             </span>
-            {/* Image attached indicator — passive thumbnail + name pill
-                so coaches can scan the script and see which drills have
-                images at a glance. Not clickable in display mode — use
-                ✎ Edit to open the picker. */}
-            {attachedImage && (
-              <span
-                className="inline-flex items-center gap-1.5 text-xs shrink-0 px-1.5 py-1 rounded-md"
-                style={{ color: '#c8a0a0', border: '1px solid #3a1414', backgroundColor: '#0d0000' }}
-                title={`Image: ${attachedImage.name}`}
-              >
-                <img
-                  src={attachedImage.image_url}
-                  alt=""
-                  className="rounded"
-                  style={{ width: 18, height: 18, objectFit: 'cover', backgroundColor: '#fff' }}
-                />
-                <span className="truncate" style={{ maxWidth: 120 }}>{attachedImage.name}</span>
-              </span>
+            {/* Image control — compact affordance visible in display
+                mode so coaches can attach/change without opening ✎ Edit.
+                Two states:
+                  • attachedImage set → thumbnail + name pill, clickable
+                    (opens picker to change/remove).
+                  • no attachment → small 🖼 icon button (writers only).
+                Guest mode + team_manager both skip the click affordance:
+                guests can't upload to the library, team_manager can't
+                edit scripts. team_manager still sees the passive
+                thumbnail-only view via the userCanEdit branch below. */}
+            {attachedImage ? (
+              userCanEdit && !isGuest ? (
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); onOpenImagePicker?.(index) }}
+                  className="inline-flex items-center gap-1.5 text-xs shrink-0 px-1.5 py-1 rounded-md transition-colors hover:bg-[rgba(255,255,255,0.05)]"
+                  style={{ color: '#c8a0a0', border: '1px solid #3a1414', backgroundColor: '#0d0000' }}
+                  title="Change or remove attached image"
+                >
+                  <img
+                    src={attachedImage.image_url}
+                    alt=""
+                    className="rounded"
+                    style={{ width: 18, height: 18, objectFit: 'cover', backgroundColor: '#fff' }}
+                  />
+                  <span className="truncate" style={{ maxWidth: 120 }}>{attachedImage.name}</span>
+                </button>
+              ) : (
+                <span
+                  className="inline-flex items-center gap-1.5 text-xs shrink-0 px-1.5 py-1 rounded-md"
+                  style={{ color: '#c8a0a0', border: '1px solid #3a1414', backgroundColor: '#0d0000' }}
+                  title={`Image: ${attachedImage.name}`}
+                >
+                  <img
+                    src={attachedImage.image_url}
+                    alt=""
+                    className="rounded"
+                    style={{ width: 18, height: 18, objectFit: 'cover', backgroundColor: '#fff' }}
+                  />
+                  <span className="truncate" style={{ maxWidth: 120 }}>{attachedImage.name}</span>
+                </span>
+              )
+            ) : (
+              userCanEdit && !isGuest && (
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); onOpenImagePicker?.(index) }}
+                  aria-label="Attach an image from the library"
+                  title="Attach an image from the library"
+                  className="text-sm shrink-0 w-8 h-8 flex items-center justify-center rounded-md transition-colors hover:bg-[rgba(255,255,255,0.05)]"
+                  style={{ color: '#7a6060', border: '1px dashed #3a1414', backgroundColor: 'transparent' }}
+                >
+                  🖼
+                </button>
+              )
             )}
             {/* Cue attached indicator — clickable to preview without entering edit mode */}
             {drill.cue_mp3_url && (
@@ -1305,6 +1404,16 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
   const [imageError,       setImageError]       = useState('')
   const [libraryReloadKey, setLibraryReloadKey] = useState(0)
   const fileInputRef = useRef(null)
+  // Pending image state for the AddDrillForm's inline attach control.
+  // Lives here (not inside AddDrillForm) so the picker + upload chain
+  // above can route their onSelect/upload results back to the form
+  // without threading callbacks through refs. Cleared by addDrill()
+  // once the new drill is committed. pickingForAdd disambiguates which
+  // entry point opened the picker — an integer pickingDrillIdx means
+  // "attach to that drill row"; pickingForAdd === true means "attach
+  // to the add-form's pending drill".
+  const [addFormImageId, setAddFormImageId] = useState(null)
+  const [pickingForAdd,  setPickingForAdd]  = useState(false)
 
   // ── Drill-name autocomplete suggestions ──────────────────────────────────
   // Walks the org's full script list (allOrgScripts, threaded down from
@@ -1381,17 +1490,37 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
     setPickingDrillIdx(idx)
   }
 
+  // Entry point from the AddDrillForm's inline attach control. Uses the
+  // pickingForAdd flag to distinguish from row-driven picks so
+  // handlePickerSelect knows to update addFormImageId instead of
+  // attaching to a drill that doesn't exist yet.
+  function openImagePickerForAdd() {
+    setImageError('')
+    setPickingForAdd(true)
+  }
+
   function closeImagePicker() {
     setPickingDrillIdx(null)
+    setPickingForAdd(false)
   }
 
   function handlePickerSelect(row) {
+    if (pickingForAdd) {
+      setAddFormImageId(row.id)
+      setPickingForAdd(false)
+      return
+    }
     if (pickingDrillIdx == null) return
     attachImageToDrill(pickingDrillIdx, row.id)
     setPickingDrillIdx(null)
   }
 
   function handlePickerClearAttach() {
+    if (pickingForAdd) {
+      setAddFormImageId(null)
+      setPickingForAdd(false)
+      return
+    }
     if (pickingDrillIdx == null) return
     attachImageToDrill(pickingDrillIdx, null)
     setPickingDrillIdx(null)
@@ -1410,6 +1539,10 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
       }
       return d
     }))
+    // Also clear the pending add-form attachment if the coach deleted
+    // that image from the library — otherwise the form would try to
+    // save a dangling id when they hit + Add Drill.
+    setAddFormImageId(prev => (prev === row.id ? null : prev))
     onWhiteboardImagesReload()
   }
 
@@ -1483,9 +1616,15 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
         throw new Error(insErr.message || 'Could not save to library')
       }
 
-      // Auto-attach to the drill that opened this picker session.
-      if (pickingDrillIdx != null && inserted?.id) {
-        attachImageToDrill(pickingDrillIdx, inserted.id)
+      // Auto-attach to whichever surface opened this picker session —
+      // a drill row (attach to that drill) or the AddDrillForm (stage
+      // the id on the pending drill so the next + Add Drill saves it).
+      if (inserted?.id) {
+        if (pickingDrillIdx != null) {
+          attachImageToDrill(pickingDrillIdx, inserted.id)
+        } else if (pickingForAdd) {
+          setAddFormImageId(inserted.id)
+        }
       }
       // Refresh the Dashboard-level map so the new image is resolvable
       // immediately. Also bump reloadKey so the library refetches if
@@ -1577,18 +1716,26 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
 
   // ── Drill mutations ─────────────────────────────────────────────────────────
   function addDrill(fields) {
-    const next = [
-      ...drills,
-      {
-        name:        fields.name,
-        duration:    fields.duration,
-        notes:       fields.notes ?? '',
-        show_notes:  !!fields.show_notes,
-        cue_mp3_url: fields.cue_mp3_url ?? '',
-      },
-    ]
+    const newDrill = {
+      name:        fields.name,
+      duration:    fields.duration,
+      notes:       fields.notes ?? '',
+      show_notes:  !!fields.show_notes,
+      cue_mp3_url: fields.cue_mp3_url ?? '',
+    }
+    // Carry the AddDrillForm's pending image attachment only when set —
+    // keeps the JSON shape lean for image-less drills, matches how the
+    // save-payload builder above filters this field.
+    if (fields.whiteboard_image_id) {
+      newDrill.whiteboard_image_id = fields.whiteboard_image_id
+    }
+    const next = [...drills, newDrill]
     setDrills(next)
     schedSave(name, sport, next)
+    // Reset the add-form's pending attachment so the next drill starts
+    // fresh. cue_mp3_url and other resets already happen inside
+    // AddDrillForm; imageId lives at editor level so we clear it here.
+    setAddFormImageId(null)
   }
 
   function saveDrill(index, updates) {
@@ -1786,6 +1933,14 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
               isGuest={isGuest}
               onAdd={addDrill}
               drillNameSuggestions={drillNameSuggestions}
+              // Per-drill image on the pending drill. Owned by
+              // ScriptEditor so the picker + upload chain can route
+              // results back without threading callbacks through refs.
+              imageId={addFormImageId}
+              attachedImage={addFormImageId
+                ? whiteboardImages[addFormImageId] ?? null
+                : null}
+              onOpenImagePicker={openImagePickerForAdd}
             />
           )}
         </div>
@@ -1807,11 +1962,17 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
             style={{ display: 'none' }}
           />
 
-          {pickingDrillIdx != null && !pendingFile && !pendingNamedBlob && (
+          {(pickingDrillIdx != null || pickingForAdd) && !pendingFile && !pendingNamedBlob && (
             <WhiteboardImageLibraryDialog
               orgId={orgId}
               mode="picker"
-              currentImageId={drills[pickingDrillIdx]?.whiteboard_image_id ?? null}
+              // Resolve which id is "current" based on the picker session:
+              // add-form uses its pending id, drill row uses its saved id.
+              currentImageId={
+                pickingForAdd
+                  ? addFormImageId
+                  : (drills[pickingDrillIdx]?.whiteboard_image_id ?? null)
+              }
               orgColor={orgColor}
               reloadKey={libraryReloadKey}
               onSelect={handlePickerSelect}
