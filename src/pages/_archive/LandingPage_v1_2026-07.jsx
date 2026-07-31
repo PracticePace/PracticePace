@@ -20,10 +20,19 @@
 // <section>, <footer>).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ARCHIVED 2026-07-31: Original React-served landing page, replaced by
+// Boostr-designed marketing site. Preserved for potential rollback.
+// Not imported anywhere in the active codebase — see App.jsx which now
+// mounts HomePage instead. Imports below are rewritten for the new
+// _archive/ location so a future rollback (moving this file back to
+// src/pages/LandingPage.jsx) needs only import-path adjustments back
+// to '../components/…'. Testimonial_v1 sits next to this file to keep
+// the rollback self-contained.
+
 import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import Logo from '../components/Logo'
-import Testimonial from '../components/Testimonial'
+import Logo from '../../components/Logo'
+import Testimonial from './Testimonial_v1'
 
 const ACCENT = '#cc1111'
 

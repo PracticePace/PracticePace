@@ -1,1 +1,24 @@
 @import "tailwindcss";
+
+/* Marketing site theme tokens (Tailwind v4 @theme).
+ *
+ * Fonts loaded via <link> in index.html — see the fonts comment there for
+ * why we substitute Barlow Condensed 700 for DIN Condensed Bold on
+ * launch. Adding aliased Tailwind utilities below so components can
+ * write `font-display`, `font-button`, `font-body` instead of raw
+ * fontFamily inline styles.
+ *
+ * `--color-brand-red` is the MARKETING red per the Boostr mockups
+ * (#df1f26). This is distinct from the app's existing #cc1111 red used
+ * throughout the coach-facing Dashboard / Practice / Scoreboard
+ * screens — do NOT overwrite that; the marketing red is exposed only
+ * as `bg-brand-red` / `text-brand-red` / `border-brand-red` and lives
+ * next to the existing app red, not replacing it.
+ */
+@theme {
+  --font-display: "Bebas Neue", sans-serif;
+  --font-button:  "Barlow Condensed", sans-serif;
+  --font-body:    "Inter", sans-serif;
+
+  --color-brand-red: #df1f26;
+}

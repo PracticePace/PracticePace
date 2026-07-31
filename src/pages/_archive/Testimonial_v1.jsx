@@ -1,3 +1,8 @@
+// ARCHIVED 2026-07-31: was src/components/Testimonial.jsx, only used by
+// the pre-rebuild landing page (now at LandingPage_v1_2026-07.jsx in this
+// same folder). Moved here so the src/components/ tree only contains
+// live-app components. Nothing in the active codebase imports this file.
+//
 // ─────────────────────────────────────────────────────────────────────────────
 // Testimonial — reusable pull-quote block for the landing page.
 //

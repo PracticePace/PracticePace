@@ -2,7 +2,14 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { OrgProvider } from './context/OrgContext'
 import ProtectedRoute from './components/ProtectedRoute'
-import LandingPage from './pages/LandingPage'
+// Marketing site pages — foundation commit stubs; real content lands
+// in Commits 2-5 (Home, Sports, About, Contact respectively). The
+// previous single-page LandingPage.jsx is preserved at
+// src/pages/_archive/LandingPage_v1_2026-07.jsx for rollback.
+import HomePage    from './pages/HomePage'
+import AboutPage   from './pages/AboutPage'
+import SportsPage  from './pages/SportsPage'
+import ContactPage from './pages/ContactPage'
 import Login from './pages/Login'
 import Onboarding from './pages/Onboarding'
 import Dashboard from './pages/Dashboard'
@@ -15,10 +22,12 @@ import Pricing      from './pages/Pricing'
 import ResetPassword from './pages/ResetPassword'
 
 // Root-route gate: signed-in users skip directly to /dashboard (preserves
-// today's behavior for active coaches); signed-out users see the marketing
-// landing page. While AuthContext is still restoring the session we show
-// the same centered spinner ProtectedRoute uses so returning users don't
-// flash the landing page for one frame before being redirected.
+// today's behavior for active coaches); signed-out users see the new
+// marketing HomePage (Boostr redesign — foundation stub in this commit,
+// real content in Commit 2). While AuthContext is still restoring the
+// session we show the same centered spinner ProtectedRoute uses so
+// returning users don't flash the marketing page for one frame before
+// being redirected.
 function RootRoute() {
   const { user, loading } = useAuth()
   if (loading) {
@@ -32,7 +41,7 @@ function RootRoute() {
     )
   }
   if (user) return <Navigate to="/dashboard" replace />
-  return <LandingPage />
+  return <HomePage />
 }
 
 export default function App() {
@@ -50,6 +59,14 @@ export default function App() {
                 "/" — they get the marketing page instead of the Login
                 screen, which is the new desired funnel. */}
             <Route path="/"           element={<RootRoute />} />
+            {/* Marketing pages — always accessible (no auth gate).
+                Signed-in coaches can still visit them; the RootRoute
+                auth-redirect only applies to `/`. Real content lands
+                in Commits 3-5; foundation stubs render header +
+                "coming soon" + CTA + footer. */}
+            <Route path="/sports"     element={<SportsPage />} />
+            <Route path="/about"      element={<AboutPage />} />
+            <Route path="/contact"    element={<ContactPage />} />
             <Route path="/login"      element={<Login />} />
             <Route path="/pricing"    element={<Pricing />} />
             <Route path="/onboarding" element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
