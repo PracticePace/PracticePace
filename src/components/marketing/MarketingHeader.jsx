@@ -62,22 +62,45 @@ export default function MarketingHeader() {
           ))}
         </nav>
 
-        {/* GET STARTED — routes to the app's Login page for now (which
-            is also the account-create surface via its inline mode
-            toggle). Uses font-button (Barlow Condensed 700). */}
-        <Link
-          to="/login"
-          className="shrink-0 font-button uppercase text-white transition-opacity hover:opacity-90"
-          style={{
-            backgroundColor: 'var(--color-brand-red)',
-            padding:         '10px 20px',
-            fontSize:        '0.95rem',
-            letterSpacing:   '0.08em',
-            borderRadius:    '4px',
-          }}
-        >
-          Get Started
-        </Link>
+        {/* Right cluster — LOG IN text link + GET STARTED red button.
+            Wrapped together so they read as one block on the right and
+            share the same responsive spacing. Both remain visible on
+            mobile since there's no hamburger menu yet (later commit);
+            when a real mobile menu lands, LOG IN moves into it. */}
+        <div className="shrink-0 flex items-center gap-3 sm:gap-5">
+          {/* LOG IN — for existing coaches who came to the marketing
+              site and want to jump straight into their account. Text
+              link (not a button) to visually subordinate it to the red
+              GET STARTED conversion CTA next to it. Same font family
+              + size as the primary nav for visual continuity. */}
+          <Link
+            to="/login"
+            className="font-display uppercase text-white transition-colors duration-200 hover:text-brand-red"
+            style={{
+              fontSize:      '1rem',
+              letterSpacing: '0.08em',
+            }}
+          >
+            Log In
+          </Link>
+
+          {/* GET STARTED — routes to the app's Login page (which is
+              also the account-create surface via its inline mode
+              toggle). Uses font-button (Barlow Condensed 700). */}
+          <Link
+            to="/login"
+            className="font-button uppercase text-white transition-opacity hover:opacity-90"
+            style={{
+              backgroundColor: 'var(--color-brand-red)',
+              padding:         '10px 20px',
+              fontSize:        '0.95rem',
+              letterSpacing:   '0.08em',
+              borderRadius:    '4px',
+            }}
+          >
+            Get Started
+          </Link>
+        </div>
       </div>
     </header>
   )
