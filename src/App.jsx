@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { OrgProvider } from './context/OrgContext'
 import ProtectedRoute from './components/ProtectedRoute'
+import ScrollToTop from './components/ScrollToTop'
 // Marketing site pages — foundation commit stubs; real content lands
 // in Commits 2-5 (Home, Sports, About, Contact respectively). The
 // previous single-page LandingPage.jsx is preserved at
@@ -47,6 +48,7 @@ function RootRoute() {
 export default function App() {
   return (
     <BrowserRouter>
+      <ScrollToTop />
       <AuthProvider>
         <OrgProvider>
           <Routes>
