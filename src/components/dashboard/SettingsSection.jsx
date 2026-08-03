@@ -84,10 +84,14 @@ const PRICE_LABELS = {
 }
 
 const STATUS_LABELS = {
-  trialing:  { label: 'Free Trial',   color: '#cc8800', bg: '#1a0d00', border: '#3a2000' },
-  active:    { label: 'Active',       color: '#66cc88', bg: '#001a00', border: '#003300' },
-  past_due:  { label: 'Payment Due',  color: '#ff6666', bg: '#2a0000', border: '#6a0000' },
-  canceled:  { label: 'Canceled',     color: '#9a8080', bg: '#1a0000', border: '#2a0000' },
+  trialing:      { label: 'Free Trial',    color: '#cc8800', bg: '#1a0d00', border: '#3a2000' },
+  active:        { label: 'Active',        color: '#66cc88', bg: '#001a00', border: '#003300' },
+  past_due:      { label: 'Payment Due',   color: '#ff6666', bg: '#2a0000', border: '#6a0000' },
+  canceled:      { label: 'Canceled',      color: '#9a8080', bg: '#1a0000', border: '#2a0000' },
+  // Complimentary accounts get access outside the Stripe flow — founding
+  // customers, testimonial partners, comped programs. Uses the same green
+  // palette as 'Active' so it reads as a healthy account state.
+  complimentary: { label: 'Complimentary', color: '#66cc88', bg: '#001a00', border: '#003300' },
 }
 
 export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
@@ -1367,7 +1371,11 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
               const trialEnd = sub?.trial_ends_at ? new Date(sub.trial_ends_at) : null
               const now      = new Date()
               const daysLeft = trialEnd ? Math.ceil((trialEnd - now) / 86400000) : null
-              const trialExpired = trialEnd && trialEnd < now && status !== 'active'
+              // Complimentary accounts bypass every billing check — mirrors
+              // the Dashboard-level short-circuit so a stale trial_ends_at
+              // can't accidentally flip trialExpired true here either.
+              const isComplimentary = status === 'complimentary'
+              const trialExpired = !isComplimentary && trialEnd && trialEnd < now && status !== 'active'
               const hasStripe = !!(sub?.stripe_customer_id)
               const statusMeta = STATUS_LABELS[status] ?? STATUS_LABELS.canceled
 
@@ -1377,6 +1385,30 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                   <p className="text-sm" style={{ color: '#9a8080' }}>
                     Account not found. Please reload or contact support.
                   </p>
+                )
+              }
+
+              // ── Complimentary account ─────────────────────────────────────
+              // Full access with no billing. No Subscribe/Upgrade CTAs — a
+              // comped account should not be nudged toward payment flows.
+              if (isComplimentary) {
+                return (
+                  <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs uppercase tracking-widest" style={{ color: '#4a2020' }}>Status</span>
+                        <span className="text-xs font-bold px-2.5 py-1 rounded-full"
+                          style={{ backgroundColor: statusMeta.bg, color: statusMeta.color, border: `1px solid ${statusMeta.border}` }}>
+                          {statusMeta.label}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2 pt-1" style={{ borderTop: '1px solid #2a0000' }}>
+                      <p className="text-xs leading-relaxed" style={{ color: '#9a8080' }}>
+                        This account has been designated complimentary. Full access, no billing.
+                      </p>
+                    </div>
+                  </div>
                 )
               }
 

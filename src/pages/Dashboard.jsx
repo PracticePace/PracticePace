@@ -177,12 +177,19 @@ export default function Dashboard() {
   const trialEndsAt = subscription?.trial_ends_at ? new Date(subscription.trial_ends_at) : null
   const now         = new Date()
   const daysLeft    = trialEndsAt ? Math.ceil((trialEndsAt - now) / 86400000) : null
-  // Trial expired = trial_ends_at has passed and not yet converted to active
-  const trialExpired = trialEndsAt !== null && trialEndsAt < now && subStatus !== 'active'
+  // Complimentary accounts bypass all billing checks — no trial, no
+  // expiration, no paywall. Currently reserved for founding customers,
+  // testimonial partners, and comped programs.
+  const isComplimentary = subStatus === 'complimentary'
+  // Trial expired = trial_ends_at has passed and not yet converted to active.
+  // Complimentary accounts short-circuit this so a stale trial_ends_at can't
+  // paywall a comped row (defense-in-depth — the DB update also nulls it).
+  const trialExpired = !isComplimentary && trialEndsAt !== null && trialEndsAt < now && subStatus !== 'active'
   // Subtle amber banner — only shown in the last 3 days of a live trial
   const showTrialBanner = !isGuest && subStatus === 'trialing' && daysLeft !== null && daysLeft > 0 && daysLeft <= 3
-  // Full-screen paywall: canceled, past_due, or trial ran out
-  const showPaywall = !isGuest && subStatus !== null && (
+  // Full-screen paywall: canceled, past_due, or trial ran out. Complimentary
+  // accounts never see the paywall regardless of the other flags.
+  const showPaywall = !isGuest && !isComplimentary && subStatus !== null && (
     subStatus === 'canceled' ||
     subStatus === 'past_due' ||
     trialExpired
