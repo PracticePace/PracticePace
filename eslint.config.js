@@ -15,7 +15,12 @@ export default defineConfig([
     ],
     languageOptions: {
       ecmaVersion: 2020,
-      globals: globals.browser,
+      globals: {
+        ...globals.browser,
+        // Injected at build time by vite.config.js's `define` block.
+        // Declared here so `no-undef` doesn't flag its use in JSX.
+        __BUILD_NUMBER__: 'readonly',
+      },
       parserOptions: {
         ecmaVersion: 'latest',
         ecmaFeatures: { jsx: true },
