@@ -293,7 +293,16 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
       <div className="flex-1 flex gap-3 min-h-0">
 
         {/* ── LEFT: Down / To Go / Ball On — LED scoreboard style ─────────── */}
-        <div className="flex-1 flex flex-col rounded-2xl overflow-hidden"
+        {/* min-h-0 lets the column shrink when the top row is tight —
+            without it, the three flex-1 rows can push past the column's
+            box and the overflow-hidden clips the BALL ON row at the
+            bottom (that was the reported iPad Air landscape bug). With
+            min-h-0 the rows equally divide whatever height is available;
+            paired with the reduced digit clamp below they fit at every
+            tested viewport, and if a future viewport is even tighter
+            digits clip a few px inside their rows rather than a whole
+            row disappearing. */}
+        <div className="flex-1 flex flex-col rounded-2xl overflow-hidden min-h-0"
           style={{ backgroundColor: '#110000', border: '1px solid #2a0000' }}>
 
           {/* ROW 1: DOWN — tap digit to cycle 1 → 2 → 3 → 4 → 1 */}
@@ -303,7 +312,7 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
               onClick={() => setDown(d => (d + 1) % 4)}
               style={{
                 fontFamily:         '"Courier New", "Roboto Mono", monospace',
-                fontSize:           'clamp(5rem, 10vw, 7rem)',
+                fontSize:           'clamp(4rem, 8vw, 6rem)',
                 fontWeight:         700,
                 color:              PLAY_AMBER,
                 fontVariantNumeric: 'tabular-nums',
@@ -340,7 +349,7 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
             <span
               style={{
                 fontFamily:         '"Courier New", "Roboto Mono", monospace',
-                fontSize:           'clamp(5rem, 10vw, 7rem)',
+                fontSize:           'clamp(4rem, 8vw, 6rem)',
                 fontWeight:         700,
                 color:              PLAY_AMBER,
                 fontVariantNumeric: 'tabular-nums',
@@ -424,7 +433,7 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
                 }}
                 style={{
                   fontFamily:         '"Courier New", "Roboto Mono", monospace',
-                  fontSize:           'clamp(5rem, 10vw, 7rem)',
+                  fontSize:           'clamp(4rem, 8vw, 6rem)',
                   fontWeight:         700,
                   color:              PLAY_AMBER,
                   fontVariantNumeric: 'tabular-nums',
@@ -444,7 +453,7 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
                 onClick={() => setEditingBallOn(true)}
                 style={{
                   fontFamily:         '"Courier New", "Roboto Mono", monospace',
-                  fontSize:           'clamp(5rem, 10vw, 7rem)',
+                  fontSize:           'clamp(4rem, 8vw, 6rem)',
                   fontWeight:         700,
                   color:              PLAY_AMBER,
                   fontVariantNumeric: 'tabular-nums',
@@ -623,7 +632,7 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
             <span
               className="font-black font-mono leading-none"
               style={{
-                fontSize:           'clamp(7rem, 16vw, 11rem)',
+                fontSize:           'clamp(6rem, 13vw, 9rem)',
                 color:              amberNow,
                 fontVariantNumeric: 'tabular-nums',
               }}
