@@ -1305,35 +1305,30 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
 
           {/* Restart Drill — drill-scoped rewind. Resets ONLY the current
               drill's timer to its full duration; keeps the drill index
-              unchanged. This slot used to hold a whole-practice reset
-              that coaches misread as "restart this drill" — swapping the
-              behavior here matches the mental model. The whole-practice
-              reset now lives at the far right ("Restart Practice") next
-              to End Practice, gated by a confirm modal. Inline SVG
-              (rewind-to-start arrow: two chevrons pointing back to a
-              vertical bar) instead of a Unicode glyph so it can't be
-              mistaken for the ↺ that means the destructive action. */}
+              unchanged. Matches Next's outlined-orgColor treatment so
+              it reads as a peer transport action (non-destructive) in
+              the same visual family as Start/Pause/Next. Small rewind-
+              to-start SVG inline with the label follows the file's
+              "glyph + text" pattern (▶ Start / Next →). */}
           <button
             onClick={handleRestartDrill}
-            title="Restart current drill"
             aria-label="Restart current drill"
-            className="w-11 h-11 rounded-xl flex items-center justify-center transition-opacity"
+            className="h-11 px-5 rounded-xl font-black flex items-center gap-2 transition-all"
             style={{
-              border:          '1px solid #2a0000',
-              color:           '#9a8080',
-              backgroundColor: backgroundUrl ? 'rgba(17,0,0,0.85)' : '#110000',
+              backgroundColor: backgroundUrl ? 'rgba(26,0,0,0.90)' : '#110000',
+              border:          `2px solid ${orgColor}`,
+              color:           orgColor,
+              fontSize:        '1rem',
             }}
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" strokeWidth="2"
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" strokeWidth="2.5"
                  strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              {/* Rewind-to-start: vertical bar at left + two chevrons
-                  pointing back toward it. Reads as "back to the start
-                  of this segment" (not "restart everything"). */}
               <line x1="5" y1="4" x2="5" y2="20" />
               <polygon points="12 4 5 12 12 20 12 4" />
               <polygon points="21 4 14 12 21 20 21 4" />
             </svg>
+            Restart Drill
           </button>
 
           {/* Start / Pause */}
@@ -1362,6 +1357,33 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
             }}
           >
             Next →
+          </button>
+
+          {/* Thin divider — signals "next button is a different category":
+              still transport-adjacent, but scoped to the whole practice
+              rather than a single drill. */}
+          <div className="w-px h-7 mx-1" style={{ backgroundColor: '#2a0000' }} />
+
+          {/* Restart Practice — whole-practice reset, gated by a confirm
+              modal (opened via setShowRestartConfirm). Same shape as
+              Restart Drill / Next so it reads as part of the transport
+              family, but muted-gray outline + gray text (instead of
+              orgColor) subtly de-emphasizes it because it's the more
+              consequential action. No red/danger color — the confirm
+              modal carries the destructive UX. */}
+          <button
+            onClick={() => setShowRestartConfirm(true)}
+            aria-label="Restart the entire practice from the first drill"
+            className="h-11 px-5 rounded-xl font-black flex items-center gap-2 transition-all"
+            style={{
+              backgroundColor: backgroundUrl ? 'rgba(26,0,0,0.90)' : '#110000',
+              border:          '2px solid #3a2020',
+              color:           '#9a8080',
+              fontSize:        '1rem',
+            }}
+          >
+            <span aria-hidden="true">↺</span>
+            Restart Practice
           </button>
 
           {/* Divider */}
@@ -1444,20 +1466,6 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
               before doing anything. The action itself is a quiet
               reset — no horn, no music change, screen settles into
               background-only via the cleared phase. */}
-          {/* Restart Practice — whole-practice reset, moved here from the
-              transport row and gated by a confirm modal. Sits with End
-              Practice (both are session-scoped destructive actions) so
-              they're clearly separate from the drill-scoped transport
-              buttons on the left. Same small dark-red-bordered styling
-              as End Practice for visual parity. */}
-          <button
-            onClick={() => setShowRestartConfirm(true)}
-            className="ml-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-opacity opacity-70 hover:opacity-100"
-            style={{ border: '1px solid #3a0000', color: '#cc4444' }}
-            aria-label="Restart the entire practice from the first drill"
-          >
-            ↺ Restart Practice
-          </button>
           <button
             onClick={() => setShowEndConfirm(true)}
             className="ml-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-opacity opacity-70 hover:opacity-100"
