@@ -9,6 +9,7 @@ import {
 } from '../../lib/audioPlayer'
 import { compressToMp3Mono128 } from '../../lib/audioCompressor'
 import { canEdit } from '../../lib/permissions'
+import PlaylistsTab, { AddToPlaylistMenu } from './PlaylistsTab'
 
 const BUCKET = 'music'
 
@@ -158,7 +159,13 @@ function PlayerControls({ snap, currentTime, orgColor }) {
 }
 
 // ── Library tab ───────────────────────────────────────────────────────────────
-function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh, canEdit: userCanEdit = true }) {
+// Also threads playlists + playlistSongs + userId in for the per-row
+// "Add to playlist" menu (Commit B). None of that changes existing
+// upload/delete/tap-to-play behavior.
+function LibraryTab({
+  songs, playingId, orgColor, orgId, onRefresh, canEdit: userCanEdit = true,
+  playlists = [], playlistSongs = [], userId, onPlaylistsChange,
+}) {
   const fileInputRef  = useRef(null)
   const [uploads,     setUploads]    = useState([])
   const [delConfirm,  setDelConfirm] = useState(null)
@@ -636,9 +643,10 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh, canEdit: use
                   </p>
                 </div>
 
-                {/* Play (visible to everyone — readonly can listen) and
-                    Trash (editors only). Both hidden in select mode
-                    because taps anywhere toggle selection there. */}
+                {/* Play (visible to everyone — readonly can listen),
+                    Add-to-playlist "..." menu (editors only), and Trash
+                    (editors only). All hidden in select mode because
+                    taps anywhere toggle selection there. */}
                 {!selectMode && (
                   <>
                     <button
@@ -647,6 +655,28 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh, canEdit: use
                       style={{ backgroundColor: isActive ? orgColor : '#2a1200', color: '#fff' }}>
                       <PlayIcon />
                     </button>
+
+                    {userCanEdit && (
+                      // Wrapped in a relatively-positioned span so the
+                      // dropdown menu positions against THIS row, not
+                      // the whole tab. Also stops row-level drag when
+                      // the menu is interacted with.
+                      <span
+                        className="relative flex-shrink-0"
+                        draggable={false}
+                        onDragStart={e => e.preventDefault()}
+                      >
+                        <AddToPlaylistMenu
+                          songId={song.id}
+                          playlists={playlists}
+                          playlistSongs={playlistSongs}
+                          orgId={orgId}
+                          userId={userId}
+                          orgColor={orgColor}
+                          onChange={onPlaylistsChange}
+                        />
+                      </span>
+                    )}
 
                     {userCanEdit && (
                       delConfirm === song.id ? (
@@ -860,12 +890,14 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
   const { profile } = useAuth()
   const orgId = orgIdProp ?? profile?.org_id
 
-  const [snap,        setSnap]        = useState(() => getAudioSnapshot())
-  const [currentTime, setCurrentTime] = useState(0)
-  const [songs,       setSongs]       = useState([])
-  const [loading,     setLoading]     = useState(true)
-  const [error,       setError]       = useState('')
-  const [tab,         setTab]         = useState('library')
+  const [snap,          setSnap]          = useState(() => getAudioSnapshot())
+  const [currentTime,   setCurrentTime]   = useState(0)
+  const [songs,         setSongs]         = useState([])
+  const [playlists,     setPlaylists]     = useState([])   // Commit B: raw playlists rows
+  const [playlistSongs, setPlaylistSongs] = useState([])   // Commit B: raw junction rows
+  const [loading,       setLoading]       = useState(true)
+  const [error,         setError]         = useState('')
+  const [tab,           setTab]           = useState('library')
 
   useEffect(() => {
     return subscribeAudio((type, payload) => {
@@ -895,7 +927,28 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
     }
   }, [orgId])
 
+  // Commit B: parallel load of playlists + junction rows in one round trip.
+  // Empty on error rather than crashing — playlists are net-new; users
+  // without any keep seeing library exactly as before.
+  const loadPlaylistData = useCallback(async () => {
+    if (!orgId) return
+    try {
+      const [pls, ps] = await Promise.all([
+        supabase.from('playlists').select('*').eq('org_id', orgId).order('name', { ascending: true }),
+        supabase.from('playlist_songs').select('id, playlist_id, song_id, position').eq('org_id', orgId),
+      ])
+      if (pls.error) throw pls.error
+      if (ps.error)  throw ps.error
+      setPlaylists(pls.data ?? [])
+      setPlaylistSongs(ps.data ?? [])
+    } catch (e) {
+      console.warn('[Music] playlist load failed:', e.message)
+      setPlaylists([]); setPlaylistSongs([])
+    }
+  }, [orgId])
+
   useEffect(() => { loadSongs() }, [loadSongs])
+  useEffect(() => { loadPlaylistData() }, [loadPlaylistData])
 
   async function handleReorder(reordered) {
     setSongs(reordered)
@@ -923,9 +976,10 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
         </p>
       )}
 
-      {/* Sub-tabs */}
+      {/* Sub-tabs — Commit B adds the middle 'playlists' tab between
+          Library and Queue. Library and Queue behavior is unchanged. */}
       <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid #2a1a00' }}>
-        {[['library', '🎵 Library'], ['queue', '📋 Queue']].map(([t, label]) => (
+        {[['library', '🎵 Library'], ['playlists', '📀 Playlists'], ['queue', '📋 Queue']].map(([t, label]) => (
           <button key={t} onClick={() => setTab(t)}
             className="flex-1 py-2 text-sm font-bold transition-colors"
             style={{
@@ -948,6 +1002,15 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
           songs={songs} playingId={snap.song?.id ?? null}
           orgColor={orgColor} orgId={orgId} onRefresh={loadSongs}
           canEdit={canEdit(profile?.role)}
+          playlists={playlists} playlistSongs={playlistSongs}
+          userId={profile?.id} onPlaylistsChange={loadPlaylistData}
+        />
+      ) : tab === 'playlists' ? (
+        <PlaylistsTab
+          playlists={playlists} playlistSongs={playlistSongs} songs={songs}
+          orgId={orgId} userId={profile?.id}
+          orgColor={orgColor} canEdit={canEdit(profile?.role)}
+          onChange={loadPlaylistData}
         />
       ) : (
         <QueueTab
