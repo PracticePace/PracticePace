@@ -365,17 +365,39 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
             >
               TO GO
             </span>
-            {/* Small −/+ tucked in bottom-right corner */}
-            <div className="absolute bottom-2 right-3 flex gap-1">
+            {/* −/+ steppers tucked in bottom-right corner. Sized for
+                iPad courtside use — bigger than Apple HIG's 44pt minimum
+                (56×56) with a real background lift and white glyphs so
+                a coach glancing away from the field can find and hit
+                them without having to look. */}
+            <div className="absolute bottom-2 right-3 flex gap-2">
               <button
                 onClick={() => setDistance(d => Math.max(1, d - 1))}
-                className="flex items-center justify-center rounded-lg font-bold"
-                style={{ width: 44, height: 44, border: '1px solid #2a0000', color: '#5a3030', fontSize: '1.1rem' }}
+                aria-label="Decrease yards to go"
+                className="flex items-center justify-center rounded-lg font-bold transition-opacity active:opacity-70"
+                style={{
+                  width:           56,
+                  height:          56,
+                  border:          '1px solid #4a1010',
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  color:           '#ffffff',
+                  fontSize:        '1.75rem',
+                  lineHeight:      1,
+                }}
               >−</button>
               <button
                 onClick={() => setDistance(d => Math.min(99, d + 1))}
-                className="flex items-center justify-center rounded-lg font-bold"
-                style={{ width: 44, height: 44, border: '1px solid #2a0000', color: '#5a3030', fontSize: '1.1rem' }}
+                aria-label="Increase yards to go"
+                className="flex items-center justify-center rounded-lg font-bold transition-opacity active:opacity-70"
+                style={{
+                  width:           56,
+                  height:          56,
+                  border:          '1px solid #4a1010',
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  color:           '#ffffff',
+                  fontSize:        '1.75rem',
+                  lineHeight:      1,
+                }}
               >+</button>
             </div>
           </div>
@@ -450,17 +472,37 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
             >
               BALL ON
             </span>
-            {/* Small −/+ tucked in bottom-right corner */}
-            <div className="absolute bottom-2 right-3 flex gap-1">
+            {/* −/+ steppers tucked in bottom-right corner. Matches the
+                TO GO steppers above (56×56, white glyph, subtle bg
+                lift) for consistent iPad courtside tap targets. */}
+            <div className="absolute bottom-2 right-3 flex gap-2">
               <button
                 onClick={() => setBallOn(b => Math.max(1, b - 1))}
-                className="flex items-center justify-center rounded-lg font-bold"
-                style={{ width: 44, height: 44, border: '1px solid #2a0000', color: '#5a3030', fontSize: '1.1rem' }}
+                aria-label="Decrease ball on"
+                className="flex items-center justify-center rounded-lg font-bold transition-opacity active:opacity-70"
+                style={{
+                  width:           56,
+                  height:          56,
+                  border:          '1px solid #4a1010',
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  color:           '#ffffff',
+                  fontSize:        '1.75rem',
+                  lineHeight:      1,
+                }}
               >−</button>
               <button
                 onClick={() => setBallOn(b => Math.min(99, b + 1))}
-                className="flex items-center justify-center rounded-lg font-bold"
-                style={{ width: 44, height: 44, border: '1px solid #2a0000', color: '#5a3030', fontSize: '1.1rem' }}
+                aria-label="Increase ball on"
+                className="flex items-center justify-center rounded-lg font-bold transition-opacity active:opacity-70"
+                style={{
+                  width:           56,
+                  height:          56,
+                  border:          '1px solid #4a1010',
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  color:           '#ffffff',
+                  fontSize:        '1.75rem',
+                  lineHeight:      1,
+                }}
               >+</button>
             </div>
           </div>
