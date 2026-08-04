@@ -14,12 +14,15 @@ import {
   playPrev as audioPlayPrev,
   pause as audioPause,
   resume as audioResume,
+  setQueue as setAudioQueue,
+  playSongAtIndex,
 } from '../../lib/audioPlayer'
 import {
   playCue,
   stopCue,
   isCuePlaying,
 } from '../../lib/cuePlayer'
+import { supabase } from '../../lib/supabase'
 import StadiumNoiseToggle from '../StadiumNoiseToggle'
 
 function pad(n) { return String(n).padStart(2, '0') }
@@ -300,6 +303,58 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
       },
     })
   }, [hasStarted, currentDrillIdx, drills])
+
+  // ── Playlist auto-start on practice begin (Commit D) ──────────────────────
+  // When practice transitions from pre-start into an active run AND the
+  // active script has a playlist_id assigned, load that playlist's songs
+  // into the audio queue and start playback from song 0. Rules:
+  //   • Only fires on hasStarted false → true, once per script/session
+  //     (autoStartedRef resets when hasStarted flips back to false).
+  //   • No playlist_id on the script → skip; the coach's existing library
+  //     queue stays as-is and they can hit play manually.
+  //   • Music already playing → skip; never interrupt the coach's manual
+  //     playback.
+  //   • Playlist has no songs OR the query fails → skip silently; the
+  //     query is fire-and-forget so a network error can't block Start.
+  //   • The existing per-drill cue orchestrator is untouched — cues will
+  //     still pause + resume the playlist normally once it's playing.
+  const autoStartedRef = useRef(false)
+  useEffect(() => {
+    if (!hasStarted) { autoStartedRef.current = false; return }
+    if (autoStartedRef.current) return
+    const script = snap.activeScript
+    const playlistId = script?.playlist_id
+    if (!playlistId) return
+    // Snapshot the audio player synchronously — we only auto-start when
+    // NO track is currently loaded (currentIndex === -1) and nothing is
+    // playing. Coach's manual playback always wins.
+    const audioSnap = getAudioSnapshot()
+    if (audioSnap.isPlaying || audioSnap.currentIndex >= 0) return
+    autoStartedRef.current = true
+    ;(async () => {
+      try {
+        // Join playlist_songs → songs via PostgREST embedded select so
+        // we get the song rows in playlist-position order in one query.
+        // RLS on both tables is the SAME org-scoped predicate, so the
+        // join is safe under standard reads.
+        const { data, error } = await supabase
+          .from('playlist_songs')
+          .select('position, songs(*)')
+          .eq('playlist_id', playlistId)
+          .order('position', { ascending: true })
+        if (error) throw error
+        const songs = (data ?? []).map(row => row.songs).filter(Boolean)
+        if (songs.length === 0) return  // empty playlist — nothing to play
+        setAudioQueue(songs)
+        await playSongAtIndex(0)
+      } catch (err) {
+        console.warn('[Practice] playlist auto-start failed:', err?.message ?? err)
+      }
+    })()
+    // Depend on hasStarted plus the script identity so a mid-session
+    // script swap (which flips hasStarted false via setActiveScript's
+    // different-id branch) resets and re-arms cleanly.
+  }, [hasStarted, snap.activeScript?.id])
 
   // ── Stage-mode controls panel (peek-handle slide-up) ──────────────────────
   // Default behavior: control panel is HIDDEN to maximize timer / drill-name

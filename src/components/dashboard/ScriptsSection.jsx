@@ -1487,7 +1487,9 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
         }
         return { ...d, whiteboard_image_id: newId }
       })
-      schedSave(name, sport, next)
+      // Include playlistId — schedSave's 4th arg — so this drill-image
+      // edit doesn't clobber a previously-picked playlist to null.
+      schedSave(name, sport, next, playlistId)
       return next
     })
   }
@@ -1767,7 +1769,9 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
     }
     const next = [...drills, newDrill]
     setDrills(next)
-    schedSave(name, sport, next)
+    // Include playlistId — schedSave's 4th arg — so adding a drill
+    // doesn't clobber a previously-picked playlist to null.
+    schedSave(name, sport, next, playlistId)
     // Reset the add-form's pending attachment so the next drill starts
     // fresh. cue_mp3_url and other resets already happen inside
     // AddDrillForm; imageId lives at editor level so we clear it here.
@@ -1801,13 +1805,19 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
     const isUnsaved  = !scriptId.current
     if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null }
     if (hasPending || isUnsaved) {
-      await save(name, sport, drills)
+      // Include playlistId — save's 4th arg — so flushing a pending
+      // debounce here doesn't clobber the current playlist to null.
+      await save(name, sport, drills, playlistId)
     }
+    // Include playlist_id in the object handed to the practice screen —
+    // Commit D's auto-start reads activeScript.playlist_id, so leaving
+    // it off means the feature no-ops even when the DB is correct.
     const scriptObj = {
-      id:     scriptId.current,
+      id:          scriptId.current,
       name,
       sport,
       drills,
+      playlist_id: playlistId,
     }
     onSetActive(scriptObj)
     if (onSwitchTab) onSwitchTab('practice')
