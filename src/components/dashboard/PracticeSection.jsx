@@ -350,6 +350,10 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
   const [showingCompleteBanner, setShowingCompleteBanner] = useState(false)
   const [cleared,                setCleared]                = useState(false)
   const [showEndConfirm,         setShowEndConfirm]         = useState(false)
+  // Whole-practice restart is destructive (drops back to drill 1, loses
+  // in-progress state). Gate it behind an explicit confirm modal so a
+  // stray tap on the small red button can't nuke a coach's session.
+  const [showRestartConfirm,     setShowRestartConfirm]     = useState(false)
 
   function clearHideTimer() {
     if (hideTimerRef.current) {
@@ -635,12 +639,31 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
     }
     jumpTo(i)
   }
-  function handleReset() {
+  // Drill-scoped rewind: reset ONLY the current drill's timer to its full
+  // duration; keep currentDrillIdx unchanged. Coaches expect this when they
+  // want to "run this segment again" without losing their position in the
+  // script. Uses jumpTo(currentDrillIdx) — the same primitive Prev/Next
+  // build on — so there's no new timer-lib code path to keep in sync.
+  function handleRestartDrill() {
+    if (cleared || showingCompleteBanner) {
+      setCleared(false)
+      setShowingCompleteBanner(false)
+    }
+    jumpTo(currentDrillIdx)
+  }
+
+  // Whole-practice reset, invoked only after the coach confirms in the
+  // modal. Same body as the pre-modal handleReset() — it just needs an
+  // additional "close the confirm" tail. Kept separate from handleReset
+  // (removed) so the confirm modal is the only entry point to the
+  // destructive path.
+  function confirmRestartPractice() {
     if (cleared || showingCompleteBanner) {
       setCleared(false)
       setShowingCompleteBanner(false)
     }
     reset()
+    setShowRestartConfirm(false)
   }
 
   // Manual End Practice — quiet reset. Brings the timer back to pre-start
@@ -1280,18 +1303,37 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
             ⏮
           </button>
 
-          {/* Reset */}
+          {/* Restart Drill — drill-scoped rewind. Resets ONLY the current
+              drill's timer to its full duration; keeps the drill index
+              unchanged. This slot used to hold a whole-practice reset
+              that coaches misread as "restart this drill" — swapping the
+              behavior here matches the mental model. The whole-practice
+              reset now lives at the far right ("Restart Practice") next
+              to End Practice, gated by a confirm modal. Inline SVG
+              (rewind-to-start arrow: two chevrons pointing back to a
+              vertical bar) instead of a Unicode glyph so it can't be
+              mistaken for the ↺ that means the destructive action. */}
           <button
-            onClick={handleReset}
-            title="Reset"
-            className="w-11 h-11 rounded-xl flex items-center justify-center text-xl transition-opacity"
+            onClick={handleRestartDrill}
+            title="Restart current drill"
+            aria-label="Restart current drill"
+            className="w-11 h-11 rounded-xl flex items-center justify-center transition-opacity"
             style={{
               border:          '1px solid #2a0000',
               color:           '#9a8080',
               backgroundColor: backgroundUrl ? 'rgba(17,0,0,0.85)' : '#110000',
             }}
           >
-            ↺
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" strokeWidth="2"
+                 strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {/* Rewind-to-start: vertical bar at left + two chevrons
+                  pointing back toward it. Reads as "back to the start
+                  of this segment" (not "restart everything"). */}
+              <line x1="5" y1="4" x2="5" y2="20" />
+              <polygon points="12 4 5 12 12 20 12 4" />
+              <polygon points="21 4 14 12 21 20 21 4" />
+            </svg>
           </button>
 
           {/* Start / Pause */}
@@ -1402,6 +1444,20 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
               before doing anything. The action itself is a quiet
               reset — no horn, no music change, screen settles into
               background-only via the cleared phase. */}
+          {/* Restart Practice — whole-practice reset, moved here from the
+              transport row and gated by a confirm modal. Sits with End
+              Practice (both are session-scoped destructive actions) so
+              they're clearly separate from the drill-scoped transport
+              buttons on the left. Same small dark-red-bordered styling
+              as End Practice for visual parity. */}
+          <button
+            onClick={() => setShowRestartConfirm(true)}
+            className="ml-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-opacity opacity-70 hover:opacity-100"
+            style={{ border: '1px solid #3a0000', color: '#cc4444' }}
+            aria-label="Restart the entire practice from the first drill"
+          >
+            ↺ Restart Practice
+          </button>
           <button
             onClick={() => setShowEndConfirm(true)}
             className="ml-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-opacity opacity-70 hover:opacity-100"
@@ -1462,6 +1518,48 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
               style={{ backgroundColor: '#cc1111' }}
             >
               End Practice
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ── Restart Practice confirm modal ────────────────────────────────
+        Whole-practice restart is destructive — coach loses their spot
+        in the script and drops back to drill 1. Mirrors the End
+        Practice modal shape/styling for consistency. Same three close
+        paths (Cancel button, backdrop click, and — via stopPropagation
+        on the inner card — clicks outside the card close the modal). */}
+    {showRestartConfirm && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        style={{ backgroundColor: 'rgba(0,0,0,0.88)' }}
+        onClick={() => setShowRestartConfirm(false)}
+      >
+        <div
+          className="w-full max-w-sm rounded-2xl p-6 flex flex-col gap-4"
+          style={{ backgroundColor: '#110000', border: '1px solid #2a0000' }}
+          onClick={e => e.stopPropagation()}
+        >
+          <h3 className="font-bold text-white text-lg">Restart entire practice?</h3>
+          <p className="text-sm leading-relaxed" style={{ color: '#9a8080' }}>
+            All progress will be lost. This will return you to the first
+            drill of the practice.
+          </p>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setShowRestartConfirm(false)}
+              className="flex-1 py-3 rounded-lg text-sm font-semibold"
+              style={{ border: '1px solid #2a0000', color: '#9a8080' }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={confirmRestartPractice}
+              className="flex-1 py-3 rounded-lg text-sm font-bold text-white"
+              style={{ backgroundColor: '#cc1111' }}
+            >
+              Restart Practice
             </button>
           </div>
         </div>
