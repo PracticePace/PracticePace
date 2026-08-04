@@ -345,7 +345,10 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
         if (error) throw error
         const songs = (data ?? []).map(row => row.songs).filter(Boolean)
         if (songs.length === 0) return  // empty playlist — nothing to play
-        setAudioQueue(songs)
+        // Pass ownership so the Music tab's incidental loadSongs mount
+        // effect won't clobber this queue with the full library while
+        // practice is running (that was the mid-practice mixing bug).
+        setAudioQueue(songs, playlistId)
         await playSongAtIndex(0)
       } catch (err) {
         console.warn('[Practice] playlist auto-start failed:', err?.message ?? err)

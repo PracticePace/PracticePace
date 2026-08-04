@@ -565,7 +565,16 @@ function LibraryTab({
                 {!selectMode && (
                   <>
                     <button
-                      onClick={() => playSongAtIndex(idx)}
+                      onClick={() => {
+                        // Explicit library action → resync queue to
+                        // the library AND clear playlist ownership.
+                        // Without the reset, `idx` refers to the
+                        // library array while the queue could still be
+                        // a playlist (owned queue) — playing by index
+                        // would hit the wrong song.
+                        setQueue(songs, null)
+                        playSongAtIndex(idx)
+                      }}
                       className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all active:scale-90"
                       style={{ backgroundColor: isActive ? orgColor : '#2a1200', color: '#fff' }}>
                       <PlayIcon />
@@ -739,7 +748,16 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
       if (err) throw err
       const list = data ?? []
       setSongs(list)
-      setQueue(list)
+      // Only re-sync the audio player's queue when the current queue is
+      // library-owned (or unowned). If a playlist owns the queue — set
+      // by practice auto-start — skip the resync so a coach glancing at
+      // the Music tab during practice doesn't clobber the playlist and
+      // start mixing library songs into playback. Explicit library
+      // actions (tap-play, drag-reorder, upload, delete) below still
+      // reset ownership as normal.
+      if (getAudioSnapshot().queueOwnerPlaylistId === null) {
+        setQueue(list)
+      }
     } catch (e) {
       setError(e.message)
     } finally {

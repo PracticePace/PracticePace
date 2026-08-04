@@ -14,6 +14,16 @@ let audio        = null    // HTMLAudioElement (created lazily)
 let queue     = []      // [{ id, name, storage_path, duration, position }]
 let currentIndex = -1
 let isPlaying    = false
+// Queue ownership. null = library-owned (or unowned/initial). A UUID
+// means "this queue was loaded from playlist <id>" — set by the practice
+// auto-start. The Music tab's Mp3Player uses this to know whether it's
+// safe to re-sync the queue to the full library on its own mount effect:
+// if a playlist owns the queue, incidental mounts must NOT clobber it,
+// or a coach glancing at the Music tab mid-practice will mix library
+// songs into what's supposed to be a playlist-only queue. Explicit coach
+// actions (tap-to-play a library song, drag-reorder in Library, program
+// switch) clear this back to null.
+let queueOwnerPlaylistId = null
 let volume       = parseInt(localStorage.getItem(VOLUME_KEY)  ?? '70', 10)
 // Shuffle default flipped to ON for new coaches — music-as-background-
 // energy is the primary use case. Existing coaches with a saved
@@ -47,6 +57,9 @@ export function getSnapshot() {
     loop,
     duration:    audio?.duration    ?? 0,
     currentTime: audio?.currentTime ?? 0,
+    // Exposed so the Music tab's loadSongs can check ownership before
+    // deciding whether to re-sync the queue on incidental mounts.
+    queueOwnerPlaylistId,
   }
 }
 
@@ -264,8 +277,16 @@ export function seek(seconds) {
   audio.currentTime = Math.max(0, Math.min(seconds, audio.duration ?? 0))
 }
 
-/** Update the player's queue. Keeps the currently playing song stable by id. */
-export function setQueue(songs) {
+/**
+ * Update the player's queue. Keeps the currently playing song stable by id.
+ *
+ * Optional 2nd arg records ownership so the Music tab's incidental
+ * mounts can decide whether to re-sync. Pass a playlist UUID when the
+ * queue is loaded from a playlist (practice auto-start); pass null (or
+ * omit) for library-driven queues (initial preload, tap-to-play,
+ * reorder, program switch). See queueOwnerPlaylistId comment above.
+ */
+export function setQueue(songs, ownerPlaylistId = null) {
   const beforeIdx = currentIndex
   const beforeId  = currentIndex >= 0 ? queue[currentIndex]?.id : null
   if (currentIndex >= 0) {
@@ -274,8 +295,9 @@ export function setQueue(songs) {
     currentIndex    = newIdx  // -1 if song was deleted
   }
   queue = songs
+  queueOwnerPlaylistId = ownerPlaylistId ?? null
   console.log('[Audio] setQueue →',
-    { beforeIdx, beforeId, afterIdx: currentIndex, listSize: songs.length, isPlaying, paused: audio?.paused ?? null })
+    { beforeIdx, beforeId, afterIdx: currentIndex, listSize: songs.length, owner: queueOwnerPlaylistId, isPlaying, paused: audio?.paused ?? null })
   emit('state', getSnapshot())
 }
 
