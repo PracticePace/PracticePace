@@ -320,44 +320,143 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
   //     still pause + resume the playlist normally once it's playing.
   const autoStartedRef = useRef(false)
   useEffect(() => {
-    if (!hasStarted) { autoStartedRef.current = false; return }
-    if (autoStartedRef.current) return
+    // DIAGNOSTIC (2.0.1): timestamped logs on every branch so we can see
+    // exactly what fires, in what order, with what data. Remove once the
+    // real bug is understood + fixed.
+    const T = () => new Date().toISOString().slice(11, 23)  // HH:MM:SS.mmm
+    console.log(`[AutoStart ${T()}] effect fired`, {
+      hasStarted,
+      alreadyAutoStarted: autoStartedRef.current,
+      activeScriptId:     snap.activeScript?.id ?? null,
+      activeScriptName:   snap.activeScript?.name ?? null,
+      playlist_id:        snap.activeScript?.playlist_id ?? null,
+    })
+    if (!hasStarted) {
+      autoStartedRef.current = false
+      console.log(`[AutoStart ${T()}]   → skip: hasStarted=false; ref reset`)
+      return
+    }
+    if (autoStartedRef.current) {
+      console.log(`[AutoStart ${T()}]   → skip: already auto-started this session`)
+      return
+    }
     const script = snap.activeScript
     const playlistId = script?.playlist_id
-    if (!playlistId) return
-    // Snapshot the audio player synchronously — we only auto-start when
-    // NO track is currently loaded (currentIndex === -1) and nothing is
-    // playing. Coach's manual playback always wins.
+    if (!playlistId) {
+      console.log(`[AutoStart ${T()}]   → skip: no playlist_id on activeScript`)
+      return
+    }
     const audioSnap = getAudioSnapshot()
-    if (audioSnap.isPlaying || audioSnap.currentIndex >= 0) return
+    console.log(`[AutoStart ${T()}]   audio snapshot pre-check`, {
+      isPlaying:              audioSnap.isPlaying,
+      currentIndex:           audioSnap.currentIndex,
+      queueLength:            audioSnap.queue?.length ?? 0,
+      queueOwnerPlaylistId:   audioSnap.queueOwnerPlaylistId,
+      currentSongName:        audioSnap.song?.name ?? null,
+    })
+    if (audioSnap.isPlaying || audioSnap.currentIndex >= 0) {
+      console.log(`[AutoStart ${T()}]   → skip: audio player already active (manual playback wins)`)
+      return
+    }
     autoStartedRef.current = true
+    console.log(`[AutoStart ${T()}]   → proceeding: fetching playlist_songs for playlist_id=${playlistId}`)
     ;(async () => {
       try {
-        // Join playlist_songs → songs via PostgREST embedded select so
-        // we get the song rows in playlist-position order in one query.
-        // RLS on both tables is the SAME org-scoped predicate, so the
-        // join is safe under standard reads.
+        // ── DIAGNOSTIC probe A: fetch the playlist row itself so we can
+        //    verify we're querying the playlist the coach expects.
+        const { data: plRow, error: plErr } = await supabase
+          .from('playlists')
+          .select('id, name, org_id')
+          .eq('id', playlistId)
+          .maybeSingle()
+        console.log(`[AutoStart ${T()}]   probe A — playlist row:`, plRow, plErr ? `ERR: ${plErr.message}` : 'ok')
+
+        // ── DIAGNOSTIC probe B: the actual query used by auto-start.
         const { data, error } = await supabase
           .from('playlist_songs')
           .select('position, songs(*)')
           .eq('playlist_id', playlistId)
           .order('position', { ascending: true })
         if (error) throw error
+        console.log(`[AutoStart ${T()}]   probe B — query returned ${data?.length ?? 0} rows`)
+        // Detailed row-by-row dump so we can spot any interlopers.
+        ;(data ?? []).forEach((row, i) => {
+          console.log(`[AutoStart ${T()}]     row ${i}: pos=${row.position} songId=${row.songs?.id} name="${row.songs?.name}"`)
+        })
+
         const songs = (data ?? []).map(row => row.songs).filter(Boolean)
-        if (songs.length === 0) return  // empty playlist — nothing to play
-        // Pass ownership so the Music tab's incidental loadSongs mount
-        // effect won't clobber this queue with the full library while
-        // practice is running (that was the mid-practice mixing bug).
+        console.log(`[AutoStart ${T()}]   probe C — after map/filter: ${songs.length} songs → ids:`,
+          songs.map(s => `${s.id.slice(0, 8)}:${s.name}`))
+
+        if (songs.length === 0) {
+          console.log(`[AutoStart ${T()}]   → skip: playlist has 0 songs`)
+          return
+        }
+
+        // ── DIAGNOSTIC probe D: what's the queue RIGHT BEFORE we replace it?
+        const preSet = getAudioSnapshot()
+        console.log(`[AutoStart ${T()}]   probe D — pre-setQueue queue state:`, {
+          length: preSet.queue?.length ?? 0,
+          owner:  preSet.queueOwnerPlaylistId,
+          ids:    (preSet.queue ?? []).slice(0, 10).map(s => `${s.id.slice(0, 8)}:${s.name}`),
+        })
+
         setAudioQueue(songs, playlistId)
+
+        // ── DIAGNOSTIC probe E: what's the queue RIGHT AFTER setQueue?
+        const postSet = getAudioSnapshot()
+        console.log(`[AutoStart ${T()}]   probe E — post-setQueue queue state:`, {
+          length: postSet.queue?.length ?? 0,
+          owner:  postSet.queueOwnerPlaylistId,
+          ids:    (postSet.queue ?? []).map(s => `${s.id.slice(0, 8)}:${s.name}`),
+        })
+
+        console.log(`[AutoStart ${T()}]   → calling playSongAtIndex(0) with song:`,
+          postSet.queue?.[0] ? `${postSet.queue[0].id.slice(0, 8)}:${postSet.queue[0].name}` : '(missing)')
         await playSongAtIndex(0)
+
+        // ── DIAGNOSTIC probe F: what's the queue a tick after playSongAtIndex?
+        setTimeout(() => {
+          const later = getAudioSnapshot()
+          console.log(`[AutoStart ${T()}]   probe F — 500ms post-play queue state:`, {
+            length: later.queue?.length ?? 0,
+            owner:  later.queueOwnerPlaylistId,
+            currentIndex: later.currentIndex,
+            currentSong:  later.song?.name ?? null,
+            ids:    (later.queue ?? []).map(s => `${s.id.slice(0, 8)}:${s.name}`),
+          })
+        }, 500)
       } catch (err) {
-        console.warn('[Practice] playlist auto-start failed:', err?.message ?? err)
+        console.warn(`[AutoStart ${T()}]   → threw:`, err?.message ?? err)
       }
     })()
-    // Depend on hasStarted plus the script identity so a mid-session
-    // script swap (which flips hasStarted false via setActiveScript's
-    // different-id branch) resets and re-arms cleanly.
   }, [hasStarted, snap.activeScript?.id])
+
+  // ── DIAGNOSTIC (2.0.1): audio-player event tap ─────────────────────────────
+  // Log EVERY 'state' event from audioPlayer during a practice session so
+  // we can see if anything else fires setQueue (or otherwise mutates queue
+  // state) after auto-start. Only active while hasStarted is true — quiet
+  // pre-practice to avoid log noise. Includes queue length + owner so we
+  // can spot the moment a foreign setQueue clobbers the playlist queue.
+  useEffect(() => {
+    if (!hasStarted) return
+    const T = () => new Date().toISOString().slice(11, 23)
+    console.log(`[AudioTap ${T()}] subscribing (practice active)`)
+    const unsub = subscribeAudio((type, payload) => {
+      if (type !== 'state') return
+      console.log(`[AudioTap ${T()}] state:`, {
+        queueLength: payload.queue?.length ?? 0,
+        owner:       payload.queueOwnerPlaylistId,
+        currentIdx:  payload.currentIndex,
+        currentSong: payload.song?.name ?? null,
+        isPlaying:   payload.isPlaying,
+      })
+    })
+    return () => {
+      console.log(`[AudioTap ${T()}] unsubscribing (practice ended / unmounting)`)
+      unsub()
+    }
+  }, [hasStarted])
 
   // ── Stage-mode controls panel (peek-handle slide-up) ──────────────────────
   // Default behavior: control panel is HIDDEN to maximize timer / drill-name
