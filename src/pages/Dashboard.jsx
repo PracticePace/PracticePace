@@ -6,7 +6,7 @@ import { isAd } from '../lib/permissions'
 import { getSampleScriptForSport } from '../lib/sampleScripts'
 import Logo from '../components/Logo'
 import AudioSection from '../components/dashboard/AudioSection'
-import { setPlaylist as setAudioPlaylist } from '../lib/audioPlayer'
+import { setQueue as setAudioQueue } from '../lib/audioPlayer'
 
 import PracticeSection      from '../components/dashboard/PracticeSection'
 import PracticeTimerRibbon from '../components/dashboard/PracticeTimerRibbon'
@@ -351,7 +351,7 @@ export default function Dashboard() {
           } else {
             const songList = songsData ?? []
             console.log('[Dashboard] preloaded music playlist:', songList.length, 'songs')
-            setAudioPlaylist(songList)
+            setAudioQueue(songList)
           }
         } catch (err) {
           console.warn('[Dashboard] songs fetch threw:', err?.message ?? err)
@@ -618,7 +618,7 @@ export default function Dashboard() {
         // Empty collections — brand new program has no scripts/songs yet.
         setScripts([])
         setActiveScript(null)
-        setAudioPlaylist([])
+        setAudioQueue([])
       }
     } catch (err) {
       console.error('[Dashboard] handleProgramCreated refresh failed:', err?.message ?? err)
@@ -662,7 +662,7 @@ export default function Dashboard() {
         setOrg(next)
         setScripts([])
         setActiveScript(null)
-        setAudioPlaylist([])
+        setAudioQueue([])
       }
     } catch (err) {
       console.error('[Dashboard] handleProgramDeleted refresh failed:', err?.message ?? err)
@@ -710,10 +710,10 @@ export default function Dashboard() {
         .eq('org_id', orgId)
         .order('position',   { ascending: true })
         .order('created_at', { ascending: true })
-      setAudioPlaylist(songsData ?? [])
+      setAudioQueue(songsData ?? [])
     } catch (err) {
       console.warn('[Dashboard] songs reload on program switch failed:', err?.message ?? err)
-      setAudioPlaylist([])
+      setAudioQueue([])
     }
   }
 

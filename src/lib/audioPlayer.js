@@ -11,7 +11,7 @@ const LOOP_KEY    = 'pp_mp3_loop'
 
 // ── Module-level state ────────────────────────────────────────────────────────
 let audio        = null    // HTMLAudioElement (created lazily)
-let playlist     = []      // [{ id, name, storage_path, duration, position }]
+let queue     = []      // [{ id, name, storage_path, duration, position }]
 let currentIndex = -1
 let isPlaying    = false
 let volume       = parseInt(localStorage.getItem(VOLUME_KEY)  ?? '70', 10)
@@ -32,8 +32,8 @@ export function subscribe(fn) {
 
 export function getSnapshot() {
   return {
-    song:        currentIndex >= 0 ? (playlist[currentIndex] ?? null) : null,
-    playlist,
+    song:        currentIndex >= 0 ? (queue[currentIndex] ?? null) : null,
+    queue,
     currentIndex,
     isPlaying,
     volume,
@@ -88,24 +88,24 @@ function ensureAudio() {
 
 // ── Next / prev index ─────────────────────────────────────────────────────────
 function getNextIndex() {
-  if (playlist.length === 0) return -1
+  if (queue.length === 0) return -1
   if (shuffle) {
-    if (playlist.length === 1) return loop ? 0 : -1
-    let idx = Math.floor(Math.random() * playlist.length)
-    if (idx === currentIndex) idx = (idx + 1) % playlist.length
+    if (queue.length === 1) return loop ? 0 : -1
+    let idx = Math.floor(Math.random() * queue.length)
+    if (idx === currentIndex) idx = (idx + 1) % queue.length
     return idx
   }
   const next = currentIndex + 1
-  if (next < playlist.length) return next
+  if (next < queue.length) return next
   return loop ? 0 : -1  // loop back to start when enabled
 }
 
 function getPrevIndex() {
-  if (playlist.length === 0) return -1
+  if (queue.length === 0) return -1
   if (shuffle) {
-    if (playlist.length === 1) return 0
-    let idx = Math.floor(Math.random() * playlist.length)
-    if (idx === currentIndex) idx = (idx - 1 + playlist.length) % playlist.length
+    if (queue.length === 1) return 0
+    let idx = Math.floor(Math.random() * queue.length)
+    if (idx === currentIndex) idx = (idx - 1 + queue.length) % queue.length
     return idx
   }
   return Math.max(0, currentIndex - 1)
@@ -125,8 +125,8 @@ function getPrevIndex() {
 // audible behaviour (a failed play() emits 'error' and flips state
 // back).
 export async function playSongAtIndex(index) {
-  if (index < 0 || index >= playlist.length) return
-  const song = playlist[index]
+  if (index < 0 || index >= queue.length) return
+  const song = queue[index]
   const a    = ensureAudio()
   a.src      = getSongUrl(song.storage_path)
   a.load()
@@ -153,8 +153,8 @@ export async function togglePlay() {
     isPlaying = false
     emit('state', getSnapshot())
   } else {
-    if (currentIndex === -1 && playlist.length > 0) {
-      console.log('[Audio] togglePlay → starting playlist[0]')
+    if (currentIndex === -1 && queue.length > 0) {
+      console.log('[Audio] togglePlay → starting queue[0]')
       await playSongAtIndex(0)
     } else if (currentIndex >= 0) {
       // Optimistic — see NOTE above.
@@ -169,7 +169,7 @@ export async function togglePlay() {
         emit('error', err.message)
       }
     } else {
-      console.log('[Audio] togglePlay → no-op (currentIndex:', currentIndex, ', playlist length:', playlist.length, ')')
+      console.log('[Audio] togglePlay → no-op (currentIndex:', currentIndex, ', queue length:', queue.length, ')')
     }
   }
 }
@@ -258,17 +258,17 @@ export function seek(seconds) {
   audio.currentTime = Math.max(0, Math.min(seconds, audio.duration ?? 0))
 }
 
-/** Update the player's playlist. Keeps the currently playing song stable by id. */
-export function setPlaylist(songs) {
+/** Update the player's queue. Keeps the currently playing song stable by id. */
+export function setQueue(songs) {
   const beforeIdx = currentIndex
-  const beforeId  = currentIndex >= 0 ? playlist[currentIndex]?.id : null
+  const beforeId  = currentIndex >= 0 ? queue[currentIndex]?.id : null
   if (currentIndex >= 0) {
-    const currentId = playlist[currentIndex]?.id
+    const currentId = queue[currentIndex]?.id
     const newIdx    = songs.findIndex(s => s.id === currentId)
     currentIndex    = newIdx  // -1 if song was deleted
   }
-  playlist = songs
-  console.log('[Audio] setPlaylist →',
+  queue = songs
+  console.log('[Audio] setQueue →',
     { beforeIdx, beforeId, afterIdx: currentIndex, listSize: songs.length, isPlaying, paused: audio?.paused ?? null })
   emit('state', getSnapshot())
 }

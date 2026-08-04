@@ -54,7 +54,7 @@ function MusicMiniControls({ orgColor }) {
     })
   }, [])
 
-  const hasPlaylist = (snap.playlist?.length ?? 0) > 0
+  const hasQueue = (snap.queue?.length ?? 0) > 0
   const isPlaying   = !!snap.isPlaying
   const songName    = snap.song?.name ?? ''
 
@@ -78,22 +78,22 @@ function MusicMiniControls({ orgColor }) {
     >
       <button
         onClick={() => audioPlayPrev().catch(() => {})}
-        disabled={!hasPlaylist}
+        disabled={!hasQueue}
         className="w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95"
-        style={btnStyle(!hasPlaylist)}
+        style={btnStyle(!hasQueue)}
         aria-label="Previous song"
       >
         <MusicSkipBack />
       </button>
       <button
         onClick={() => audioTogglePlay().catch(() => {})}
-        disabled={!hasPlaylist}
+        disabled={!hasQueue}
         className="w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95"
         style={{
-          ...btnStyle(!hasPlaylist),
-          backgroundColor: hasPlaylist ? orgColor : '#0d0800',
-          color:           hasPlaylist ? '#fff' : '#3a2a1a',
-          border:          hasPlaylist ? `1px solid ${orgColor}` : `1px solid ${orgColor}33`,
+          ...btnStyle(!hasQueue),
+          backgroundColor: hasQueue ? orgColor : '#0d0800',
+          color:           hasQueue ? '#fff' : '#3a2a1a',
+          border:          hasQueue ? `1px solid ${orgColor}` : `1px solid ${orgColor}33`,
         }}
         aria-label={isPlaying ? 'Pause' : 'Play'}
       >
@@ -103,9 +103,9 @@ function MusicMiniControls({ orgColor }) {
       </button>
       <button
         onClick={() => audioPlayNext().catch(() => {})}
-        disabled={!hasPlaylist}
+        disabled={!hasQueue}
         className="w-11 h-11 rounded-xl flex items-center justify-center transition-all active:scale-95"
-        style={btnStyle(!hasPlaylist)}
+        style={btnStyle(!hasQueue)}
         aria-label="Next song"
       >
         <MusicSkipFwd />
@@ -117,7 +117,7 @@ function MusicMiniControls({ orgColor }) {
           Truncates with ellipsis on long titles; capped max-width so a
           7-minute psyche-up mix doesn't push the rest of the toolbar
           off-screen on narrower iPads. */}
-      {hasPlaylist && songName && (
+      {hasQueue && songName && (
         <span
           className="text-xs font-semibold truncate pl-1 pr-2"
           style={{
@@ -222,7 +222,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
 
   // ── Per-drill cue MP3 orchestration ────────────────────────────────────────
   // When a drill becomes active and has cue_mp3_url set:
-  //   1. Capture whether the main playlist was playing.
+  //   1. Capture whether the main player was playing.
   //   2. If yes, pause the main player (state-preserving — currentTime kept).
   //   3. Play the cue MP3 once via cuePlayer.
   //   4. When the cue ends naturally, resume the main player IFF it was

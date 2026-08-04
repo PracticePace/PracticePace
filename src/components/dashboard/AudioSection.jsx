@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import {
   subscribe as subscribeAudio, getSnapshot as getAudioSnapshot,
   playSongAtIndex, togglePlay, playNext, playPrev,
-  setVolume as setAudioVolume, setShuffle, setLoop, setPlaylist, seek,
+  setVolume as setAudioVolume, setShuffle, setLoop, setQueue, seek,
   stop as stopAudio,
 } from '../../lib/audioPlayer'
 import { compressToMp3Mono128 } from '../../lib/audioCompressor'
@@ -130,7 +130,7 @@ function PlayerControls({ snap, currentTime, orgColor }) {
         <button onClick={() => setLoop(!loop)}
           className="w-8 h-8 rounded-full flex items-center justify-center transition-all"
           style={{ color: loop ? orgColor : '#4a3030', backgroundColor: loop ? `${orgColor}22` : 'transparent' }}
-          title="Loop playlist">
+          title="Loop queue">
           <LoopIcon />
         </button>
       </div>
@@ -412,7 +412,7 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh, canEdit: use
     const [moved]   = reordered.splice(dragIdx, 1)
     reordered.splice(idx, 0, moved)
     setDragIdx(null); setDragOverIdx(null)
-    setPlaylist(reordered)
+    setQueue(reordered)
     await Promise.all(reordered.map((s, i) => supabase.from('songs').update({ position: i }).eq('id', s.id)))
     await onRefresh()
   }
@@ -421,7 +421,7 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh, canEdit: use
     <div className="flex flex-col gap-3">
 
       {/* Upload button — hidden in select mode (clutter) AND hidden for
-          readonly coaches (they can listen to the playlist but can't
+          readonly coaches (they can listen to the queue but can't
           modify it; RLS would reject the upload anyway). */}
       {userCanEdit && !selectMode && (
         <button
@@ -746,8 +746,8 @@ function LibraryTab({ songs, playingId, orgColor, orgId, onRefresh, canEdit: use
   )
 }
 
-// ── Playlist tab ──────────────────────────────────────────────────────────────
-function PlaylistTab({ songs, currentIndex, orgColor, onReorder }) {
+// ── Queue tab ─────────────────────────────────────────────────────────────────
+function QueueTab({ songs, currentIndex, orgColor, onReorder }) {
   const [dragIdx,     setDragIdx]     = useState(null)
   const [dragOverIdx, setDragOverIdx] = useState(null)
 
@@ -777,7 +777,7 @@ function PlaylistTab({ songs, currentIndex, orgColor, onReorder }) {
   if (songs.length === 0) {
     return (
       <div className="text-center py-10" style={{ color: '#6a4040' }}>
-        <p className="text-sm">Upload songs in the Library tab to build your playlist.</p>
+        <p className="text-sm">Upload songs in the Library tab to build your queue.</p>
       </div>
     )
   }
@@ -887,7 +887,7 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
       if (err) throw err
       const list = data ?? []
       setSongs(list)
-      setPlaylist(list)
+      setQueue(list)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -899,7 +899,7 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
 
   async function handleReorder(reordered) {
     setSongs(reordered)
-    setPlaylist(reordered)
+    setQueue(reordered)
     await Promise.all(reordered.map((s, i) => supabase.from('songs').update({ position: i }).eq('id', s.id)))
     await loadSongs()
   }
@@ -925,7 +925,7 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
 
       {/* Sub-tabs */}
       <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid #2a1a00' }}>
-        {[['library', '🎵 Library'], ['playlist', '📋 Playlist']].map(([t, label]) => (
+        {[['library', '🎵 Library'], ['queue', '📋 Queue']].map(([t, label]) => (
           <button key={t} onClick={() => setTab(t)}
             className="flex-1 py-2 text-sm font-bold transition-colors"
             style={{
@@ -950,7 +950,7 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
           canEdit={canEdit(profile?.role)}
         />
       ) : (
-        <PlaylistTab
+        <QueueTab
           songs={songs} currentIndex={snap.currentIndex}
           orgColor={orgColor} onReorder={handleReorder}
         />
