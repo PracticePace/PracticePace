@@ -467,7 +467,14 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
         </div>
 
         {/* ── CENTER: Game clock + controls ────────────────────────────────── */}
-        <div className="flex-[1.4] flex flex-col gap-2 rounded-2xl px-4 py-4"
+        {/* min-h-0 + overflow-hidden keep the column's shrink-0 Start/Reset
+            row visible on tight viewports: the flex-1 game clock display
+            below can shrink (huge digit vertically trims a few pixels)
+            rather than pushing the Start button down past the column's
+            box, where the opaque HOME/AWAY score panels below would paint
+            over it. The LEFT column already has overflow-hidden for the
+            same reason; this brings the center + right columns in line. */}
+        <div className="flex-[1.4] flex flex-col gap-2 rounded-2xl px-4 py-4 min-h-0 overflow-hidden"
           style={{ backgroundColor: '#110000', border: '1px solid #2a0000' }}>
 
           {/* Quarter pills */}
@@ -488,8 +495,12 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
             ))}
           </div>
 
-          {/* Game clock — flex-1 centered */}
-          <div className="flex-1 flex flex-col items-center justify-center gap-1">
+          {/* Game clock — flex-1 centered. min-h-0 lets this box shrink
+              below the clamp()-driven digit's intrinsic 144px min height
+              on tight viewports; overflow-hidden trims a few pixels off
+              the top/bottom of the digit rather than pushing shrink-0
+              siblings (SET CLOCK / Start-Reset) out past the column. */}
+          <div className="flex-1 flex flex-col items-center justify-center gap-1 min-h-0 overflow-hidden">
             <GameClock
               secs={gameSecs}
               warn={gameSecs <= 60}
@@ -539,8 +550,11 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
         </div>
 
         {/* ── RIGHT: Play clock ─────────────────────────────────────────────── */}
+        {/* Same min-h-0 + overflow-hidden protection as the center column
+            above — keeps the shrink-0 Start/Pause row visible on tight
+            viewports by letting the flex-1 big-number area shrink. */}
         <div
-          className="flex-1 flex flex-col items-center gap-3 rounded-2xl px-4 py-4"
+          className="flex-1 flex flex-col items-center gap-3 rounded-2xl px-4 py-4 min-h-0 overflow-hidden"
           style={{
             backgroundColor: '#0d0800',
             border:    `2px solid ${amberNow}44`,
@@ -555,8 +569,13 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
             Play Clock
           </span>
 
-          {/* Big amber number */}
-          <div className="flex-1 flex items-center justify-center">
+          {/* Big amber number — min-h-0 + overflow-hidden lets this box
+              shrink below the clamp()-driven 176px intrinsic min height
+              so the shrink-0 Start/Pause below never gets pushed past
+              the column's box. Digit visually clips a few pixels top/
+              bottom on the tightest viewports rather than the whole
+              Start button disappearing under the score panel. */}
+          <div className="flex-1 flex items-center justify-center min-h-0 overflow-hidden">
             <span
               className="font-black font-mono leading-none"
               style={{
