@@ -365,23 +365,25 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
             >
               TO GO
             </span>
-            {/* −/+ steppers tucked in bottom-right corner. Sized for
-                iPad courtside use — bigger than Apple HIG's 44pt minimum
-                (56×56) with a real background lift and white glyphs so
-                a coach glancing away from the field can find and hit
-                them without having to look. */}
-            <div className="absolute bottom-2 right-3 flex gap-2">
+            {/* −/+ steppers tucked in bottom-right corner. Sized to
+                Apple HIG's 44pt tap-target minimum for iPad courtside
+                use — with a real background lift and white glyphs so a
+                coach glancing away from the field can still find and
+                hit them without having to look. Sized down from an
+                earlier 56×56 pass which was tap-friendly but visually
+                crowded the amber TO GO / BALL ON digits. */}
+            <div className="absolute bottom-2 right-4 flex gap-2">
               <button
                 onClick={() => setDistance(d => Math.max(1, d - 1))}
                 aria-label="Decrease yards to go"
                 className="flex items-center justify-center rounded-lg font-bold transition-opacity active:opacity-70"
                 style={{
-                  width:           56,
-                  height:          56,
+                  width:           44,
+                  height:          44,
                   border:          '1px solid #4a1010',
                   backgroundColor: 'rgba(255,255,255,0.06)',
                   color:           '#ffffff',
-                  fontSize:        '1.75rem',
+                  fontSize:        '1.4rem',
                   lineHeight:      1,
                 }}
               >−</button>
@@ -390,12 +392,12 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
                 aria-label="Increase yards to go"
                 className="flex items-center justify-center rounded-lg font-bold transition-opacity active:opacity-70"
                 style={{
-                  width:           56,
-                  height:          56,
+                  width:           44,
+                  height:          44,
                   border:          '1px solid #4a1010',
                   backgroundColor: 'rgba(255,255,255,0.06)',
                   color:           '#ffffff',
-                  fontSize:        '1.75rem',
+                  fontSize:        '1.4rem',
                   lineHeight:      1,
                 }}
               >+</button>
@@ -473,20 +475,20 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
               BALL ON
             </span>
             {/* −/+ steppers tucked in bottom-right corner. Matches the
-                TO GO steppers above (56×56, white glyph, subtle bg
+                TO GO steppers above (44×44, white glyph, subtle bg
                 lift) for consistent iPad courtside tap targets. */}
-            <div className="absolute bottom-2 right-3 flex gap-2">
+            <div className="absolute bottom-2 right-4 flex gap-2">
               <button
                 onClick={() => setBallOn(b => Math.max(1, b - 1))}
                 aria-label="Decrease ball on"
                 className="flex items-center justify-center rounded-lg font-bold transition-opacity active:opacity-70"
                 style={{
-                  width:           56,
-                  height:          56,
+                  width:           44,
+                  height:          44,
                   border:          '1px solid #4a1010',
                   backgroundColor: 'rgba(255,255,255,0.06)',
                   color:           '#ffffff',
-                  fontSize:        '1.75rem',
+                  fontSize:        '1.4rem',
                   lineHeight:      1,
                 }}
               >−</button>
@@ -495,12 +497,12 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
                 aria-label="Increase ball on"
                 className="flex items-center justify-center rounded-lg font-bold transition-opacity active:opacity-70"
                 style={{
-                  width:           56,
-                  height:          56,
+                  width:           44,
+                  height:          44,
                   border:          '1px solid #4a1010',
                   backgroundColor: 'rgba(255,255,255,0.06)',
                   color:           '#ffffff',
-                  fontSize:        '1.75rem',
+                  fontSize:        '1.4rem',
                   lineHeight:      1,
                 }}
               >+</button>
