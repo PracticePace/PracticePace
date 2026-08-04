@@ -1,4 +1,5 @@
 {
+  "buildCommand": "git fetch --unshallow 2>/dev/null || true && npm run build",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]
