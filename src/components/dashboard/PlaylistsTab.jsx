@@ -3,7 +3,7 @@
 // Coach-managed named playlists sourced from the org's song library.
 // Empty state → list state → detail view flow, all in-place inside the
 // Music tab (no routes). Reorder uses the same native HTML5 drag/drop
-// pattern LibraryTab and QueueTab already use — zero new dependencies.
+// pattern LibraryTab uses — zero new dependencies.
 //
 // Data model (from Commit A migration):
 //   playlists       (id, org_id, name, created_by, created_at, updated_at)

@@ -32,7 +32,11 @@ const PlayIcon    = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="
 const PauseIcon   = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
 const SkipBack    = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
 const SkipFwd     = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
-const ShuffleIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" {...S}><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
+// "Play in Order" icon — a list-style ordered-play glyph. The old
+// ShuffleIcon lived here; kept the SVG minimal so the same button slot
+// visually reads as "play sequentially" when active. Toggling this ON
+// disables shuffle (see the button just below the transport row).
+const OrderIcon   = () => <svg width="16" height="16" viewBox="0 0 24 24" {...S}><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
 const LoopIcon    = () => <svg width="16" height="16" viewBox="0 0 24 24" {...S}><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
 const UploadIcon  = () => <svg width="16" height="16" viewBox="0 0 24 24" {...S}><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
 const TrashIcon   = () => <svg width="14" height="14" viewBox="0 0 24 24" {...S}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
@@ -83,12 +87,17 @@ function PlayerControls({ snap, currentTime, orgColor }) {
 
       {/* Transport row */}
       <div className="flex items-center justify-center gap-4">
-        {/* Shuffle */}
+        {/* Play in Order (opt-out from the default-on shuffle). The
+            button represents "Play in Order" — when it's the active/
+            highlighted state, shuffle is OFF and songs play in the
+            queue order. Tapping toggles: on→off flips shuffle back on;
+            off→on turns shuffle off. Preference persists via SHUFFLE_KEY. */}
         <button onClick={() => setShuffle(!shuffle)}
           className="w-8 h-8 rounded-full flex items-center justify-center transition-all"
-          style={{ color: shuffle ? orgColor : '#4a3030', backgroundColor: shuffle ? `${orgColor}22` : 'transparent' }}
-          title="Shuffle">
-          <ShuffleIcon />
+          style={{ color: !shuffle ? orgColor : '#4a3030', backgroundColor: !shuffle ? `${orgColor}22` : 'transparent' }}
+          title={shuffle ? 'Play in Order' : 'Playing in Order'}
+          aria-pressed={!shuffle}>
+          <OrderIcon />
         </button>
 
         {/* Prev */}
@@ -682,108 +691,13 @@ function LibraryTab({
   )
 }
 
-// ── Queue tab ─────────────────────────────────────────────────────────────────
-function QueueTab({ songs, currentIndex, orgColor, onReorder }) {
-  const [dragIdx,     setDragIdx]     = useState(null)
-  const [dragOverIdx, setDragOverIdx] = useState(null)
-
-  async function onDrop(idx) {
-    if (dragIdx === null || dragIdx === idx) { setDragIdx(null); setDragOverIdx(null); return }
-    const reordered = [...songs]
-    const [moved]   = reordered.splice(dragIdx, 1)
-    reordered.splice(idx, 0, moved)
-    setDragIdx(null); setDragOverIdx(null)
-    await onReorder(reordered)
-  }
-
-  async function moveUp(idx) {
-    if (idx === 0) return
-    const r = [...songs];
-    [r[idx - 1], r[idx]] = [r[idx], r[idx - 1]]
-    await onReorder(r)
-  }
-
-  async function moveDown(idx) {
-    if (idx === songs.length - 1) return
-    const r = [...songs];
-    [r[idx], r[idx + 1]] = [r[idx + 1], r[idx]]
-    await onReorder(r)
-  }
-
-  if (songs.length === 0) {
-    return (
-      <div className="text-center py-10" style={{ color: '#6a4040' }}>
-        <p className="text-sm">Upload songs in the Library tab to build your queue.</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <button
-        onClick={() => playSongAtIndex(0)}
-        className="flex items-center justify-center gap-2 w-full py-3 rounded-2xl font-bold text-sm transition-all active:scale-95"
-        style={{ backgroundColor: orgColor, color: '#fff', boxShadow: `0 0 20px ${orgColor}44` }}>
-        <PlayIcon /> Play All from Start
-      </button>
-
-      <p className="text-xs text-center" style={{ color: '#6a4040' }}>
-        Drag to reorder · use ▲▼ on iPad
-      </p>
-
-      <div className="flex flex-col gap-1">
-        {songs.map((song, idx) => {
-          const isActive   = idx === currentIndex
-          const isDragOver = dragOverIdx === idx
-          return (
-            <div
-              key={song.id}
-              draggable
-              onDragStart={() => setDragIdx(idx)}
-              onDragOver={e => { e.preventDefault(); setDragOverIdx(idx) }}
-              onDrop={() => onDrop(idx)}
-              onDragEnd={() => { setDragIdx(null); setDragOverIdx(null) }}
-              className="flex items-center gap-2 px-3 py-3 rounded-2xl transition-all select-none"
-              style={{
-                backgroundColor: isActive ? `${orgColor}22` : isDragOver ? '#2a1500' : '#0d0800',
-                border: `1px solid ${isActive ? orgColor + '55' : isDragOver ? orgColor + '44' : '#2a1a0033'}`,
-                cursor: 'grab',
-              }}>
-
-              <span className="text-xs font-bold w-5 text-center flex-shrink-0"
-                style={{ color: isActive ? orgColor : '#4a3030' }}>{idx + 1}</span>
-
-              <span className="flex-shrink-0 opacity-30 hidden md:block"><DragHandle /></span>
-
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold truncate" style={{ color: isActive ? orgColor : '#fff' }}>
-                  {song.name}
-                </p>
-                <p className="text-xs" style={{ color: '#6a4040' }}>{formatDuration(song.duration)}</p>
-              </div>
-
-              {/* Touch-friendly up/down (iPad) */}
-              <div className="flex flex-col gap-0.5 flex-shrink-0">
-                <button onClick={() => moveUp(idx)} disabled={idx === 0}
-                  className="w-6 h-6 rounded flex items-center justify-center text-xs disabled:opacity-20 active:scale-90"
-                  style={{ backgroundColor: '#2a1200', color: '#9a8080' }}>▲</button>
-                <button onClick={() => moveDown(idx)} disabled={idx === songs.length - 1}
-                  className="w-6 h-6 rounded flex items-center justify-center text-xs disabled:opacity-20 active:scale-90"
-                  style={{ backgroundColor: '#2a1200', color: '#9a8080' }}>▼</button>
-              </div>
-
-              <button onClick={() => playSongAtIndex(idx)}
-                className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 active:scale-90"
-                style={{ backgroundColor: isActive ? orgColor : '#2a1200', color: '#fff' }}>
-                <PlayIcon />
-              </button>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
+// The QueueTab component was removed as UI clutter — the "up next"
+// concept is a technical detail coaches don't need to see as a distinct
+// tab. Its unique features (Play All from Start button, ▲▼ move buttons)
+// have safe equivalents elsewhere: tap-to-play in Library starts from
+// that song, and Library's drag-reorder writes the same position field
+// the Queue tab did. audioPlayer.js still keeps the in-memory queue,
+// and the Practice mini-transport still drives it.
 
 // ── Main MP3 player ───────────────────────────────────────────────────────────
 // orgId is passed down from AudioSection → Dashboard so the AD's program
@@ -856,12 +770,9 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
   useEffect(() => { loadSongs() }, [loadSongs])
   useEffect(() => { loadPlaylistData() }, [loadPlaylistData])
 
-  async function handleReorder(reordered) {
-    setSongs(reordered)
-    setQueue(reordered)
-    await Promise.all(reordered.map((s, i) => supabase.from('songs').update({ position: i }).eq('id', s.id)))
-    await loadSongs()
-  }
+  // (Formerly handleReorder was passed to the QueueTab; LibraryTab
+  // does its own reorder inline, so the shared helper was removed
+  // alongside the Queue tab.)
 
   if (!orgId) {
     return (
@@ -882,10 +793,14 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
         </p>
       )}
 
-      {/* Sub-tabs — Commit B adds the middle 'playlists' tab between
-          Library and Queue. Library and Queue behavior is unchanged. */}
+      {/* Sub-tabs — Library + Playlists. Queue used to sit here as a
+          third tab but was removed as UI clutter (the in-memory queue
+          is still driven by tap-to-play in Library and by the Practice
+          mini-transport; coaches never asked for a dedicated view of
+          it). If `tab` somehow holds a stale 'queue' value from an
+          old session the render below falls through to Library. */}
       <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid #2a1a00' }}>
-        {[['library', '🎵 Library'], ['playlists', '📀 Playlists'], ['queue', '📋 Queue']].map(([t, label]) => (
+        {[['library', '🎵 Library'], ['playlists', '📀 Playlists']].map(([t, label]) => (
           <button key={t} onClick={() => setTab(t)}
             className="flex-1 py-2 text-sm font-bold transition-colors"
             style={{
@@ -903,14 +818,6 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
             style={{ borderColor: orgColor, borderTopColor: 'transparent' }} />
           <p className="text-sm" style={{ color: '#9a8080' }}>Loading songs…</p>
         </div>
-      ) : tab === 'library' ? (
-        <LibraryTab
-          songs={songs} playingId={snap.song?.id ?? null}
-          orgColor={orgColor} orgId={orgId} onRefresh={loadSongs}
-          canEdit={canEdit(profile?.role)}
-          playlists={playlists} playlistSongs={playlistSongs}
-          userId={profile?.id} onPlaylistsChange={loadPlaylistData}
-        />
       ) : tab === 'playlists' ? (
         <PlaylistsTab
           playlists={playlists} playlistSongs={playlistSongs} songs={songs}
@@ -920,9 +827,14 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
           onSongsChange={loadSongs}
         />
       ) : (
-        <QueueTab
-          songs={songs} currentIndex={snap.currentIndex}
-          orgColor={orgColor} onReorder={handleReorder}
+        // Default: Library. Also the fallback when `tab` holds a stale
+        // 'queue' from a session that predates the tab's removal.
+        <LibraryTab
+          songs={songs} playingId={snap.song?.id ?? null}
+          orgColor={orgColor} orgId={orgId} onRefresh={loadSongs}
+          canEdit={canEdit(profile?.role)}
+          playlists={playlists} playlistSongs={playlistSongs}
+          userId={profile?.id} onPlaylistsChange={loadPlaylistData}
         />
       )}
     </div>

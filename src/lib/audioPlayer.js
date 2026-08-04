@@ -15,7 +15,13 @@ let queue     = []      // [{ id, name, storage_path, duration, position }]
 let currentIndex = -1
 let isPlaying    = false
 let volume       = parseInt(localStorage.getItem(VOLUME_KEY)  ?? '70', 10)
-let shuffle      = localStorage.getItem(SHUFFLE_KEY) === 'true'
+// Shuffle default flipped to ON for new coaches — music-as-background-
+// energy is the primary use case. Existing coaches with a saved
+// preference (either 'true' or 'false') keep it verbatim; the new
+// default only applies when the key has never been set.
+let shuffle      = (localStorage.getItem(SHUFFLE_KEY) === null)
+                   ? true
+                   : (localStorage.getItem(SHUFFLE_KEY) === 'true')
 let loop         = localStorage.getItem(LOOP_KEY)    === 'true'
 
 // ── Pub/sub ───────────────────────────────────────────────────────────────────
