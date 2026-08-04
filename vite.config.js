@@ -2,24 +2,20 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import svgr from 'vite-plugin-svgr'
-import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 
-// Build number: `${pkg.version}.${git commit count}` — e.g. "2.0.0.245".
+// Build number: `${pkg.version}.${pkg.buildCount}` — e.g. "2.0.0.247".
 // pkg.version is bumped intentionally per commit type (major = breaking,
-// minor = feature, patch = fix). The last segment auto-increments from
-// `git rev-list --count HEAD` so every push has a distinct build number
-// that Matt can compare against the Settings-page indicator.
-// Falls back to 'dev' when git isn't available (fresh checkout without
-// history / shallow clone / Docker builds); local dev still works.
+// minor = feature, patch = fix). pkg.buildCount is bumped on EVERY commit
+// so each push has a distinct build number. Both live in package.json so
+// they get committed to git and are available at build time WITHOUT any
+// git commands — Vercel's shallow clones broke the earlier `git rev-list
+// --count HEAD` approach, and even `git fetch --unshallow` in the Vercel
+// buildCommand didn't reliably deepen the checkout. Reading a committed
+// file is bulletproof: whatever gets deployed is exactly what was
+// committed.
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8'))
-let commitCount = 'dev'
-try {
-  commitCount = execSync('git rev-list --count HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || 'dev'
-} catch {
-  commitCount = 'dev'
-}
-const BUILD_NUMBER = `${pkg.version}.${commitCount}`
+const BUILD_NUMBER = `${pkg.version}.${pkg.buildCount ?? 'dev'}`
 
 export default defineConfig({
   plugins: [svgr(), react(), tailwindcss()],
