@@ -14,6 +14,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
+import { uploadSongToLibrary } from '../../lib/songUpload'
 
 // Shared helpers copied from AudioSection so this file can stand alone
 // (both files apply the same convention across the Music tab).
@@ -30,6 +31,7 @@ const ChevronRight = () => <svg width="16" height="16" viewBox="0 0 24 24" {...S
 const ChevronLeft  = () => <svg width="16" height="16" viewBox="0 0 24 24" {...S}><polyline points="15 6 9 12 15 18"/></svg>
 const MoreIcon     = () => <svg width="18" height="18" viewBox="0 0 24 24" {...S}><circle cx="12" cy="5"  r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
 const PlusIcon     = () => <svg width="16" height="16" viewBox="0 0 24 24" {...S}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+const UploadIcon   = () => <svg width="16" height="16" viewBox="0 0 24 24" {...S}><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
 const XIcon        = () => <svg width="14" height="14" viewBox="0 0 24 24" {...S}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
 const DragHandle   = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6a4040" strokeWidth="2" strokeLinecap="round"><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="17" x2="16" y2="17"/></svg>
 const LibraryEmpty = () => (
@@ -89,6 +91,7 @@ export default function PlaylistsTab({
   orgColor,
   canEdit,
   onChange,           // () => refetch playlists + playlist_songs in parent
+  onSongsChange,      // Commit E: () => refetch songs in parent (fires after Upload Songs)
 }) {
   const [detailId,       setDetailId]       = useState(null)
   const [showCreate,     setShowCreate]     = useState(false)
@@ -117,6 +120,7 @@ export default function PlaylistsTab({
         canEdit={canEdit}
         onBack={() => setDetailId(null)}
         onChange={onChange}
+        onSongsChange={onSongsChange}
       />
     )
   }
@@ -219,7 +223,7 @@ function PlaylistListRow({ playlist, orgColor, onOpen }) {
 // live inside so they close cleanly when the detail view is exited.
 function PlaylistDetail({
   playlistId, playlists, playlistSongs, songs, orgId, orgColor, canEdit,
-  onBack, onChange,
+  onBack, onChange, onSongsChange,
 }) {
   const playlist = playlists.find(p => p.id === playlistId)
   const rows     = useMemo(
@@ -235,6 +239,12 @@ function PlaylistDetail({
   const [dragIdx,      setDragIdx]      = useState(null)
   const [dragOverIdx,  setDragOverIdx]  = useState(null)
   const [err,          setErr]          = useState('')
+  // Commit E: Upload Songs — per-file progress state and hidden file
+  // input. Same shape as LibraryTab's `uploads` state so future work
+  // can factor a shared <UploadProgressList> component if needed.
+  const [uploads,      setUploads]      = useState([])   // [{name, phase, progress, error}]
+  const [uploadToast,  setUploadToast]  = useState('')
+  const uploadInputRef                  = useRef(null)
 
   // Guard: if playlist disappeared (deleted elsewhere), bail out early —
   // the parent's useEffect will drop us back to the list.
@@ -273,6 +283,84 @@ function PlaylistDetail({
     } catch (e) {
       setErr('Could not remove song — ' + e.message)
     }
+  }
+
+  // Commit E: Upload Songs — upload files to the library AND append them
+  // to THIS playlist in one flow. Sequential per-file so progress bars
+  // update cleanly. Per-file failures don't halt the batch; successful
+  // uploads still land in the playlist.
+  async function handleUploadFiles(e) {
+    const files = Array.from(e.target.files ?? []).filter(
+      f => f.type.startsWith('audio/') || /\.(mp3|m4a|aac|wav|ogg)$/i.test(f.name)
+    )
+    if (!files.length) return
+    e.target.value = ''
+
+    setUploads(files.map(f => ({ name: f.name, phase: 'pending', progress: 0, error: null })))
+
+    // Starting playlist position for the batch — append past current end.
+    // Freeze this once so parallel/reordered UI doesn't drift the anchor;
+    // we compute the per-file target from it below.
+    const startPos = playlistSongs
+      .filter(ps => ps.playlist_id === playlistId)
+      .reduce((m, ps) => Math.max(m, ps.position), -1) + 1
+
+    let successCount = 0
+    let failCount    = 0
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      try {
+        const song = await uploadSongToLibrary(file, {
+          orgId,
+          onProgress: ({ phase, progress }) => {
+            setUploads(prev => prev.map((u, j) =>
+              j === i ? { ...u, phase, progress } : u
+            ))
+          },
+        })
+        // Now add to THIS playlist. The song row is already in the
+        // library — this step just wires the junction. If it fails
+        // (RLS reject, network), the song still exists in the library
+        // so no data is lost — the coach can add it manually later.
+        try {
+          const { error: linkErr } = await supabase.from('playlist_songs').insert({
+            playlist_id: playlistId,
+            song_id:     song.id,
+            org_id:      orgId,
+            position:    startPos + i,
+          })
+          if (linkErr) throw linkErr
+        } catch (linkErr) {
+          console.error('[Playlists] link failed for uploaded song:', linkErr?.message ?? linkErr)
+          setUploads(prev => prev.map((u, j) =>
+            j === i ? { ...u, phase: 'done', progress: 100, error: 'Uploaded but not added to playlist' } : u
+          ))
+          failCount++
+          continue
+        }
+        setUploads(prev => prev.map((u, j) =>
+          j === i ? { ...u, phase: 'done', progress: 100 } : u
+        ))
+        successCount++
+      } catch (err) {
+        const msg = err?.message ?? 'Unknown error'
+        console.error(`[Playlists] Upload failed for "${file.name}":`, msg)
+        setUploads(prev => prev.map((u, j) => j === i ? { ...u, error: msg } : u))
+        failCount++
+      }
+    }
+
+    // Refetch both songs (library grew) and playlists (junction rows
+    // added) so the UI shows the new state.
+    onSongsChange?.()
+    onChange()
+    setUploadToast(
+      failCount === 0
+        ? `Uploaded and added ${successCount} song${successCount === 1 ? '' : 's'}`
+        : `${successCount} added, ${failCount} failed`
+    )
+    setTimeout(() => { setUploads([]); setUploadToast('') }, 4000)
   }
 
   return (
@@ -331,14 +419,67 @@ function PlaylistDetail({
         ) : <div className="w-9" />}
       </div>
 
+      {/* Commit E: two side-by-side buttons — Upload Songs (files from
+          computer, dashed border to hint upload) and From Library (pick
+          existing songs). Both grow equally on mobile via flex-1;
+          desktop layout is identical since the container is max-w-xl. */}
       {canEdit && (
-        <button
-          onClick={() => setShowAdd(true)}
-          className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-95"
-          style={{ border: `2px solid ${orgColor}`, color: orgColor, backgroundColor: 'transparent' }}
+        <div className="flex gap-2">
+          <button
+            onClick={() => uploadInputRef.current?.click()}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-95"
+            style={{ border: `2px dashed ${orgColor}88`, color: orgColor, backgroundColor: 'transparent' }}
+          >
+            <UploadIcon /> Upload Songs
+          </button>
+          <button
+            onClick={() => setShowAdd(true)}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition-all active:scale-95"
+            style={{ border: `2px solid ${orgColor}`, color: orgColor, backgroundColor: 'transparent' }}
+          >
+            <PlusIcon /> From Library
+          </button>
+        </div>
+      )}
+      <input
+        ref={uploadInputRef}
+        type="file"
+        accept="audio/mpeg,audio/mp3,audio/m4a,audio/aac,audio/wav,audio/ogg,.mp3,.m4a,.aac,.wav"
+        multiple
+        className="hidden"
+        onChange={handleUploadFiles}
+      />
+
+      {/* Commit E: per-file progress list. Same shape as LibraryTab's
+          upload rows. Each row shows filename, current phase + %, and
+          any error surfaced from the helper or the junction insert. */}
+      {uploads.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          {uploads.map((u, i) => (
+            <div key={i}
+              className="px-3 py-2 rounded-xl text-xs flex items-center gap-2"
+              style={{ backgroundColor: '#1a0d00', border: '1px solid #2a1a00' }}
+            >
+              <span className="flex-1 truncate text-white">{u.name}</span>
+              {u.error ? (
+                <span style={{ color: '#ff6666' }}>{u.error}</span>
+              ) : u.phase === 'done' ? (
+                <span style={{ color: '#66cc88' }}>✓ Done</span>
+              ) : (
+                <span style={{ color: '#9a8080' }}>
+                  {u.phase === 'compressing' ? 'Compressing' : u.phase === 'uploading' ? 'Uploading' : 'Waiting'} {u.progress}%
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {uploadToast && (
+        <p className="text-xs px-4 py-2 rounded-xl text-center"
+          style={{ backgroundColor: `${orgColor}22`, color: orgColor, border: `1px solid ${orgColor}55` }}
         >
-          <PlusIcon /> Add Songs
-        </button>
+          {uploadToast}
+        </p>
       )}
 
       {err && (
@@ -350,8 +491,13 @@ function PlaylistDetail({
       {rows.length === 0 ? (
         <div className="flex flex-col items-center text-center gap-3 py-10">
           <p className="text-sm" style={{ color: '#9a8080' }}>
-            This playlist is empty. {canEdit && 'Click Add Songs to get started.'}
+            This playlist is empty.
           </p>
+          {canEdit && (
+            <p className="text-xs" style={{ color: '#6a4040' }}>
+              Upload files from your computer or choose from your library.
+            </p>
+          )}
         </div>
       ) : (
         <div className="flex flex-col gap-2">

@@ -7,11 +7,15 @@ import {
   setVolume as setAudioVolume, setShuffle, setLoop, setQueue, seek,
   stop as stopAudio,
 } from '../../lib/audioPlayer'
-import { compressToMp3Mono128 } from '../../lib/audioCompressor'
 import { canEdit } from '../../lib/permissions'
+import { uploadSongToLibrary, cleanName, MUSIC_BUCKET as BUCKET } from '../../lib/songUpload'
 import PlaylistsTab, { AddToPlaylistMenu } from './PlaylistsTab'
 
-const BUCKET = 'music'
+// BUCKET, cleanName, and measureDuration now live in src/lib/songUpload.js
+// alongside uploadSongToLibrary — the per-file upload helper shared by
+// LibraryTab (below) and PlaylistDetail (Commit E). Only formatDuration
+// stays inline because it's a UI-formatter unrelated to the upload
+// pipeline.
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function formatDuration(secs) {
@@ -19,23 +23,6 @@ function formatDuration(secs) {
   const m = Math.floor(secs / 60)
   const s = Math.round(secs % 60)
   return `${m}:${String(s).padStart(2, '0')}`
-}
-
-function cleanName(filename) {
-  return filename
-    .replace(/\.(mp3|m4a|aac|wav|ogg|flac)$/i, '')
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-async function measureDuration(file) {
-  return new Promise(resolve => {
-    const url = URL.createObjectURL(file)
-    const a   = new Audio(url)
-    a.addEventListener('loadedmetadata', () => { URL.revokeObjectURL(url); resolve(Math.round(a.duration)) })
-    a.addEventListener('error',          () => { URL.revokeObjectURL(url); resolve(null) })
-  })
 }
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -291,103 +278,22 @@ function LibraryTab({
       error:    null,
     })))
 
+    // Per-file: delegate the real work to uploadSongToLibrary. Progress
+    // callbacks flow back into the local `uploads` state so the per-file
+    // progress bars in the UI update as compression / upload advances.
+    // Failures don't halt the batch — they're captured per-row so the
+    // remaining files still upload.
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
       try {
-        // 1. Measure duration from local file before any encoding
-        const duration = await measureDuration(file)
-        console.log(`[Music] File ${i + 1}/${files.length}: "${file.name}" | duration: ${duration}s | size: ${file.size} bytes | type: ${file.type}`)
-
-        // 2. Compress to 128 kbps mono before uploading. Reduces storage
-        //    cost and (more importantly) the decode CPU cost on the iPad
-        //    during AirPlay-mirrored practices. If compression fails for
-        //    any reason — corrupt input, unsupported codec, etc. — fall
-        //    back to uploading the original file untouched so the upload
-        //    is never blocked by the compressor.
-        setUploads(prev => prev.map((u, j) =>
-          j === i ? { ...u, phase: 'compressing', progress: 0 } : u
-        ))
-
-        let toUpload = file
-        let compressedOk = false
-        try {
-          const compressed = await compressToMp3Mono128(file, {
-            onProgress: (p) => {
-              setUploads(prev => prev.map((u, j) =>
-                j === i ? { ...u, progress: Math.round(p * 100) } : u
-              ))
-            },
-          })
-          // Edge case: if the compressed output is somehow larger than
-          // the source (already-low-bitrate file, very short file), upload
-          // the original. Per the spec — compression should never make
-          // the situation worse.
-          if (compressed.size > 0 && compressed.size < file.size) {
-            toUpload = compressed
-            compressedOk = true
-            console.log(`[Music] Compressed "${file.name}": ${file.size} → ${compressed.size} bytes (${Math.round(100 * compressed.size / file.size)}%)`)
-          } else {
-            console.log(`[Music] Skipping compression for "${file.name}" — compressed size ${compressed.size} >= original ${file.size}; uploading original.`)
-          }
-        } catch (compErr) {
-          console.warn(`[Music] Compression failed for "${file.name}":`, compErr?.message ?? compErr, '→ falling back to original upload')
-        }
-
-        // 3. Build storage path — keep the original filename (spec'd).
-        //    `_128` or similar suffix is intentionally NOT appended.
-        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
-        const path     = `${orgId}/${Date.now()}_${safeName}`
-        console.log(`[Music] Uploading to storage path: ${path} (${compressedOk ? 'compressed' : 'original'})`)
-
-        // 4. Upload to Supabase Storage. After compression the contentType
-        //    is always audio/mpeg; on the fallback path we honour the
-        //    original.
-        setUploads(prev => prev.map((u, j) =>
-          j === i ? { ...u, phase: 'uploading', progress: 0 } : u
-        ))
-        const { error: uploadErr } = await supabase.storage
-          .from(BUCKET)
-          .upload(path, toUpload, {
-            cacheControl: '3600',
-            contentType:  compressedOk ? 'audio/mpeg' : (file.type || 'audio/mpeg'),
-            upsert:       false,
-          })
-
-        if (uploadErr) {
-          console.error('[Music] Storage upload failed:', uploadErr)
-          throw new Error(uploadErr.message || JSON.stringify(uploadErr))
-        }
-        console.log(`[Music] Storage upload succeeded: ${path}`)
-
-        // 5. Get the highest existing position so we can append
-        const { data: maxRow } = await supabase
-          .from('songs')
-          .select('position')
-          .eq('org_id', orgId)
-          .order('position', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-
-        const nextPos = (maxRow?.position ?? -1) + 1
-        console.log(`[Music] Inserting song record at position ${nextPos}`)
-
-        // 6. Insert the song record — check and surface any DB error
-        const { error: insertErr } = await supabase.from('songs').insert({
-          org_id:       orgId,
-          name:         cleanName(file.name),
-          storage_path: path,
-          duration,
-          position:     nextPos,
+        await uploadSongToLibrary(file, {
+          orgId,
+          onProgress: ({ phase, progress }) => {
+            setUploads(prev => prev.map((u, j) =>
+              j === i ? { ...u, phase, progress } : u
+            ))
+          },
         })
-
-        if (insertErr) {
-          console.error('[Music] DB insert failed:', insertErr)
-          // Storage file was uploaded but DB record failed — try to clean up
-          await supabase.storage.from(BUCKET).remove([path]).catch(() => {})
-          throw new Error(insertErr.message || JSON.stringify(insertErr))
-        }
-        console.log(`[Music] Song record inserted OK: "${cleanName(file.name)}"`)
-
         setUploads(prev => prev.map((u, j) =>
           j === i ? { ...u, phase: 'done', progress: 100 } : u
         ))
@@ -1011,6 +917,7 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
           orgId={orgId} userId={profile?.id}
           orgColor={orgColor} canEdit={canEdit(profile?.role)}
           onChange={loadPlaylistData}
+          onSongsChange={loadSongs}
         />
       ) : (
         <QueueTab
