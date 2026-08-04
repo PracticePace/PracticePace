@@ -1372,9 +1372,16 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
   // the same session shows up here on next render.
   allOrgScripts = [],
 }) {
-  const [name,   setName]   = useState(script.name  ?? '')
-  const [sport,  setSport]  = useState(script.sport ?? 'football')
-  const [drills, setDrills] = useState(script.drills ?? [])
+  const [name,       setName]       = useState(script.name  ?? '')
+  const [sport,      setSport]      = useState(script.sport ?? 'football')
+  const [drills,     setDrills]     = useState(script.drills ?? [])
+  // Commit C: script-level music playlist. null = "None" (fall through to
+  // the full library at practice time — Commit D wires the auto-start).
+  const [playlistId, setPlaylistId] = useState(script.playlist_id ?? null)
+  // Populated once from the org's playlists table for the dropdown.
+  // Empty-array fallback on load error so the editor still opens even
+  // if the query fails (never blocks script editing).
+  const [playlistOptions, setPlaylistOptions] = useState([])
   const [editingIndex,  setEditingIndex]  = useState(null)
   const [saving,  setSaving]  = useState(false)
   const [saveMsg, setSaveMsg] = useState('')  // '' | 'saving' | 'saved' | error string
@@ -1640,13 +1647,41 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
     }
   }
 
+  // Commit C: load the org's playlists once so the selector below has
+  // options. Guest scripts (isGuest === true) skip — playlists are DB-
+  // backed and don't exist in localStorage. Errors are non-fatal: the
+  // dropdown just shows "None" and the empty-playlists helper.
+  useEffect(() => {
+    if (isGuest || !orgId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { data, error } = await supabase
+          .from('playlists')
+          .select('id, name')
+          .eq('org_id', orgId)
+          .order('name', { ascending: true })
+        if (error) throw error
+        if (!cancelled) setPlaylistOptions(data ?? [])
+      } catch (err) {
+        console.warn('[Scripts] playlist options load failed:', err.message)
+        if (!cancelled) setPlaylistOptions([])
+      }
+    })()
+    return () => { cancelled = true }
+  }, [isGuest, orgId])
+
   // ── Save (debounced) ────────────────────────────────────────────────────────
-  const save = useCallback(async (nextName, nextSport, nextDrills) => {
+  // Commit C: signature now takes nextPlaylistId. null = "None" (no
+  // playlist assigned). Explicitly written as null (not omitted) so
+  // clearing a previously-set assignment persists to the DB.
+  const save = useCallback(async (nextName, nextSport, nextDrills, nextPlaylistId) => {
     setSaveMsg('saving')
     setSaving(true)
     const payload = {
-      name:   nextName.trim()  || 'Untitled Script',
-      sport:  nextSport.toLowerCase(),
+      name:        nextName.trim() || 'Untitled Script',
+      sport:       nextSport.toLowerCase(),
+      playlist_id: nextPlaylistId ?? null,
       // Each drill carries its own `notes` (string), `show_notes` (boolean —
       // controls whether the practice screen renders the note under the
       // current drill name), and `cue_mp3_url` (optional public URL to a
@@ -1702,17 +1737,18 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
   }, [isGuest, orgId, userId, onReload])
 
   // Debounce saves by 600ms after any change
-  function schedSave(nextName, nextSport, nextDrills) {
+  function schedSave(nextName, nextSport, nextDrills, nextPlaylistId) {
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
-      save(nextName, nextSport, nextDrills)
+      save(nextName, nextSport, nextDrills, nextPlaylistId)
     }, 600)
   }
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current) }, [])
 
-  function updateName(v)   { setName(v);  schedSave(v,    sport,  drills) }
-  function updateSport(v)  { setSport(v); schedSave(name, v,      drills) }
-  function updateDrills(d) { setDrills(d); schedSave(name, sport,  d) }
+  function updateName(v)       { setName(v);       schedSave(v,    sport,  drills, playlistId) }
+  function updateSport(v)      { setSport(v);      schedSave(name, v,      drills, playlistId) }
+  function updateDrills(d)     { setDrills(d);     schedSave(name, sport,  d,      playlistId) }
+  function updatePlaylistId(v) { setPlaylistId(v); schedSave(name, sport,  drills, v) }
 
   // ── Drill mutations ─────────────────────────────────────────────────────────
   function addDrill(fields) {
@@ -1851,7 +1887,10 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
               // Deep-enough clone — drill objects are flat JSON, shallow
               // spread is sufficient. Parent re-clones again inside its
               // INSERT, so this is just to avoid aliasing local state.
-              drills: drills.map(d => ({ ...d })),
+              drills:      drills.map(d => ({ ...d })),
+              // Commit C: carry the playlist assignment through so a
+              // duplicated script has the same music setup as the original.
+              playlist_id: playlistId,
             })}
             className="ml-auto text-xs font-bold px-3 py-1.5 rounded-lg"
             style={{ border: '1px solid #3a1414', color: '#c8a0a0', backgroundColor: 'transparent' }}
@@ -1875,6 +1914,50 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
           </span>
         )}
       </div>
+
+      {/* ── Music playlist selector (Commit C) ─────────────────────────────
+          Script-level assignment — chosen playlist auto-plays when
+          practice starts (wired in Commit D). "None" means no auto-play;
+          the coach's existing full-library queue is preserved. Hidden
+          for guest scripts because playlists are DB-backed and don't
+          exist in guest mode (localStorage). If the loaded script's
+          playlist_id points at a playlist that isn't in the options
+          list (deleted / RLS-filtered), the value falls back to '' so
+          the dropdown shows "None" rather than an invisible option. */}
+      {!isGuest && (
+        <div className="shrink-0 px-4 md:px-6 py-2.5 flex items-center gap-3 flex-wrap"
+          style={{ borderBottom: '1px solid #1a0000' }}>
+          <label
+            htmlFor="script-playlist"
+            className="text-xs font-bold uppercase tracking-widest"
+            style={{ color: '#9a8080', letterSpacing: '0.1em' }}
+          >
+            Music Playlist
+          </label>
+          <select
+            id="script-playlist"
+            value={
+              playlistId && playlistOptions.some(p => p.id === playlistId)
+                ? playlistId
+                : ''
+            }
+            onChange={e => updatePlaylistId(e.target.value || null)}
+            disabled={!userCanEdit}
+            className="rounded-lg px-3 py-2 text-sm outline-none disabled:opacity-90"
+            style={INPUT_STYLE}
+          >
+            <option value="">None (play full library)</option>
+            {playlistOptions.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+          <span className="text-xs" style={{ color: '#6a4040' }}>
+            {playlistOptions.length === 0
+              ? 'You haven’t created any playlists yet. Create playlists in the Music tab.'
+              : 'Plays during this practice, or leave as “None” to play from the full music library.'}
+          </span>
+        </div>
+      )}
 
       {/* Print Script dialog — declared at the editor level so the modal can
           reach the script's name, drills, sport, and notes. */}
@@ -2080,11 +2163,16 @@ export default function ScriptsSection({
       // per-drill image commit).
       const clonedDrills = (dupSource.drills ?? []).map(d => ({ ...d }))
       const payload = {
-        org_id:     orgId,
-        created_by: userId,
-        name:       newName,
-        sport:      dupSource.sport ?? 'football',
-        drills:     clonedDrills,
+        org_id:      orgId,
+        created_by:  userId,
+        name:        newName,
+        sport:       dupSource.sport ?? 'football',
+        drills:      clonedDrills,
+        // Commit C: preserve the source's playlist assignment. Works
+        // for both entry points: list-view Duplicate passes the full
+        // script row (playlist_id from SELECT), editor-view Duplicate
+        // bubbles it from local state.
+        playlist_id: dupSource.playlist_id ?? null,
       }
       let newScript
       if (isGuest) {
