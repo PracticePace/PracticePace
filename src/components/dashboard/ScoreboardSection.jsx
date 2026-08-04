@@ -622,15 +622,22 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
             Play Clock
           </span>
 
-          {/* Big amber number — min-h-0 + overflow-hidden lets this box
-              shrink below the clamp()-driven 176px intrinsic min height
-              so the shrink-0 Start/Pause below never gets pushed past
-              the column's box. Digit visually clips a few pixels top/
-              bottom on the tightest viewports rather than the whole
-              Start button disappearing under the score panel. */}
-          <div className="flex-1 flex items-center justify-center min-h-0 overflow-hidden">
+          {/* Big amber number. STRUCTURAL FIX (3rd attempt at this bug):
+              two things had to change here at the container/line-box
+              level — font-size tweaks alone couldn't fix it:
+                (a) inner overflow-hidden REMOVED — the outer column
+                    still has overflow-hidden as the safety belt, so
+                    worst-case the digit paints freely within its own
+                    flex-1 area but still can't escape the amber frame.
+                (b) leading-none → leading-tight (line-height 1.25)
+                    so the line-box contains font-metric ascender /
+                    descender overshoot rather than letting it render
+                    outside and get clipped by (the old) (a).
+              Kept: min-h-0 (layout can still shrink); the clamp size;
+              font family/weight/color. */}
+          <div className="flex-1 flex items-center justify-center min-h-0">
             <span
-              className="font-black font-mono leading-none"
+              className="font-black font-mono leading-tight"
               style={{
                 fontSize:           'clamp(6rem, 13vw, 9rem)',
                 color:              amberNow,
