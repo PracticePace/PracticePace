@@ -618,7 +618,9 @@ export default function Dashboard() {
         // Empty collections — brand new program has no scripts/songs yet.
         setScripts([])
         setActiveScript(null)
-        setAudioQueue([])
+        // Program-state change → force-clear even if a stale playlist
+        // queue from the previous program still owns it (2.0.2 guard).
+        setAudioQueue([], null, { force: true })
       }
     } catch (err) {
       console.error('[Dashboard] handleProgramCreated refresh failed:', err?.message ?? err)
@@ -662,7 +664,8 @@ export default function Dashboard() {
         setOrg(next)
         setScripts([])
         setActiveScript(null)
-        setAudioQueue([])
+        // Program-state change → force-clear (see handleProgramCreated).
+        setAudioQueue([], null, { force: true })
       }
     } catch (err) {
       console.error('[Dashboard] handleProgramDeleted refresh failed:', err?.message ?? err)
@@ -710,10 +713,12 @@ export default function Dashboard() {
         .eq('org_id', orgId)
         .order('position',   { ascending: true })
         .order('created_at', { ascending: true })
-      setAudioQueue(songsData ?? [])
+      // Program switch → force-reset queue to the new org's library
+      // even if a stale playlist from the previous program owns it.
+      setAudioQueue(songsData ?? [], null, { force: true })
     } catch (err) {
       console.warn('[Dashboard] songs reload on program switch failed:', err?.message ?? err)
-      setAudioQueue([])
+      setAudioQueue([], null, { force: true })
     }
   }
 

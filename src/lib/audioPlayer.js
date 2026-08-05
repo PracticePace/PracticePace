@@ -280,13 +280,24 @@ export function seek(seconds) {
 /**
  * Update the player's queue. Keeps the currently playing song stable by id.
  *
- * Optional 2nd arg records ownership so the Music tab's incidental
- * mounts can decide whether to re-sync. Pass a playlist UUID when the
- * queue is loaded from a playlist (practice auto-start); pass null (or
- * omit) for library-driven queues (initial preload, tap-to-play,
- * reorder, program switch). See queueOwnerPlaylistId comment above.
+ * Ownership + race protection:
+ *   • Pass a playlist UUID as `ownerPlaylistId` when loading from a
+ *     playlist (auto-start on practice begin). Always writes.
+ *   • Pass null (or omit) for library-driven queues. If a playlist
+ *     currently owns the queue, this library-set is REJECTED — that
+ *     prevents an async library preload / incidental sync from
+ *     clobbering a just-loaded playlist queue (the 2.0.2 race bug).
+ *   • Pass `{ force: true }` from EXPLICIT user actions (tapping a
+ *     library song, drag-reordering the library, switching programs)
+ *     to override the ownership check and reset to library.
  */
-export function setQueue(songs, ownerPlaylistId = null) {
+export function setQueue(songs, ownerPlaylistId = null, { force = false } = {}) {
+  const isLibrarySet = ownerPlaylistId == null
+  if (isLibrarySet && queueOwnerPlaylistId != null && !force) {
+    console.warn('[Audio] setQueue → REJECTED library-set',
+      { ownerCurrent: queueOwnerPlaylistId, incomingLen: songs.length, reason: 'playlist owns queue; pass { force: true } to override' })
+    return
+  }
   const beforeIdx = currentIndex
   const beforeId  = currentIndex >= 0 ? queue[currentIndex]?.id : null
   if (currentIndex >= 0) {
@@ -297,7 +308,7 @@ export function setQueue(songs, ownerPlaylistId = null) {
   queue = songs
   queueOwnerPlaylistId = ownerPlaylistId ?? null
   console.log('[Audio] setQueue →',
-    { beforeIdx, beforeId, afterIdx: currentIndex, listSize: songs.length, owner: queueOwnerPlaylistId, isPlaying, paused: audio?.paused ?? null })
+    { beforeIdx, beforeId, afterIdx: currentIndex, listSize: songs.length, owner: queueOwnerPlaylistId, force, isPlaying, paused: audio?.paused ?? null })
   emit('state', getSnapshot())
 }
 

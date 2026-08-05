@@ -1,8 +1,8 @@
 {
   "name": "practicepace-tmp",
   "private": true,
-  "version": "2.0.1",
-  "buildCount": 248,
+  "version": "2.0.2",
+  "buildCount": 249,
   "type": "module",
   "scripts": {
     "dev": "vite",

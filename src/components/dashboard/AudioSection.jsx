@@ -334,7 +334,9 @@ function LibraryTab({
     const [moved]   = reordered.splice(dragIdx, 1)
     reordered.splice(idx, 0, moved)
     setDragIdx(null); setDragOverIdx(null)
-    setQueue(reordered)
+    // Explicit user action → force-reset queue to library even if a
+    // playlist currently owns it.
+    setQueue(reordered, null, { force: true })
     await Promise.all(reordered.map((s, i) => supabase.from('songs').update({ position: i }).eq('id', s.id)))
     await onRefresh()
   }
@@ -566,13 +568,14 @@ function LibraryTab({
                   <>
                     <button
                       onClick={() => {
-                        // Explicit library action → resync queue to
+                        // Explicit library action → force-reset queue to
                         // the library AND clear playlist ownership.
                         // Without the reset, `idx` refers to the
                         // library array while the queue could still be
                         // a playlist (owned queue) — playing by index
-                        // would hit the wrong song.
-                        setQueue(songs, null)
+                        // would hit the wrong song. force:true bypasses
+                        // the ownership guard added in 2.0.2.
+                        setQueue(songs, null, { force: true })
                         playSongAtIndex(idx)
                       }}
                       className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all active:scale-90"
