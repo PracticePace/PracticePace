@@ -2,6 +2,11 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../../lib/supabase'
 import { saveGuestScript, deleteGuestScript } from '../../lib/guestStorage'
 import { playCue, stopCue } from '../../lib/cuePlayer'
+import {
+  setQueue as setAudioQueue,
+  playSongAtIndex,
+  getSnapshot as getAudioSnapshot,
+} from '../../lib/audioPlayer'
 import { useAuth } from '../../context/AuthContext'
 import { canEdit } from '../../lib/permissions'
 import { SPORTS as LAUNCH_SPORTS, sportLabel } from '../../lib/sports'
@@ -1810,8 +1815,7 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
       await save(name, sport, drills, playlistId)
     }
     // Include playlist_id in the object handed to the practice screen —
-    // Commit D's auto-start reads activeScript.playlist_id, so leaving
-    // it off means the feature no-ops even when the DB is correct.
+    // PracticeSection's auto-start reads activeScript.playlist_id.
     const scriptObj = {
       id:          scriptId.current,
       name,
@@ -1821,6 +1825,45 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
     }
     onSetActive(scriptObj)
     if (onSwitchTab) onSwitchTab('practice')
+
+    // 2.0.4: Load-to-Practice is the source of truth for playlist swap.
+    // Kick off the queue load NOW (fire-and-forget) so the playlist is
+    // primed the moment the coach lands on Practice. If music was
+    // playing on any queue when the coach tapped Load-to-Practice, we
+    // ALSO swap the audible song to the new playlist's song 0 — coach
+    // mental model: "loading a new script = new playlist takes over
+    // right now, not delayed until Start Practice". `wasPlaying` is
+    // captured at TAP time (not read again after the fetch) so a race
+    // where the coach taps Start mid-fetch and the auto-start effect
+    // begins playback first won't cause us to restart song 0 on top
+    // of it.
+    if (playlistId && !isGuest) {
+      const wasPlaying = getAudioSnapshot().isPlaying
+      ;(async () => {
+        try {
+          const { data, error } = await supabase
+            .from('playlist_songs')
+            .select('position, songs(*)')
+            .eq('playlist_id', playlistId)
+            .order('position', { ascending: true })
+          if (error) throw error
+          const songs = (data ?? []).map(r => r.songs).filter(Boolean)
+          if (songs.length === 0) return
+          // Playlist-owner setQueue always writes — no force needed.
+          setAudioQueue(songs, playlistId)
+          if (wasPlaying) {
+            // Music was playing when the coach tapped Load-to-Practice
+            // (probably the old playlist) — swap the audible song to
+            // the new playlist immediately. If music was NOT playing,
+            // the queue is armed and PracticeSection's auto-start will
+            // pick it up when Start Practice fires.
+            await playSongAtIndex(0)
+          }
+        } catch (err) {
+          console.warn('[Scripts] Load-to-Practice playlist queue swap failed:', err?.message ?? err)
+        }
+      })()
+    }
   }
 
   // ── Save indicator ──────────────────────────────────────────────────────────
