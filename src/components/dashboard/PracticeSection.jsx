@@ -319,6 +319,24 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
   //   • The existing per-drill cue orchestrator is untouched — cues will
   //     still pause + resume the playlist normally once it's playing.
   const autoStartedRef = useRef(false)
+
+  // 2.0.3: reset the auto-start guard whenever the active script's
+  // identity OR playlist assignment changes, so a NEW script load or a
+  // playlist reassignment on the SAME script re-arms auto-start for
+  // the next hasStarted transition. Without this, the ref would stay
+  // true from the first practice's auto-start and every subsequent
+  // load in the same session would silently no-op.
+  //   • Scenario (a) different script: script.id changes → reset.
+  //   • Scenario (b) same script, new playlist: script.playlist_id
+  //     changes → reset. (The main auto-start effect's deps only watch
+  //     id, so it wouldn't otherwise re-run and reset via the
+  //     !hasStarted branch.)
+  //   • Scenario (c) practice ends → new practice: already handled by
+  //     the !hasStarted branch inside the main auto-start effect below.
+  useEffect(() => {
+    autoStartedRef.current = false
+  }, [snap.activeScript?.id, snap.activeScript?.playlist_id])
+
   useEffect(() => {
     // DIAGNOSTIC (2.0.1): timestamped logs on every branch so we can see
     // exactly what fires, in what order, with what data. Remove once the
@@ -354,8 +372,15 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
       queueOwnerPlaylistId:   audioSnap.queueOwnerPlaylistId,
       currentSongName:        audioSnap.song?.name ?? null,
     })
-    if (audioSnap.isPlaying || audioSnap.currentIndex >= 0) {
-      console.log(`[AutoStart ${T()}]   → skip: audio player already active (manual playback wins)`)
+    // Only bail on ACTIVELY PLAYING audio — a stale queue that isn't
+    // playing (previous practice ended, currentIndex left pointing at
+    // the last-played song) must not block a new script's auto-start.
+    // The old `currentIndex >= 0` check was too aggressive: after any
+    // playlist finished, currentIndex stays >= 0, and the next script
+    // load silently no-op'd. isPlaying alone still respects coach's
+    // manual playback (they'd notice if we clobbered their song).
+    if (audioSnap.isPlaying) {
+      console.log(`[AutoStart ${T()}]   → skip: audio actively playing (manual playback wins)`)
       return
     }
     autoStartedRef.current = true
