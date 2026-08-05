@@ -1765,7 +1765,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
           deploy is live at a glance. __BUILD_NUMBER__ is replaced at
           build time by vite.config.js's `define` block with the string
           `${pkg.version}.${git commit count}`, e.g. "2.0.0.245". */}
-      <div className="text-center pt-2 pb-8" style={{ color: '#4a2020', fontSize: '0.7rem' }}>
+      <div className="text-center pt-2 pb-8" style={{ color: '#9a8080', fontSize: '0.7rem' }}>
         Build {__BUILD_NUMBER__}
       </div>
     </div>
