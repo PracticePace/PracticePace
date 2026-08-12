@@ -686,6 +686,199 @@ function drawCheerMat(ctx, w, h) {
   }
 }
 
+// ── Weight Training backgrounds ───────────────────────────────────────────────
+// Unlike the field/court backgrounds above, these are worksheet-style
+// templates — light backdrop, dark line work — since the point is for a
+// coach to write on top of them (exercise names, weights, reps), not to
+// diagram plays over a colored playing surface. Off-white (not pure
+// white) so they're visually distinct from Blank at a glance while still
+// reading well under the default black pen.
+const WORKSHEET_BG = '#f4f1ea'
+const WORKSHEET_LINE = '#2a2a2a'
+
+// Weight Rack Layout — a numbered station-rotation circuit. Coaches draw
+// their own equipment/exercise labels at each station; this just lays
+// out the rotation order and direction so the group knows where to go
+// next without re-explaining it every set.
+function drawWeightRackLayout(ctx, w, h) {
+  ctx.fillStyle = WORKSHEET_BG
+  ctx.fillRect(0, 0, w, h)
+
+  const margin = Math.min(w, h) * 0.08
+  const cx = w / 2, cy = h / 2
+  const rx = w / 2 - margin, ry = h / 2 - margin
+
+  // Room boundary
+  ctx.strokeStyle = WORKSHEET_LINE
+  ctx.lineWidth = Math.max(2, Math.min(w, h) * 0.004)
+  ctx.strokeRect(margin, margin, w - margin * 2, h - margin * 2)
+
+  const STATIONS = 6
+  const stationR = Math.min(w, h) * 0.055
+  const positions = []
+  for (let i = 0; i < STATIONS; i++) {
+    // Evenly spaced around an ellipse inset from the room boundary.
+    const angle = (Math.PI * 2 * i) / STATIONS - Math.PI / 2
+    positions.push({
+      x: cx + Math.cos(angle) * rx * 0.78,
+      y: cy + Math.sin(angle) * ry * 0.78,
+    })
+  }
+
+  // Rotation arrows — dashed curve from each station to the next.
+  ctx.strokeStyle = WORKSHEET_LINE
+  ctx.lineWidth = Math.max(1.5, Math.min(w, h) * 0.0025)
+  ctx.setLineDash([Math.min(w, h) * 0.015, Math.min(w, h) * 0.01])
+  for (let i = 0; i < STATIONS; i++) {
+    const from = positions[i]
+    const to   = positions[(i + 1) % STATIONS]
+    ctx.beginPath()
+    ctx.moveTo(from.x, from.y)
+    ctx.lineTo(to.x, to.y)
+    ctx.stroke()
+    // Arrowhead at the midpoint, pointing toward `to`.
+    const midX = (from.x + to.x) / 2, midY = (from.y + to.y) / 2
+    const ang  = Math.atan2(to.y - from.y, to.x - from.x)
+    const ah   = Math.min(w, h) * 0.018
+    ctx.save()
+    ctx.setLineDash([])
+    ctx.translate(midX, midY)
+    ctx.rotate(ang)
+    ctx.beginPath()
+    ctx.moveTo(-ah, -ah * 0.6)
+    ctx.lineTo(0, 0)
+    ctx.lineTo(-ah, ah * 0.6)
+    ctx.stroke()
+    ctx.restore()
+  }
+  ctx.setLineDash([])
+
+  // Numbered station circles, drawn last so they sit on top of the arrows.
+  ctx.font = `bold ${Math.max(12, stationR * 0.9)}px sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  positions.forEach((p, i) => {
+    ctx.fillStyle = WORKSHEET_BG
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, stationR, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = WORKSHEET_LINE
+    ctx.lineWidth = Math.max(2, stationR * 0.08)
+    ctx.stroke()
+    ctx.fillStyle = WORKSHEET_LINE
+    ctx.fillText(String(i + 1), p.x, p.y)
+  })
+
+  // Title
+  ctx.font = `bold ${Math.max(11, Math.min(w, h) * 0.03)}px sans-serif`
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'top'
+  ctx.fillStyle = WORKSHEET_LINE
+  ctx.globalAlpha = 0.55
+  ctx.fillText('STATION ROTATION', margin, margin * 0.35)
+  ctx.globalAlpha = 1
+}
+
+// Set/Rep Tracker Grid — rows for exercises, columns for sets/reps/weight.
+function drawSetRepGrid(ctx, w, h) {
+  ctx.fillStyle = WORKSHEET_BG
+  ctx.fillRect(0, 0, w, h)
+
+  const margin = Math.min(w, h) * 0.05
+  const gridX = margin, gridY = margin * 1.6
+  const gridW = w - margin * 2, gridH = h - gridY - margin
+
+  const COLS = ['EXERCISE', 'SET 1', 'SET 2', 'SET 3', 'WEIGHT']
+  const ROWS = 9
+  // Exercise name column is wider than the numeric columns.
+  const exerciseColW = gridW * 0.32
+  const otherColW    = (gridW - exerciseColW) / (COLS.length - 1)
+  const rowH = gridH / (ROWS + 1)   // +1 for the header row
+
+  ctx.strokeStyle = WORKSHEET_LINE
+  ctx.lineWidth = Math.max(1, gridH * 0.0025)
+
+  // Outer border
+  ctx.strokeRect(gridX, gridY, gridW, gridH)
+
+  // Column dividers
+  let x = gridX
+  ctx.beginPath()
+  COLS.forEach((_, i) => {
+    x += i === 0 ? exerciseColW : otherColW
+    ctx.moveTo(x, gridY)
+    ctx.lineTo(x, gridY + gridH)
+  })
+  ctx.stroke()
+
+  // Row dividers (header row gets a heavier rule underneath it)
+  for (let r = 0; r <= ROWS; r++) {
+    const y = gridY + rowH * (r + 1)
+    ctx.beginPath()
+    ctx.lineWidth = r === 0 ? Math.max(2, gridH * 0.005) : Math.max(1, gridH * 0.0025)
+    ctx.moveTo(gridX, y)
+    ctx.lineTo(gridX + gridW, y)
+    ctx.stroke()
+  }
+
+  // Header labels
+  ctx.fillStyle = WORKSHEET_LINE
+  ctx.font = `bold ${Math.max(10, rowH * 0.4)}px sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  let colX = gridX
+  COLS.forEach((label, i) => {
+    const colW = i === 0 ? exerciseColW : otherColW
+    ctx.fillText(label, colX + colW / 2, gridY + rowH / 2)
+    colX += colW
+  })
+}
+
+// WOD Template — Warmup / Strength / Conditioning / Cooldown sections,
+// each a labeled box with blank ruled lines for the coach to fill in.
+function drawWodTemplate(ctx, w, h) {
+  ctx.fillStyle = WORKSHEET_BG
+  ctx.fillRect(0, 0, w, h)
+
+  const margin = Math.min(w, h) * 0.05
+  const SECTIONS = ['WARMUP', 'STRENGTH', 'CONDITIONING', 'COOLDOWN']
+  const totalH = h - margin * 2
+  const gap = totalH * 0.02
+  const sectionH = (totalH - gap * (SECTIONS.length - 1)) / SECTIONS.length
+  const sectionW = w - margin * 2
+
+  SECTIONS.forEach((label, i) => {
+    const y = margin + i * (sectionH + gap)
+
+    ctx.strokeStyle = WORKSHEET_LINE
+    ctx.lineWidth = Math.max(1.5, sectionH * 0.015)
+    ctx.strokeRect(margin, y, sectionW, sectionH)
+
+    // Section label, top-left of its box.
+    ctx.fillStyle = WORKSHEET_LINE
+    ctx.font = `bold ${Math.max(11, sectionH * 0.16)}px sans-serif`
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'top'
+    const labelPad = sectionH * 0.12
+    ctx.fillText(label, margin + labelPad, y + labelPad)
+
+    // Ruled lines for the coach to write on, below the label.
+    const linesTop = y + sectionH * 0.36
+    const linesBottom = y + sectionH - labelPad
+    const lineCount = Math.max(2, Math.floor((linesBottom - linesTop) / (sectionH * 0.18)))
+    ctx.globalAlpha = 0.35
+    ctx.lineWidth = Math.max(1, sectionH * 0.006)
+    for (let li = 0; li < lineCount; li++) {
+      const ly = linesTop + (li * (linesBottom - linesTop)) / Math.max(1, lineCount - 1)
+      ctx.beginPath()
+      ctx.moveTo(margin + labelPad, ly)
+      ctx.lineTo(margin + sectionW - labelPad, ly)
+      ctx.stroke()
+    }
+    ctx.globalAlpha = 1
+  })
+}
+
 // Draw a coach-uploaded image as the underlay, fit-to-contain inside the
 // canvas. Image is already cropped to the canvas aspect at upload-time
 // (see WhiteboardImageFrameDialog), so on a same-aspect viewport it fills
@@ -734,11 +927,16 @@ const BACKGROUNDS = {
   tennis:                 drawTennisCourt,
   track:                  drawTrack,
   cheer_mat:              drawCheerMat,
+  weight_rack_layout:     drawWeightRackLayout,
+  set_rep_grid:           drawSetRepGrid,
+  wod_template:           drawWodTemplate,
 }
 
 // Toolbar dropdown options. All visible to all users regardless of program
 // sport — no filtering. The two cheer entries (cheer_mat,
 // football_sideline_cheer) were added for the cheerleading-supplier demo.
+// The three weight_* entries follow the same unfiltered convention for
+// Weight Training.
 const BACKGROUND_OPTIONS = [
   { value: 'blank',                  label: 'Blank' },
   { value: 'football',               label: 'Football field' },
@@ -751,6 +949,9 @@ const BACKGROUND_OPTIONS = [
   { value: 'tennis',                 label: 'Tennis court' },
   { value: 'track',                  label: 'Track (oval, 8 lanes)' },
   { value: 'cheer_mat',              label: 'Cheer mat' },
+  { value: 'weight_rack_layout',     label: 'Weight rack layout' },
+  { value: 'set_rep_grid',           label: 'Set/rep tracker grid' },
+  { value: 'wod_template',           label: 'WOD template' },
 ]
 
 // ── Toolbar icons (inline SVGs match the project convention) ─────────────────

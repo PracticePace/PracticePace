@@ -25,6 +25,7 @@ export const SPORTS = [
   { value: 'volleyball',       label: 'Volleyball'       },
   { value: 'baseball',         label: 'Baseball'         },
   { value: 'softball',         label: 'Softball'         },
+  { value: 'weight_training',  label: 'Weight Training'  },
   { value: 'custom',           label: 'Custom'           },
 ]
 

@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import StadiumNoiseToggle from '../StadiumNoiseToggle'
+import { useOrg } from '../../context/OrgContext'
+import { canAdminister } from '../../lib/permissions'
+import { playWhistle, playAirHorn } from '../../lib/sounds'
 
 function pad(n) { return String(n).padStart(2, '0') }
 function fmtClock(s) { return `${pad(Math.floor(Math.abs(s) / 60))}:${pad(Math.abs(s) % 60)}` }
@@ -1366,6 +1369,218 @@ function CheerScoreboard({ orgColor, programName }) {
   )
 }
 
+// Stepper for a single Tabata setting — 44px tap targets (iPad HIG
+// minimum), matching the football scoreboard's Ball On / Yards-to-Go
+// +/- polish. Declared at module scope (not inside TabataScoreboard) so
+// it isn't recreated every render.
+function Stepper({ label, value, suffix = '', canConfigure, disabled, onDecrement, onIncrement }) {
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <span className="text-xs uppercase tracking-widest" style={{ color: '#9a8080' }}>{label}</span>
+      {canConfigure ? (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onDecrement}
+            disabled={disabled}
+            className="w-11 h-11 rounded-lg text-lg font-bold flex items-center justify-center disabled:opacity-30"
+            style={{ border: '1px solid #2a0000', color: '#9a8080' }}
+          >
+            −
+          </button>
+          <span className="font-mono font-black text-white text-center" style={{ minWidth: '4ch', fontVariantNumeric: 'tabular-nums' }}>
+            {value}{suffix}
+          </span>
+          <button
+            onClick={onIncrement}
+            disabled={disabled}
+            className="w-11 h-11 rounded-lg text-lg font-bold flex items-center justify-center disabled:opacity-30"
+            style={{ border: '1px solid #2a0000', color: '#9a8080' }}
+          >
+            +
+          </button>
+        </div>
+      ) : (
+        // team_manager (and any other non-admin role): read-only value,
+        // no steppers — they can run the timer but not reconfigure it.
+        <span className="font-mono font-black text-white" style={{ fontVariantNumeric: 'tabular-nums' }}>
+          {value}{suffix}
+        </span>
+      )}
+    </div>
+  )
+}
+
+// ── TabataScoreboard ─────────────────────────────────────────────────────────
+// Weight Training's scoreboard surface: a configurable work/rest interval
+// timer (standard Tabata defaults — 20s work / 10s rest / 8 rounds).
+//
+// Operate vs configure: matches the canAdminister gate used elsewhere in
+// the app (Program Logo, Practice Screen Background, etc.) — every role
+// that can reach the Scoreboard tab can Start/Pause/Reset, but only
+// head_coach/ad can edit the work/rest/round settings. currentRole comes
+// from useOrg() (Commit C) since this is org-scoped content, same as
+// Whiteboard/Scripts/Audio's canEdit checks.
+//
+// Audio: reuses the existing lib/sounds.js engine rather than building a
+// new one — playWhistle() (short, non-fatiguing) marks every work↔rest
+// transition since those repeat many times a session; playAirHorn()
+// (the practice timer's existing "big, this segment is over" cue) marks
+// the workout finishing. Sounds fire from a useEffect watching the
+// derived phase/completed state, not from inside the tick's setState
+// updater — updaters can double-invoke under StrictMode, effects don't.
+//
+// No DB writes — same as every other scoreboard surface, purely local
+// React state reset on tab reload.
+function TabataScoreboard({ orgColor, programName }) {
+  const { currentRole } = useOrg()
+  const canConfigure = canAdminister(currentRole)
+
+  // ── Interval settings (editable pre-start by head_coach/ad only) ──────────
+  const [workSecs, setWorkSecs]         = useState(20)
+  const [restSecs, setRestSecs]         = useState(10)
+  const [totalRounds, setTotalRounds]   = useState(8)
+
+  // ── Active session state ───────────────────────────────────────────────────
+  const [timer, setTimer] = useState({
+    started: false, running: false, completed: false,
+    phase: 'work', round: 1, secsLeft: 20,
+  })
+
+  function handleReset() {
+    setTimer({ started: false, running: false, completed: false, phase: 'work', round: 1, secsLeft: workSecs })
+  }
+
+  function handleStartPause() {
+    if (timer.completed) {
+      setTimer({ started: true, running: true, completed: false, phase: 'work', round: 1, secsLeft: workSecs })
+      return
+    }
+    setTimer(prev => ({ ...prev, started: true, running: !prev.running }))
+  }
+
+  // Tick loop — same setInterval pattern as every other scoreboard clock
+  // in this file. Reads workSecs/restSecs/totalRounds from the effect's
+  // closure (settings are locked once started, so they're stable for the
+  // life of a run — see the `disabled={timer.started}` on the steppers
+  // below).
+  useEffect(() => {
+    if (!timer.running) return
+    const id = setInterval(() => {
+      setTimer(prev => {
+        if (prev.secsLeft > 1) return { ...prev, secsLeft: prev.secsLeft - 1 }
+        if (prev.phase === 'work' && prev.round >= totalRounds) {
+          return { ...prev, secsLeft: 0, running: false, completed: true }
+        }
+        if (prev.phase === 'work') {
+          return { ...prev, phase: 'rest', secsLeft: restSecs }
+        }
+        return { ...prev, phase: 'work', round: prev.round + 1, secsLeft: workSecs }
+      })
+    }, 1000)
+    return () => clearInterval(id)
+  }, [timer.running, workSecs, restSecs, totalRounds])
+
+  // Audio cues — fire once per actual phase/completion change.
+  const prevPhaseRef     = useRef(timer.phase)
+  const prevCompletedRef = useRef(timer.completed)
+  useEffect(() => {
+    if (timer.completed && !prevCompletedRef.current) {
+      playAirHorn()
+    } else if (timer.started && timer.phase !== prevPhaseRef.current) {
+      playWhistle()
+    }
+    prevPhaseRef.current     = timer.phase
+    prevCompletedRef.current = timer.completed
+  }, [timer.phase, timer.completed, timer.started])
+
+  function adjustSetting(setter, value, delta, min, max) {
+    if (timer.started) return
+    setter(Math.max(min, Math.min(max, value + delta)))
+  }
+
+  const isWork    = timer.phase === 'work'
+  const phaseColor = timer.completed ? '#22c55e' : isWork ? orgColor : '#2563eb'
+  const phaseLabel = timer.completed ? 'DONE' : isWork ? 'WORK' : 'REST'
+
+  const startLabel = timer.completed ? 'Restart' : timer.running ? 'Pause' : timer.started ? 'Resume' : 'Start'
+
+  return (
+    <div className="flex-1 flex flex-col overflow-y-auto p-4 gap-6 items-center">
+      {programName && (
+        <div className="text-center">
+          <h2 className="text-lg font-black text-white tracking-wide">{programName}</h2>
+          <p className="text-xs uppercase tracking-widest" style={{ color: '#9a8080' }}>Weight Training</p>
+        </div>
+      )}
+
+      <div className="text-sm font-bold uppercase tracking-widest" style={{ color: '#9a8080' }}>
+        Round {timer.round} of {totalRounds}
+      </div>
+
+      {/* WORK/REST state — big color-coded block so it reads at a glance
+          from across the weight room. */}
+      <div
+        className="w-full max-w-md rounded-3xl flex flex-col items-center gap-2 py-8 transition-colors"
+        style={{ backgroundColor: `${phaseColor}22`, border: `3px solid ${phaseColor}` }}
+      >
+        <span className="text-2xl font-black tracking-[0.2em]" style={{ color: phaseColor }}>
+          {phaseLabel}
+        </span>
+        <span
+          className="font-mono font-black leading-none"
+          style={{ fontSize: 'clamp(3.5rem, 16vw, 8rem)', color: '#fff', fontVariantNumeric: 'tabular-nums' }}
+        >
+          {fmtClock(timer.secsLeft)}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleStartPause}
+          className="px-6 py-3 rounded-xl font-bold text-white"
+          style={{ backgroundColor: timer.running ? '#7a2020' : orgColor, minHeight: 44 }}
+        >
+          {startLabel}
+        </button>
+        <button
+          onClick={handleReset}
+          className="px-6 py-3 rounded-xl font-bold"
+          style={{ border: '1px solid #2a0000', color: '#9a8080', minHeight: 44 }}
+        >
+          Reset
+        </button>
+      </div>
+
+      {/* Interval settings. Steppers only interactive for head_coach/ad
+          (canConfigure); team_manager sees the same values read-only.
+          Locked for everyone once a session has started — reset first. */}
+      <div className="w-full max-w-md rounded-2xl p-4 flex items-center justify-around"
+        style={{ backgroundColor: '#0d0000', border: '1px solid #2a0000' }}>
+        <Stepper
+          label="Work" value={workSecs} suffix="s" canConfigure={canConfigure} disabled={timer.started}
+          onDecrement={() => adjustSetting(setWorkSecs, workSecs, -5, 5, 300)}
+          onIncrement={() => adjustSetting(setWorkSecs, workSecs, 5, 5, 300)}
+        />
+        <Stepper
+          label="Rest" value={restSecs} suffix="s" canConfigure={canConfigure} disabled={timer.started}
+          onDecrement={() => adjustSetting(setRestSecs, restSecs, -5, 0, 300)}
+          onIncrement={() => adjustSetting(setRestSecs, restSecs, 5, 0, 300)}
+        />
+        <Stepper
+          label="Rounds" value={totalRounds} canConfigure={canConfigure} disabled={timer.started}
+          onDecrement={() => adjustSetting(setTotalRounds, totalRounds, -1, 1, 30)}
+          onIncrement={() => adjustSetting(setTotalRounds, totalRounds, 1, 1, 30)}
+        />
+      </div>
+      {!canConfigure && (
+        <p className="text-xs text-center" style={{ color: '#6a4040' }}>
+          Only a Head Coach or Athletic Director can change these settings.
+        </p>
+      )}
+    </div>
+  )
+}
+
 // ── GenericScoreboard ────────────────────────────────────────────────────────
 // Minimal home/away score + game clock + period indicator. The fallback
 // surface for every launch-list sport that doesn't have a purpose-built
@@ -1513,6 +1728,7 @@ function GenericScoreboard({ orgColor, homeTeamName, awayTeamName, programName, 
 //     basketball (legacy)
 //   cheerleading, plus legacy stunt / dance /  → CheerScoreboard
 //     dance team
+//   weight_training                            → TabataScoreboard
 //   anything else (flag_football, boys_soccer, → GenericScoreboard
 //     girls_soccer, volleyball, baseball,
 //     softball, custom, null/undefined)
@@ -1526,6 +1742,7 @@ function sportToScoreboard(orgSport) {
    || s === 'stunt'
    || s === 'dance'
    || s === 'dance team')                                 return 'cheer'
+  if (s === 'weight_training')                             return 'tabata'
   return 'generic'
 }
 
@@ -1566,6 +1783,8 @@ export default function ScoreboardSection({
     surfaceEl = <BasketballScoreboard orgColor={orgColor} />
   } else if (surface === 'cheer') {
     surfaceEl = <CheerScoreboard orgColor={orgColor} programName={programName} />
+  } else if (surface === 'tabata') {
+    surfaceEl = <TabataScoreboard orgColor={orgColor} programName={programName} />
   } else {
     surfaceEl = (
       <GenericScoreboard
@@ -1582,7 +1801,7 @@ export default function ScoreboardSection({
   // header bar at the top-right that hosts the StadiumNoiseToggle,
   // then the chosen sub-scoreboard taking the rest of the vertical
   // space. The header is the same shape across all four scoreboards
-  // (Football, Basketball, Cheer, Generic) so the crowd-noise button
+  // (Football, Basketball, Cheer, Tabata, Generic) so the crowd-noise button
   // lives in a predictable spot regardless of which surface is
   // rendered — and it never collides with sport-specific top-right
   // content (e.g. Basketball's Period Controls box). Audio state
