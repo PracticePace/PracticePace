@@ -18,15 +18,14 @@ const QUICK_LINKS = [
   { to: '/about',   label: 'About'   },
 ]
 
-// Sports list mirrors the mockup — Football / Basketball / Cheer /
-// Wrestling. Each is a marketing landing subroute we'll add in a later
-// commit (Commit 3 owns the Sports page). For now they route to the
-// generic /sports page.
+// Sports list mirrors the Home / Sports pages — Football / Basketball /
+// Cheer / Weightlifting (was Wrestling; swapped per Boostr in 2.1.0).
+// Each routes to the generic /sports page for now.
 const SPORTS = [
-  { to: '/sports', label: 'Football'    },
-  { to: '/sports', label: 'Basketball'  },
-  { to: '/sports', label: 'Cheer'       },
-  { to: '/sports', label: 'Wrestling'   },
+  { to: '/sports', label: 'Football'      },
+  { to: '/sports', label: 'Basketball'    },
+  { to: '/sports', label: 'Cheer'         },
+  { to: '/sports', label: 'Weightlifting' },
 ]
 
 // Reusable heading style for the three link-list columns.

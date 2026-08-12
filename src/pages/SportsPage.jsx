@@ -5,7 +5,7 @@
 //   • Hero — 4-column solo-athlete strip with overlaid "SPORTS"
 //     headline (desktop); stacked SPORTS bar + 2×2 image grid (mobile)
 //   • Headline block — red eyebrow + "MAXIMIZE EVERY MINUTE"
-//   • 4 sport cards — Football / Basketball / Cheer / Wrestling, each
+//   • 4 sport cards — Football / Basketball / Cheer / Weightlifting, each
 //     with a scene photo + name + feature list
 //   • ReadyToMaximize
 //   • MarketingFooter
@@ -24,7 +24,9 @@ const HERO_SOLOS = [
   { key: 'football',   src: '/marketing/football-solo.png',   alt: 'Solo portrait of a football player.' },
   { key: 'basketball', src: '/marketing/basketball-solo.png', alt: 'Solo portrait of a basketball player.' },
   { key: 'cheer',      src: '/marketing/cheer-solo.png',      alt: 'Solo portrait of a cheerleader.' },
-  { key: 'wrestling',  src: '/marketing/wrestling-solo.png',  alt: 'Solo portrait of a wrestler.' },
+  // Internal key stays 'wrestling' — this slot was swapped to Weightlifting
+  // per Boostr. Only user-visible src + alt changed.
+  { key: 'wrestling',  src: '/marketing/weightlifting.png',  alt: 'Solo portrait of an athlete lifting weights.' },
 ]
 
 // Card content — scene photos (NOT solos) + verbatim feature copy per
@@ -53,11 +55,13 @@ const SPORT_CARDS = [
     features: ['Routine & Drill Planning', 'Time Tracking', 'Music & Audio Cues', 'Performance Clock'],
   },
   {
+    // Internal key stays 'wrestling' — swapped to Weightlifting per Boostr.
+    // Feature bullets replaced with weightlifting-relevant coach tools.
     key:      'wrestling',
-    image:    '/marketing/practice-wrestling-2.jpg',
-    alt:      'Wrestlers drilling on the mat during practice.',
-    name:     'Wrestling',
-    features: ['Practice Planning', 'Drill Library', 'Live Scoreboard', 'Performance Clock'],
+    image:    '/marketing/weightlifting.png',
+    alt:      'An athlete lifting weights during a workout.',
+    name:     'Weightlifting',
+    features: ['Workout & Lift Planning', 'Set & Rest Timers', 'Performance Clock', 'Music & Audio Cues'],
   },
 ]
 

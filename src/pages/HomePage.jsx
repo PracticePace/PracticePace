@@ -3,7 +3,7 @@
 // Structure (top-to-bottom):
 //   • MarketingHeader (sticky, from Commit 1 stub)
 //   • Hero — full-viewport text-left + football photo-right
-//   • Sport tiles (4-up: Football, Basketball, Cheer, Wrestling)
+//   • Sport tiles (4-up: Football, Basketball, Cheer, Weightlifting)
 //   • System features + video preview thumbnail (opens VideoModal)
 //   • Testimonials (Patrick / Antonio / Adam)
 //   • ReadyToMaximize (from Commit 1 stub)
@@ -87,10 +87,14 @@ const SPORT_TILES = [
     tagline: 'Sharp. Confident. Competition Ready.',
   },
   {
+    // Internal key stays 'wrestling' — this slot was originally Wrestling
+    // and was swapped to Weightlifting per Boostr. Only user-visible
+    // fields (image, alt, title) changed; tagline preserved per Boostr's
+    // explicit request. Renaming the key is out of scope.
     key:     'wrestling',
-    image:   '/marketing/practice-wrestling-1.jpg',
-    alt:     'Wrestlers drilling on the mat during practice.',
-    title:   'Wrestling',
+    image:   '/marketing/weightlifting.png',
+    alt:     'An athlete lifting weights during a workout.',
+    title:   'Weightlifting',
     tagline: 'Relentless Effort. Every Second.',
   },
 ]
