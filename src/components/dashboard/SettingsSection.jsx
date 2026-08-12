@@ -195,8 +195,17 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
             org_name: row.organizations?.name ?? null,
           })
         }
+        // Bug fix: exclude the caller themselves. Programs created via
+        // add-program.js before Commit D.5 shipped never got a coach_orgs
+        // row for the AD who created them, so without this filter the AD
+        // shows up as a "candidate" to add to their own program — they
+        // already have full account-wide access to every org, so it's
+        // never a real option, just confusing noise (found while
+        // investigating why Matt saw no usable candidates for Aggie
+        // Weightroom — a 0-coach_orgs org where he'd have been the only
+        // "candidate" shown).
         const candidates = [...byProfile.values()].filter(
-          c => !c.orgs.some(o => o.org_id === org.id)
+          c => c.profile_id !== user?.id && !c.orgs.some(o => o.org_id === org.id)
         )
         setExistingCandidates(candidates)
       } catch (err) {
@@ -207,7 +216,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
       }
     })()
     return () => { cancelled = true }
-  }, [inviteMode, org?.id, allOrgs, profile?.role])
+  }, [inviteMode, org?.id, allOrgs, profile?.role, user?.id])
 
   const [bgUploading, setBgUploading] = useState(false)
   const [bgError, setBgError]         = useState('')
