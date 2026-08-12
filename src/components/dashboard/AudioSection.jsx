@@ -713,14 +713,14 @@ function LibraryTab({
 
 // ── Main MP3 player ───────────────────────────────────────────────────────────
 // orgId is passed down from AudioSection → Dashboard so the AD's program
-// switcher (Commit 2b) propagates here. Falling back to profile.org_id is
-// for legacy callers / safety; in the live Dashboard chain orgId is always
-// supplied. If we read profile.org_id directly, an AD switched to a
-// sibling program would see their pinned Football music instead of the
-// active program's.
+// switcher (Commit 2b) propagates here. Falling back to profile.current_org_id
+// is for legacy callers / safety; in the live Dashboard chain orgId is
+// always supplied. If we read profile.current_org_id directly, an AD
+// switched to a sibling program would see their pinned Football music
+// instead of the active program's.
 function Mp3Player({ orgColor, orgId: orgIdProp }) {
   const { profile } = useAuth()
-  const orgId = orgIdProp ?? profile?.org_id
+  const orgId = orgIdProp ?? profile?.current_org_id
 
   const [snap,          setSnap]          = useState(() => getAudioSnapshot())
   const [currentTime,   setCurrentTime]   = useState(0)

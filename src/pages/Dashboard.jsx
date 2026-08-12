@@ -72,8 +72,10 @@ export default function Dashboard() {
   // Anonymous Supabase users have is_anonymous === true
   const isGuest = user?.is_anonymous === true
 
-  // org_id comes directly from the profile row — no join required
-  const contextOrgId = authProfile?.org_id ?? null
+  // current_org_id comes directly from the profile row — no join required.
+  // Commit B: this is the org the coach is actively viewing, distinct from
+  // the permanent profile.org_id "home" org.
+  const contextOrgId = authProfile?.current_org_id ?? null
 
   // Default landing tab is Scripts. The Practice tab is one click away on
   // the bottom nav, and handleSetActive() still auto-jumps to Practice when
@@ -228,14 +230,15 @@ export default function Dashboard() {
       // return null for it silently if the FK schema cache hasn't refreshed.
       const { data: prof } = await supabase
         .from('profiles')
-        .select('id, org_id, account_id, full_name, email, role')
+        .select('id, org_id, current_org_id, account_id, full_name, email, role')
         .eq('id', user.id)
         .maybeSingle()
 
       console.log('[Dashboard] profile:', {
-        id:         prof?.id,
-        org_id:     prof?.org_id,
-        account_id: prof?.account_id,
+        id:             prof?.id,
+        org_id:         prof?.org_id,
+        current_org_id: prof?.current_org_id,
+        account_id:     prof?.account_id,
       })
 
       setProfile(prof ?? null)
@@ -277,9 +280,10 @@ export default function Dashboard() {
 
       // ── Resolve activeOrgId ────────────────────────────────────────────────
       // AD: respect a previously-stored selection in localStorage (must
-      //     still be a visible org); fall back to profile.org_id; fall
-      //     back to first alphabetical org.
-      // Everyone else: just use profile.org_id (their only org).
+      //     still be a visible org); fall back to profile.current_org_id;
+      //     fall back to first alphabetical org.
+      // Everyone else: just use profile.current_org_id (their only org,
+      //     today — Commit B backfills it 1:1 from org_id).
       let resolvedOrgId
       if (isAd(prof?.role)) {
         let saved = null
@@ -287,18 +291,18 @@ export default function Dashboard() {
         const savedIsVisible = saved && orgsArr.some(o => o.id === saved)
         resolvedOrgId = savedIsVisible
           ? saved
-          : (prof?.org_id && orgsArr.some(o => o.id === prof.org_id))
-              ? prof.org_id
+          : (prof?.current_org_id && orgsArr.some(o => o.id === prof.current_org_id))
+              ? prof.current_org_id
               : (orgsArr[0]?.id ?? null)
       } else {
-        resolvedOrgId = prof?.org_id ?? contextOrgId ?? null
+        resolvedOrgId = prof?.current_org_id ?? contextOrgId ?? null
       }
       setActiveOrgId(resolvedOrgId)
 
       // Active org row — pulled from the already-loaded list when
       // possible to avoid an extra round-trip. If not in the list (rare
-      // — e.g. profile.org_id points at an org the user can't SELECT
-      // due to a stale profile row) fetch explicitly.
+      // — e.g. profile.current_org_id points at an org the user can't
+      // SELECT due to a stale profile row) fetch explicitly.
       let orgData = orgsArr.find(o => o.id === resolvedOrgId) ?? null
       if (!orgData && resolvedOrgId) {
         const { data: orgFetch } = await supabase
@@ -598,7 +602,7 @@ export default function Dashboard() {
       if (promotedToAd && user?.id) {
         const { data: freshProf } = await supabase
           .from('profiles')
-          .select('id, org_id, account_id, full_name, email, role')
+          .select('id, org_id, current_org_id, account_id, full_name, email, role')
           .eq('id', user.id)
           .maybeSingle()
         if (freshProf) setProfile(freshProf)

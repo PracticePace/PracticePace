@@ -5,14 +5,16 @@ import { useAuth } from './AuthContext'
 const OrgContext = createContext(null)
 
 export function OrgProvider({ children }) {
-  // Use profile (not just user) — profile has org_id which is the correct
-  // foreign key to look up the organization row.
+  // Use profile (not just user) — profile.current_org_id is the org the
+  // coach is actively viewing right now (Commit B). Distinct from
+  // profile.org_id, which is the coach's permanent "home" org and is no
+  // longer what scoping reads should use.
   const { profile } = useAuth()
   const [org, setOrg] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!profile?.org_id) {
+    if (!profile?.current_org_id) {
       setOrg(null)
       setLoading(false)
       return
@@ -21,14 +23,14 @@ export function OrgProvider({ children }) {
     supabase
       .from('organizations')
       .select('*')
-      .eq('id', profile.org_id)   // correct: match organizations.id to profile.org_id
+      .eq('id', profile.current_org_id)   // match organizations.id to profile.current_org_id
       .single()
       .then(({ data, error }) => {
         if (error) console.error('OrgContext fetch error:', error.message)
         setOrg(data ?? null)
         setLoading(false)
       })
-  }, [profile?.org_id])
+  }, [profile?.current_org_id])
 
   return (
     <OrgContext.Provider value={{ org, loading }}>

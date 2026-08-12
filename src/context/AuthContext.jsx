@@ -5,7 +5,11 @@ const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
   const [user,    setUser]    = useState(null)
-  const [profile, setProfile] = useState(null)   // { id, account_id, org_id, role, full_name, email }
+  // { id, account_id, org_id, current_org_id, role, full_name, email, coachOrgs }
+  // current_org_id + coachOrgs added in Commit B (cross-program coach
+  // support) — coachOrgs is groundwork for the Commit E program-switcher
+  // UI and isn't consumed anywhere yet.
+  const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
 
   // Fetch profile for an authenticated non-anonymous user.
@@ -16,12 +20,30 @@ export function AuthProvider({ children }) {
       return
     }
     try {
-      const { data } = await supabase
-        .from('profiles')
-        .select('id, account_id, org_id, role, full_name, email')
-        .eq('id', authUser.id)
-        .maybeSingle()
-      setProfile(data ?? null)
+      // Run in parallel — coachOrgs failing independently shouldn't take
+      // down the whole profile (it's unused groundwork today), so this
+      // uses allSettled rather than Promise.all/a single query.
+      const [profileResult, coachOrgsResult] = await Promise.allSettled([
+        supabase
+          .from('profiles')
+          .select('id, account_id, org_id, current_org_id, role, full_name, email')
+          .eq('id', authUser.id)
+          .maybeSingle(),
+        supabase
+          .from('coach_orgs')
+          .select('org_id, role, organizations(name)')
+          .eq('profile_id', authUser.id),
+      ])
+
+      const data = profileResult.status === 'fulfilled' ? (profileResult.value.data ?? null) : null
+      const coachOrgsRows = coachOrgsResult.status === 'fulfilled' ? (coachOrgsResult.value.data ?? []) : []
+      const coachOrgs = coachOrgsRows.map(row => ({
+        org_id:   row.org_id,
+        role:     row.role,
+        org_name: row.organizations?.name ?? null,
+      }))
+
+      setProfile(data ? { ...data, coachOrgs } : null)
     } catch {
       setProfile(null)
     }

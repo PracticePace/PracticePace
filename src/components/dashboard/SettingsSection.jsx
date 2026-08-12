@@ -307,10 +307,12 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
           .insert({ id: orgId, name: form.name.trim(), sport: form.sport || 'football', slug, primary_color: '#cc1111', secondary_color: '#ffffff' })
         if (orgErr) { setSaveErr(`Could not create org: ${orgErr.message}`); return }
 
-        // 2. Link profile to the new org
+        // 2. Link profile to the new org. current_org_id is set alongside
+        // org_id (Commit B) so this fresh profile isn't left with a null
+        // current_org_id — mirrors the migration's backfill for existing rows.
         const { error: profErr } = await supabase
           .from('profiles')
-          .upsert({ id: userId, org_id: orgId, email: user?.email ?? '', role: 'head_coach', full_name: profile?.full_name ?? '' }, { onConflict: 'id' })
+          .upsert({ id: userId, org_id: orgId, current_org_id: orgId, email: user?.email ?? '', role: 'head_coach', full_name: profile?.full_name ?? '' }, { onConflict: 'id' })
         if (profErr) { setSaveErr(`Could not link profile: ${profErr.message}`); return }
 
         setSaved(true)

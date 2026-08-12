@@ -59,7 +59,7 @@ export default function Pricing() {
   const [loading, setLoading] = useState(null)  // priceId being checked out
   const [error,   setError]   = useState('')
 
-  const orgId   = profile?.org_id ?? null
+  const orgId   = profile?.current_org_id ?? null
   const email   = user?.email     ?? ''
   const orgName = ''   // caller can pass this; we leave blank if unknown
 
