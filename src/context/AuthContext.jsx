@@ -6,9 +6,10 @@ const AuthContext = createContext(null)
 export function AuthProvider({ children }) {
   const [user,    setUser]    = useState(null)
   // { id, account_id, org_id, current_org_id, role, full_name, email, coachOrgs }
-  // current_org_id + coachOrgs added in Commit B (cross-program coach
-  // support) — coachOrgs is groundwork for the Commit E program-switcher
-  // UI and isn't consumed anywhere yet.
+  // current_org_id + coachOrgs added in Commit B. Commit C: coachOrgs is
+  // now the source of truth for current_org_id validity (see fetchProfile)
+  // and per-org role (see useOrg() in OrgContext.jsx). Consumed by the
+  // permission gates in Commit C; the switcher UI itself is Commit E.
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
 
@@ -43,7 +44,35 @@ export function AuthProvider({ children }) {
         org_name: row.organizations?.name ?? null,
       }))
 
-      setProfile(data ? { ...data, coachOrgs } : null)
+      if (!data) {
+        setProfile(null)
+        return
+      }
+
+      // Commit C: coach_orgs is the source of truth for current_org_id
+      // validity. If it's null, or points at an org the coach has no
+      // coach_orgs membership row for (stale/orphaned pointer), repoint
+      // to their first membership and persist the fix. Fire-and-forget —
+      // this file's whole design is "never let an extra DB round trip
+      // block login" (see fetchProfileWithTimeout below), and a slightly
+      // stale current_org_id for one extra render is harmless.
+      // If coachOrgs is empty (shouldn't happen post-Commit-A backfill,
+      // but defensive), leave current_org_id exactly as fetched — the
+      // existing org_id-based fallback chains in Dashboard/OrgContext
+      // already handle a null current_org_id safely.
+      let currentOrgId = data.current_org_id
+      if (coachOrgs.length > 0 && !coachOrgs.some(c => c.org_id === currentOrgId)) {
+        currentOrgId = coachOrgs[0].org_id
+        supabase
+          .from('profiles')
+          .update({ current_org_id: currentOrgId })
+          .eq('id', authUser.id)
+          .then(({ error }) => {
+            if (error) console.warn('[Auth] current_org_id repair failed:', error.message)
+          })
+      }
+
+      setProfile({ ...data, current_org_id: currentOrgId, coachOrgs })
     } catch {
       setProfile(null)
     }

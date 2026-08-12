@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '../../context/AuthContext'
+import { useOrg } from '../../context/OrgContext'
 import { supabase } from '../../lib/supabase'
 import {
   subscribe as subscribeAudio, getSnapshot as getAudioSnapshot,
@@ -720,6 +721,9 @@ function LibraryTab({
 // instead of the active program's.
 function Mp3Player({ orgColor, orgId: orgIdProp }) {
   const { profile } = useAuth()
+  // Commit C: canEdit gates below use currentRole (coach_orgs role for
+  // the viewed org), not profile.role — songs/playlists are org-scoped.
+  const { currentRole } = useOrg()
   const orgId = orgIdProp ?? profile?.current_org_id
 
   const [snap,          setSnap]          = useState(() => getAudioSnapshot())
@@ -843,7 +847,7 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
         <PlaylistsTab
           playlists={playlists} playlistSongs={playlistSongs} songs={songs}
           orgId={orgId} userId={profile?.id}
-          orgColor={orgColor} canEdit={canEdit(profile?.role)}
+          orgColor={orgColor} canEdit={canEdit(currentRole)}
           onChange={loadPlaylistData}
           onSongsChange={loadSongs}
         />
@@ -853,7 +857,7 @@ function Mp3Player({ orgColor, orgId: orgIdProp }) {
         <LibraryTab
           songs={songs} playingId={snap.song?.id ?? null}
           orgColor={orgColor} orgId={orgId} onRefresh={loadSongs}
-          canEdit={canEdit(profile?.role)}
+          canEdit={canEdit(currentRole)}
           playlists={playlists} playlistSongs={playlistSongs}
           userId={profile?.id} onPlaylistsChange={loadPlaylistData}
         />

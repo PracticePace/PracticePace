@@ -32,8 +32,19 @@ export function OrgProvider({ children }) {
       })
   }, [profile?.current_org_id])
 
+  // Commit C: per-org role, not profile.role. profile.role is ambiguous
+  // once a coach belongs to 2+ orgs with different roles — the coach_orgs
+  // row for the currently-viewed org is the source of truth. Falls back
+  // to profile.role when no matching coach_orgs row exists (e.g. an AD
+  // viewing a sibling org via the switcher that they have no coach_orgs
+  // membership row for — their account-wide 'ad' role still applies via
+  // RLS's account-wide carve-out, so it's the correct fallback here too).
+  const coachOrgs = profile?.coachOrgs ?? []
+  const currentOrgId = profile?.current_org_id ?? null
+  const currentRole = coachOrgs.find(c => c.org_id === currentOrgId)?.role ?? profile?.role ?? null
+
   return (
-    <OrgContext.Provider value={{ org, loading }}>
+    <OrgContext.Provider value={{ org, loading, currentOrgId, currentRole, coachOrgs }}>
       {children}
     </OrgContext.Provider>
   )

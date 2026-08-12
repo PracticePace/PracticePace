@@ -7,7 +7,7 @@ import {
   playSongAtIndex,
   getSnapshot as getAudioSnapshot,
 } from '../../lib/audioPlayer'
-import { useAuth } from '../../context/AuthContext'
+import { useOrg } from '../../context/OrgContext'
 import { canEdit } from '../../lib/permissions'
 import { SPORTS as LAUNCH_SPORTS, sportLabel } from '../../lib/sports'
 import WhiteboardImageFrameDialog   from './WhiteboardImageFrameDialog'
@@ -2165,8 +2165,10 @@ export default function ScriptsSection({
   // follow-up to the RLS hardening in migration 20260515000000). readonly
   // coaches can still view scripts + drills, set a script active, and
   // print — they just can't add/edit/delete anything.
-  const { profile } = useAuth()
-  const userCanEdit = canEdit(profile?.role) || isGuest
+  // Commit C: scripts are org-scoped content — gate on the coach's role
+  // in the currently-viewed org (coach_orgs), not profile.role.
+  const { currentRole } = useOrg()
+  const userCanEdit = canEdit(currentRole) || isGuest
 
   const [view,           setView]          = useState('list')   // 'list' | 'editor'
   const [editingScript,  setEditingScript] = useState(null)

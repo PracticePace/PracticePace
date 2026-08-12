@@ -23,7 +23,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
-import { useAuth } from '../../context/AuthContext'
+import { useOrg } from '../../context/OrgContext'
 import { canEdit } from '../../lib/permissions'
 import WhiteboardImageFrameDialog   from './WhiteboardImageFrameDialog'
 import WhiteboardImageNameDialog    from './WhiteboardImageNameDialog'
@@ -769,8 +769,11 @@ export default function WhiteboardSection({ orgColor = '#cc1111', orgId, sport }
   // canEdit gates ALL drawing + toolbar controls. readonly coaches can
   // still see what's on the board (it loads + renders normally) but
   // can't draw, erase, undo, redo, clear, or change background.
-  const { profile } = useAuth()
-  const userCanEdit = canEdit(profile?.role)
+  const { currentRole } = useOrg()
+  // Commit C: whiteboards are org-scoped content — gate on the coach's
+  // role in the currently-viewed org (coach_orgs), not profile.role,
+  // which is ambiguous once a coach belongs to 2+ orgs.
+  const userCanEdit = canEdit(currentRole)
   // ── Refs ───────────────────────────────────────────────────────────────────
   const containerRef = useRef(null)
   const canvasRef    = useRef(null)
