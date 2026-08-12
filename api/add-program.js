@@ -18,6 +18,19 @@
 //   2. 2 → N (already-AD adding another program):
 //      Caller is already 'ad'. No designation step. Just create the org.
 //
+// COMMIT D.5 (cross-program coach support)
+//   Both self-becomes-AD cases (2a and case 2) now also insert a
+//   coach_orgs row for the caller on the new org — see insertCoachOrg().
+//   Deliberately does NOT touch the caller's profiles.current_org_id: the
+//   pre-existing behavior never touched profiles.org_id either (the
+//   caller's home org stays exactly as it was before this endpoint ran),
+//   so current_org_id follows the same precedent for consistency. The
+//   "land on the new program" UX is already handled client-side by
+//   Dashboard.jsx's handleProgramCreated (localStorage-based, per-device);
+//   a server-side current_org_id flip here would be a second, DB-level
+//   relocation that could surprise a caller with another session/device
+//   open, for no benefit — the client-side switch already covers it.
+//
 // WHY SERVER-SIDE
 //   - The new organizations INSERT RLS gates on get_my_role() = 'ad', so
 //     a head_coach can't INSERT directly from the browser. The 1→2 path
@@ -162,6 +175,28 @@ function slugify(str) {
 
 function looksLikeEmail(s) {
   return typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim())
+}
+
+// Commit D.5: give the caller a coach_orgs row for the org they just
+// became AD of (either because they were already AD, or because they
+// just self-promoted). on_conflict + ignore-duplicates makes this a safe
+// no-op if a row somehow already exists (shouldn't happen for a
+// brand-new org, but matches the same defensive pattern used everywhere
+// else in this codebase). Non-fatal by design — see call sites.
+async function insertCoachOrg(supabaseUrl, serviceKey, profileId, orgId, role) {
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/coach_orgs?on_conflict=profile_id,org_id`,
+    {
+      method:  'POST',
+      headers: sbHeaders(serviceKey, { 'Prefer': 'resolution=ignore-duplicates,return=minimal' }),
+      body: JSON.stringify({ profile_id: profileId, org_id: orgId, role }),
+    }
+  )
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { ok: false, error: text || `HTTP ${res.status}` }
+  }
+  return { ok: true }
 }
 
 export default async function handler(req) {
@@ -327,6 +362,21 @@ export default async function handler(req) {
     console.warn('[add-program] account-tier sync threw (non-fatal):', err?.message ?? err)
   }
 
+  // ── 5c. coach_orgs row for the already-AD path (Commit D.5) ──────────────
+  // callerRole === 'ad' here means this is the 2→N case — no designation
+  // step, the caller is already the account's AD and just gained another
+  // program. Give them a coach_orgs row for it. (The 1→2 self-promote
+  // case is handled below, after the role PATCH succeeds; the "invite
+  // someone else as AD" case is handled when THEY accept — see
+  // api/accept-invite.js, Commit D — the caller here stays head_coach and
+  // is not part of the new org, so no row for them.)
+  if (callerRole === 'ad') {
+    const coachOrgResult = await insertCoachOrg(supabaseUrl, serviceRoleKey, callerUserId, newOrgId, 'ad')
+    if (!coachOrgResult.ok) {
+      console.warn('[add-program] coach_orgs insert failed (non-fatal):', coachOrgResult.error)
+    }
+  }
+
   // ── 6. AD-designation side effects ────────────────────────────────────────
   let promotedToAd  = false
   let invitedAdEmail = null
@@ -357,6 +407,14 @@ export default async function handler(req) {
         })
       }
       promotedToAd = true
+
+      // Commit D.5: mirror the already-AD path above — now that the
+      // promotion succeeded, give the caller a coach_orgs row for the
+      // new org too.
+      const coachOrgResult = await insertCoachOrg(supabaseUrl, serviceRoleKey, callerUserId, newOrgId, 'ad')
+      if (!coachOrgResult.ok) {
+        console.warn('[add-program] coach_orgs insert failed (non-fatal):', coachOrgResult.error)
+      }
     } else {
       // Invite someone else as AD. The invited user's metadata.org_id
       // points at the NEWLY-created program (they "land" there); they
