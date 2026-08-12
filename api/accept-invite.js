@@ -166,6 +166,31 @@ export default async function handler(req) {
     const rows = await upsertRes.json().catch(() => null)
     const profile = Array.isArray(rows) ? rows[0] : rows
 
+    // 4. Commit D: also create the matching coach_orgs row so new invites
+    //    are consistent with Commit A's model going forward. This is the
+    //    natural point to do it — profile_id doesn't exist until the
+    //    upsert above completes. on_conflict + ignore-duplicates keeps
+    //    this idempotent for retries, matching the profiles upsert.
+    //    Non-fatal: profiles (the row that actually gates login/dashboard
+    //    access) is already committed at this point. A missing coach_orgs
+    //    row just means this org won't show up in the future switcher —
+    //    log and continue rather than blocking account creation over it.
+    const coachOrgRes = await fetch(
+      `${supabaseUrl}/rest/v1/coach_orgs?on_conflict=profile_id,org_id`,
+      {
+        method:  'POST',
+        headers: {
+          ...sbHeaders(serviceKey),
+          'Prefer': 'resolution=ignore-duplicates,return=minimal',
+        },
+        body: JSON.stringify({ profile_id: userId, org_id, role }),
+      }
+    )
+    if (!coachOrgRes.ok) {
+      const text = await coachOrgRes.text().catch(() => '')
+      console.error('[accept-invite] coach_orgs insert failed (non-fatal):', coachOrgRes.status, text)
+    }
+
     console.log('[accept-invite] profile ready:', { userId, org_id, account_id, role })
     return json({ ok: true, profile })
   } catch (err) {

@@ -102,6 +102,92 @@ async function loadCallerProfile(supabaseUrl, serviceKey, userId) {
   return { ok: true, profile }
 }
 
+// Commit D: look up an existing profile by email (service-role, bypasses
+// RLS same as the caller-profile lookup above). If found, this email
+// already has a PracticePace account and we must NOT call Supabase's
+// admin invite endpoint — it 422s with "already registered" and blocks
+// the AD. Returns { ok: true, profile: {id, full_name} | null } or
+// { ok: false, status, error } on a lookup failure.
+async function loadProfileByEmail(supabaseUrl, serviceKey, email) {
+  const url = `${supabaseUrl}/rest/v1/profiles?email=eq.${encodeURIComponent(email)}&select=id,full_name&limit=1`
+  let res
+  try {
+    res = await fetch(url, {
+      headers: {
+        'apikey':        serviceKey,
+        'Authorization': `Bearer ${serviceKey}`,
+      },
+    })
+  } catch (err) {
+    console.error('[invite-coach] email lookup network error:', err)
+    return { ok: false, status: 502, error: 'Could not check for an existing account' }
+  }
+  if (!res.ok) {
+    console.error('[invite-coach] email lookup HTTP', res.status)
+    return { ok: false, status: 502, error: 'Could not check for an existing account' }
+  }
+  const rows = await res.json().catch(() => null)
+  return { ok: true, profile: Array.isArray(rows) && rows[0] ? rows[0] : null }
+}
+
+// Commit D: does this profile already have a coach_orgs row for this org?
+// Returns { ok: true, exists } or { ok: false, status, error }.
+async function loadCoachOrgMembership(supabaseUrl, serviceKey, profileId, orgId) {
+  const url = `${supabaseUrl}/rest/v1/coach_orgs?profile_id=eq.${encodeURIComponent(profileId)}&org_id=eq.${encodeURIComponent(orgId)}&select=id&limit=1`
+  let res
+  try {
+    res = await fetch(url, {
+      headers: {
+        'apikey':        serviceKey,
+        'Authorization': `Bearer ${serviceKey}`,
+      },
+    })
+  } catch (err) {
+    console.error('[invite-coach] membership lookup network error:', err)
+    return { ok: false, status: 502, error: 'Could not check existing program membership' }
+  }
+  if (!res.ok) {
+    console.error('[invite-coach] membership lookup HTTP', res.status)
+    return { ok: false, status: 502, error: 'Could not check existing program membership' }
+  }
+  const rows = await res.json().catch(() => null)
+  return { ok: true, exists: Array.isArray(rows) && rows.length > 0 }
+}
+
+// Commit D: add an existing coach to a second (or further) program. Does
+// NOT touch profiles.org_id / profiles.current_org_id — that profile row
+// stays pointed at the coach's original/home program; coach_orgs is
+// purely additive. Service-role bypasses coach_orgs RLS, same pattern as
+// every other write in this file and in api/accept-invite.js — the
+// caller-role gate above (step 4) is the actual authorization boundary,
+// not the coach_orgs INSERT policy from migration 20260812000000 (that
+// policy only matters for direct-from-browser writes, which this
+// endpoint never does).
+async function insertCoachOrg(supabaseUrl, serviceKey, profileId, orgId, role) {
+  let res
+  try {
+    res = await fetch(`${supabaseUrl}/rest/v1/coach_orgs`, {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'apikey':        serviceKey,
+        'Authorization': `Bearer ${serviceKey}`,
+        'Prefer':        'return=minimal',
+      },
+      body: JSON.stringify({ profile_id: profileId, org_id: orgId, role }),
+    })
+  } catch (err) {
+    console.error('[invite-coach] coach_orgs insert network error:', err)
+    return { ok: false, error: 'Network error' }
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    console.error('[invite-coach] coach_orgs insert HTTP', res.status, text)
+    return { ok: false, error: text || `HTTP ${res.status}` }
+  }
+  return { ok: true }
+}
+
 // Look up the target organization (the one the caller is inviting INTO)
 // to check its account_id. Used only on the AD path — for head_coach we
 // stick with the cheaper profile.org_id equality check.
@@ -242,7 +328,48 @@ export default async function handler(req) {
     return json({ error: 'Invalid role' }, 400)
   }
 
-  // ── 5. Call Supabase Admin invite endpoint ────────────────────────────────
+  // ── 5. Existing-user check (Commit D) ─────────────────────────────────────
+  // If this email already has a PracticePace account, add them to this
+  // program via coach_orgs instead of creating a second auth user. No
+  // invite email is sent for this path — they can already log in, so
+  // there's nothing to "accept" (see AcceptInvite.jsx, unchanged).
+  const normalizedEmail = email.trim().toLowerCase()
+  const existing = await loadProfileByEmail(supabaseUrl, serviceRoleKey, normalizedEmail)
+  if (!existing.ok) {
+    return json({ error: existing.error }, existing.status)
+  }
+
+  if (existing.profile) {
+    const profileId   = existing.profile.id
+    const displayName = existing.profile.full_name || normalizedEmail
+
+    const membership = await loadCoachOrgMembership(supabaseUrl, serviceRoleKey, profileId, org_id)
+    if (!membership.ok) {
+      return json({ error: membership.error }, membership.status)
+    }
+
+    if (membership.exists) {
+      return json({
+        ok:      true,
+        outcome: 'already_member',
+        message: `${displayName} is already part of this program.`,
+      })
+    }
+
+    const inserted = await insertCoachOrg(supabaseUrl, serviceRoleKey, profileId, org_id, invitedRole)
+    if (!inserted.ok) {
+      console.error('[invite-coach] could not add existing coach:', inserted.error)
+      return json({ error: 'Could not add this coach to the program — try again.' }, 502)
+    }
+
+    return json({
+      ok:      true,
+      outcome: 'added_existing',
+      message: `${displayName} already has a PracticePace account — added them to this program.`,
+    })
+  }
+
+  // ── 6. Call Supabase Admin invite endpoint (genuinely new user) ──────────
   let res
   try {
     res = await fetch(`${supabaseUrl}/auth/v1/invite`, {
@@ -271,10 +398,26 @@ export default async function handler(req) {
 
   if (!res.ok) {
     console.error('[invite-coach] Supabase error:', res.status, text)
+    let parsed = null
+    try { parsed = JSON.parse(text) } catch {}
+    const rawMsg = parsed?.msg ?? parsed?.message ?? ''
+    // Belt-and-suspenders: the loadProfileByEmail check above should have
+    // caught every existing-account case already, but if profiles.email
+    // ever drifts from auth.users.email (or an auth user exists with no
+    // profile row — an abandoned signup), Supabase's own "already
+    // registered" error still lands here. We can't auto-repair that (no
+    // profile_id to hang a coach_orgs row off), so surface something
+    // actionable instead of the raw Supabase message.
+    const looksLikeExisting = parsed?.code === 'email_exists' || /already.*(registered|exists)/i.test(rawMsg)
+    if (looksLikeExisting) {
+      return json({
+        error: `${email} already has an account, but we couldn't find their coach profile. Ask them to log in once, then try adding them again.`,
+      }, 409)
+    }
     let errMsg = `Invite failed (${res.status})`
-    try { errMsg = JSON.parse(text)?.msg ?? JSON.parse(text)?.message ?? errMsg } catch {}
+    if (rawMsg) errMsg = rawMsg
     return json({ error: errMsg }, res.status)
   }
 
-  return json({ ok: true })
+  return json({ ok: true, outcome: 'invited_new', message: `Invite sent to ${email}.` })
 }

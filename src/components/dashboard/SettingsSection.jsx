@@ -142,7 +142,10 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
   const [inviteName, setInviteName]   = useState('')
   const [inviteRole, setInviteRole]   = useState('assistant_coach')
   const [inviting, setInviting]       = useState(false)
-  const [inviteSent, setInviteSent]   = useState('')   // success: shows the sent-to email
+  // Commit D: holds { outcome, message } from /api/invite-coach — outcome
+  // is one of 'invited_new' | 'added_existing' | 'already_member' and
+  // drives which subtext renders below.
+  const [inviteResult, setInviteResult] = useState(null)
   const [inviteErr, setInviteErr]     = useState('')
 
   const [bgUploading, setBgUploading] = useState(false)
@@ -610,7 +613,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
   async function handleInvite(e) {
     e.preventDefault()
     if (!inviteEmail.trim() || !org?.id) return
-    setInviting(true); setInviteSent(''); setInviteErr('')
+    setInviting(true); setInviteResult(null); setInviteErr('')
 
     try {
       // P0 security fix (2026-05-15): /api/invite-coach now requires a
@@ -642,7 +645,7 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error ?? `Server error (${res.status})`)
 
-      setInviteSent(inviteEmail.trim())
+      setInviteResult({ outcome: data.outcome ?? 'invited_new', message: data.message ?? `Invite sent to ${inviteEmail.trim()}.` })
       setInviteEmail('')
       setInviteName('')
     } catch (err) {
@@ -1346,14 +1349,25 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                   </p>
                 )}
 
-                {inviteSent && (
+                {inviteResult && (
                   <div className="p-3 rounded-lg" style={{ backgroundColor: '#001a00', border: '1px solid #003300' }}>
                     <p className="text-xs font-semibold" style={{ color: '#66cc88' }}>
-                      ✓ Invite sent to {inviteSent}
+                      ✓ {inviteResult.message}
                     </p>
-                    <p className="text-xs mt-1" style={{ color: '#9a9a9a' }}>
-                      They'll receive an email with a link to set their password and join your program.
-                    </p>
+                    {/* Commit D: subtext varies by outcome — only a genuinely
+                        new user gets an email to accept. An existing coach
+                        added to a second program already has full account
+                        access; they just need to switch programs next login. */}
+                    {inviteResult.outcome === 'invited_new' && (
+                      <p className="text-xs mt-1" style={{ color: '#9a9a9a' }}>
+                        They'll receive an email with a link to set their password and join your program.
+                      </p>
+                    )}
+                    {inviteResult.outcome === 'added_existing' && (
+                      <p className="text-xs mt-1" style={{ color: '#9a9a9a' }}>
+                        No email needed — they can already sign in, and this program will be available next time they do.
+                      </p>
+                    )}
                   </div>
                 )}
               </form>
