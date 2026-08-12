@@ -148,6 +148,67 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
   const [inviteResult, setInviteResult] = useState(null)
   const [inviteErr, setInviteErr]     = useState('')
 
+  // Commit E: "add existing coach" picker. AD-only, multi-program-only
+  // (isAd + isMultiProgram, checked below) — a head_coach's account has
+  // no "elsewhere" to pull candidates from, and a single-program account
+  // has no coach who could already be on a different program.
+  const [inviteMode, setInviteMode]               = useState('email')   // 'email' | 'existing'
+  const [existingCandidates, setExistingCandidates] = useState([])
+  const [loadingCandidates, setLoadingCandidates]   = useState(false)
+  const [candidatesErr, setCandidatesErr]           = useState('')
+  const [selectedCandidateId, setSelectedCandidateId] = useState('')
+
+  // Commit E: candidates = coaches who already have a coach_orgs row for
+  // ANY org in this account, grouped by profile, minus anyone who already
+  // has a row for the CURRENT org (org.id) — exactly "existing coaches
+  // not yet on this program". allOrgs is RLS-visible orgs, which for an
+  // AD is every org in their account (confirmed — that's what drives the
+  // Programs card and the AD's own switcher), so this is a single query
+  // against coach_orgs, no new RPC needed: coach_orgs SELECT RLS already
+  // grants an AD account-wide visibility (migration 20260812000000).
+  useEffect(() => {
+    if (inviteMode !== 'existing' || !org?.id || !isAd(profile?.role)) return
+    let cancelled = false
+    ;(async () => {
+      setLoadingCandidates(true); setCandidatesErr('')
+      try {
+        const accountOrgIds = allOrgs.map(o => o.id)
+        const { data, error } = await supabase
+          .from('coach_orgs')
+          .select('profile_id, org_id, role, profiles(full_name, email), organizations(name)')
+          .in('org_id', accountOrgIds)
+        if (error) throw error
+        if (cancelled) return
+
+        const byProfile = new Map()
+        for (const row of data ?? []) {
+          if (!byProfile.has(row.profile_id)) {
+            byProfile.set(row.profile_id, {
+              profile_id: row.profile_id,
+              full_name:  row.profiles?.full_name ?? null,
+              email:      row.profiles?.email ?? null,
+              orgs:       [],
+            })
+          }
+          byProfile.get(row.profile_id).orgs.push({
+            org_id:   row.org_id,
+            org_name: row.organizations?.name ?? null,
+          })
+        }
+        const candidates = [...byProfile.values()].filter(
+          c => !c.orgs.some(o => o.org_id === org.id)
+        )
+        setExistingCandidates(candidates)
+      } catch (err) {
+        console.error('[Settings] existing-coach candidates fetch failed:', err?.message ?? err)
+        setCandidatesErr('Could not load your other coaches — try again.')
+      } finally {
+        if (!cancelled) setLoadingCandidates(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [inviteMode, org?.id, allOrgs, profile?.role])
+
   const [bgUploading, setBgUploading] = useState(false)
   const [bgError, setBgError]         = useState('')
   const [bgSuccess, setBgSuccess]     = useState(false)
@@ -310,13 +371,32 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
           .insert({ id: orgId, name: form.name.trim(), sport: form.sport || 'football', slug, primary_color: '#cc1111', secondary_color: '#ffffff' })
         if (orgErr) { setSaveErr(`Could not create org: ${orgErr.message}`); return }
 
-        // 2. Link profile to the new org. current_org_id is set alongside
-        // org_id (Commit B) so this fresh profile isn't left with a null
-        // current_org_id — mirrors the migration's backfill for existing rows.
+        // 2. Link profile to the new org. current_org_id is deliberately
+        // NOT set here (Commit E) — the profiles_current_org_id_guard
+        // trigger requires a matching coach_orgs row to already exist
+        // before current_org_id can point at it, and that row can't be
+        // inserted until this profile row exists (FK). Leaving
+        // current_org_id null is safe: AuthContext's fetchProfile (Commit
+        // C) repairs a null/invalid current_org_id from coach_orgs on the
+        // very next profile fetch, which happens moments later via the
+        // reload below.
         const { error: profErr } = await supabase
           .from('profiles')
-          .upsert({ id: userId, org_id: orgId, current_org_id: orgId, email: user?.email ?? '', role: 'head_coach', full_name: profile?.full_name ?? '' }, { onConflict: 'id' })
+          .upsert({ id: userId, org_id: orgId, email: user?.email ?? '', role: 'head_coach', full_name: profile?.full_name ?? '' }, { onConflict: 'id' })
         if (profErr) { setSaveErr(`Could not link profile: ${profErr.message}`); return }
+
+        // 3. Commit A/E: matching coach_orgs row, now that the profile
+        // exists. Non-fatal — the profile row (the thing that actually
+        // gates login/dashboard access) is already committed; a missing
+        // coach_orgs row just means current_org_id won't self-heal until
+        // this is retried, so log and continue rather than blocking
+        // account creation over it.
+        const { error: coachOrgErr } = await supabase
+          .from('coach_orgs')
+          .insert({ profile_id: userId, org_id: orgId, role: 'head_coach' })
+        if (coachOrgErr) {
+          console.error('[Settings] coach_orgs insert failed (non-fatal):', coachOrgErr.message)
+        }
 
         setSaved(true)
         // Reload so Dashboard re-fetches everything with the new org
@@ -610,8 +690,16 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
     }
   }
 
+  // Commit E: the form's onSubmit branches on inviteMode — same submit
+  // button, same loading/result/error state, two different request
+  // bodies to the same /api/invite-coach endpoint.
   async function handleInvite(e) {
     e.preventDefault()
+    if (inviteMode === 'existing') return handleAddExisting()
+    return handleEmailInvite()
+  }
+
+  async function handleEmailInvite() {
     if (!inviteEmail.trim() || !org?.id) return
     setInviting(true); setInviteResult(null); setInviteErr('')
 
@@ -650,6 +738,55 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
       setInviteName('')
     } catch (err) {
       setInviteErr(err.message ?? 'Could not send invite.')
+    } finally {
+      setInviting(false)
+    }
+  }
+
+  // Commit E: add a coach who already has a PracticePace account (on
+  // another program in this account) to the current program. Calls the
+  // same /api/invite-coach endpoint as handleEmailInvite — passing
+  // profile_id lets the server skip its own email lookup and go straight
+  // to the coach_orgs insert (still re-validates account_id server-side;
+  // never trust a client-supplied profile_id on its own).
+  async function handleAddExisting() {
+    if (!selectedCandidateId || !org?.id) return
+    const candidate = existingCandidates.find(c => c.profile_id === selectedCandidateId)
+    if (!candidate) return
+    setInviting(true); setInviteResult(null); setInviteErr('')
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const accessToken = session?.access_token ?? null
+      if (!accessToken) {
+        throw new Error('Your session has expired — please sign in again.')
+      }
+
+      const res = await fetch('/api/invite-coach', {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          profile_id: candidate.profile_id,
+          email:      candidate.email ?? '',
+          name:       candidate.full_name ?? null,
+          role:       inviteRole,
+          org_id:     org.id,
+        }),
+      })
+
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error ?? `Server error (${res.status})`)
+
+      const displayName = candidate.full_name || candidate.email
+      setInviteResult({ outcome: data.outcome ?? 'added_existing', message: data.message ?? `${displayName} added to this program.` })
+      setSelectedCandidateId('')
+      // They're now a member — drop them from the picker list without a refetch.
+      setExistingCandidates(prev => prev.filter(c => c.profile_id !== candidate.profile_id))
+    } catch (err) {
+      setInviteErr(err.message ?? 'Could not add this coach.')
     } finally {
       setInviting(false)
     }
@@ -1302,45 +1439,139 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
               <form onSubmit={handleInvite} className="flex flex-col gap-3 pt-3" style={{ borderTop: '1px solid #2a0000' }}>
                 <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#9a8080' }}>Invite Coach</p>
 
-                <input
-                  type="text"
-                  value={inviteName}
-                  onChange={e => setInviteName(e.target.value)}
-                  placeholder="Coach full name (optional)"
-                  aria-label="Coach full name (optional)"
-                  className="rounded-lg px-3 py-3 text-sm outline-none"
-                  style={inputStyle}
-                />
+                {/* Commit E: email vs existing-coach toggle. AD + multi-
+                    program only — a head_coach's account has no other
+                    program to pull an "existing coach" from, and a
+                    single-program account has no such coach to find. */}
+                {isAd(profile?.role) && isMultiProgram && (
+                  <div className="flex gap-1.5 p-1 rounded-lg" style={{ backgroundColor: '#1a0000' }}>
+                    <button
+                      type="button"
+                      onClick={() => { setInviteMode('email'); setInviteErr(''); setInviteResult(null) }}
+                      className="flex-1 py-2 rounded-md text-xs font-bold transition-colors"
+                      style={{
+                        backgroundColor: inviteMode === 'email' ? orgColor : 'transparent',
+                        color:           inviteMode === 'email' ? '#fff' : '#9a8080',
+                      }}
+                    >
+                      Invite by Email
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setInviteMode('existing'); setInviteErr(''); setInviteResult(null) }}
+                      className="flex-1 py-2 rounded-md text-xs font-bold transition-colors"
+                      style={{
+                        backgroundColor: inviteMode === 'existing' ? orgColor : 'transparent',
+                        color:           inviteMode === 'existing' ? '#fff' : '#9a8080',
+                      }}
+                    >
+                      Add Existing Coach
+                    </button>
+                  </div>
+                )}
 
-                <div className="flex gap-2">
-                  <input
-                    type="email"
-                    required
-                    value={inviteEmail}
-                    onChange={e => setInviteEmail(e.target.value)}
-                    placeholder="coach@school.edu"
-                    aria-label="Coach email address"
-                    className="flex-1 rounded-lg px-3 py-3 text-sm outline-none"
-                    style={inputStyle}
-                  />
-                  <select
-                    value={inviteRole}
-                    onChange={e => setInviteRole(e.target.value)}
-                    aria-label="Invited coach's role"
-                    className="rounded-lg px-2 py-3 text-xs font-bold outline-none"
-                    style={{ backgroundColor: '#1a0000', border: '1px solid #2a0000', color: '#fff' }}
-                  >
-                    {ROLES.map(r => <option key={r} value={r}>{roleLabel(r, isMultiProgram)}</option>)}
-                  </select>
-                </div>
+                {inviteMode === 'email' ? (
+                  <>
+                    <input
+                      type="text"
+                      value={inviteName}
+                      onChange={e => setInviteName(e.target.value)}
+                      placeholder="Coach full name (optional)"
+                      aria-label="Coach full name (optional)"
+                      className="rounded-lg px-3 py-3 text-sm outline-none"
+                      style={inputStyle}
+                    />
+
+                    <div className="flex gap-2">
+                      <input
+                        type="email"
+                        required
+                        value={inviteEmail}
+                        onChange={e => setInviteEmail(e.target.value)}
+                        placeholder="coach@school.edu"
+                        aria-label="Coach email address"
+                        className="flex-1 rounded-lg px-3 py-3 text-sm outline-none"
+                        style={inputStyle}
+                      />
+                      <select
+                        value={inviteRole}
+                        onChange={e => setInviteRole(e.target.value)}
+                        aria-label="Invited coach's role"
+                        className="rounded-lg px-2 py-3 text-xs font-bold outline-none"
+                        style={{ backgroundColor: '#1a0000', border: '1px solid #2a0000', color: '#fff' }}
+                      >
+                        {ROLES.map(r => <option key={r} value={r}>{roleLabel(r, isMultiProgram)}</option>)}
+                      </select>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Existing-coach picker. Role select applies to the
+                        role they'll hold on THIS program — independent of
+                        whatever role they hold on their other program(s),
+                        since coach_orgs carries role per-org. */}
+                    <select
+                      value={inviteRole}
+                      onChange={e => setInviteRole(e.target.value)}
+                      aria-label="Role on this program"
+                      className="rounded-lg px-3 py-3 text-xs font-bold outline-none"
+                      style={{ backgroundColor: '#1a0000', border: '1px solid #2a0000', color: '#fff' }}
+                    >
+                      {ROLES.map(r => <option key={r} value={r}>{roleLabel(r, isMultiProgram)}</option>)}
+                    </select>
+
+                    {loadingCandidates && (
+                      <p className="text-xs" style={{ color: '#9a8080' }}>Loading your other coaches…</p>
+                    )}
+                    {candidatesErr && (
+                      <p className="text-xs p-3 rounded-lg" style={{ backgroundColor: '#2a0000', color: '#ff6666' }}>
+                        {candidatesErr}
+                      </p>
+                    )}
+                    {!loadingCandidates && !candidatesErr && existingCandidates.length === 0 && (
+                      <p className="text-xs" style={{ color: '#9a8080' }}>
+                        No coaches on your other programs are available to add here — everyone's already on this one, or you have no other programs yet.
+                      </p>
+                    )}
+                    {!loadingCandidates && existingCandidates.length > 0 && (
+                      <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto rounded-lg" style={{ border: '1px solid #2a0000' }}>
+                        {existingCandidates.map(c => {
+                          const selected = c.profile_id === selectedCandidateId
+                          return (
+                            <button
+                              key={c.profile_id}
+                              type="button"
+                              onClick={() => setSelectedCandidateId(c.profile_id)}
+                              className="w-full flex flex-col items-start gap-0.5 px-3 py-2.5 text-left transition-colors"
+                              style={{ backgroundColor: selected ? `${orgColor}22` : 'transparent' }}
+                            >
+                              <span className="text-sm font-semibold text-white">
+                                {c.full_name || c.email || '(unnamed coach)'}
+                                {selected && <span className="ml-1.5" style={{ color: orgColor }}>●</span>}
+                              </span>
+                              {c.full_name && c.email && (
+                                <span className="text-xs" style={{ color: '#9a8080' }}>{c.email}</span>
+                              )}
+                              <span className="text-xs" style={{ color: '#9a8080' }}>
+                                Currently on: {c.orgs.map(o => o.org_name || '(unnamed program)').join(', ')}
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </>
+                )}
 
                 <button
                   type="submit"
-                  disabled={inviting}
+                  disabled={inviting || (inviteMode === 'existing' && !selectedCandidateId)}
                   className="py-3 rounded-lg text-sm font-bold text-white disabled:opacity-50"
                   style={{ backgroundColor: orgColor }}
                 >
-                  {inviting ? 'Sending…' : 'Send Invite'}
+                  {inviteMode === 'existing'
+                    ? (inviting ? 'Adding…' : 'Add to Program')
+                    : (inviting ? 'Sending…' : 'Send Invite')}
                 </button>
 
                 {inviteErr && (

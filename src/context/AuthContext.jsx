@@ -178,8 +178,34 @@ export function AuthProvider({ children }) {
     window.location.replace('/')
   }
 
+  // Commit E: switch which program a multi-program coach is actively
+  // viewing. Writes profiles.current_org_id directly (not localStorage —
+  // current_org_id is the source of truth get_my_org_id() now reads for
+  // RLS, see migration 20260812020000). The DB-level
+  // profiles_current_org_id_guard trigger is the actual security
+  // boundary; the coachOrgs check here is just a fast, friendly failure
+  // before the round trip.
+  //
+  // Updates profile state optimistically on success so OrgContext (and
+  // every currentRole-gated permission check that depends on it) picks
+  // up the new org immediately, without waiting for a full re-fetch.
+  async function switchCurrentOrg(orgId) {
+    if (!user?.id) return { ok: false, error: 'Not signed in.' }
+    const isMember = (profile?.coachOrgs ?? []).some(c => c.org_id === orgId)
+    if (!isMember) return { ok: false, error: 'You are not part of that program.' }
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ current_org_id: orgId })
+      .eq('id', user.id)
+    if (error) return { ok: false, error: error.message }
+
+    setProfile(prev => (prev ? { ...prev, current_org_id: orgId } : prev))
+    return { ok: true }
+  }
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signOut }}>
+    <AuthContext.Provider value={{ user, profile, loading, signOut, switchCurrentOrg }}>
       {children}
     </AuthContext.Provider>
   )

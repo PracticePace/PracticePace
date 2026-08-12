@@ -106,10 +106,15 @@ async function loadCallerProfile(supabaseUrl, serviceKey, userId) {
 // RLS same as the caller-profile lookup above). If found, this email
 // already has a PracticePace account and we must NOT call Supabase's
 // admin invite endpoint — it 422s with "already registered" and blocks
-// the AD. Returns { ok: true, profile: {id, full_name} | null } or
-// { ok: false, status, error } on a lookup failure.
+// the AD. Returns { ok: true, profile: {id, full_name, account_id} | null }
+// or { ok: false, status, error } on a lookup failure.
+//
+// Note: this looks up by email GLOBALLY — across every account, not just
+// the caller's. account_id is selected specifically so the caller can
+// verify same-account membership before acting on the result (see Commit
+// E fix below) — cross-account coaches are not a supported case.
 async function loadProfileByEmail(supabaseUrl, serviceKey, email) {
-  const url = `${supabaseUrl}/rest/v1/profiles?email=eq.${encodeURIComponent(email)}&select=id,full_name&limit=1`
+  const url = `${supabaseUrl}/rest/v1/profiles?email=eq.${encodeURIComponent(email)}&select=id,full_name,account_id&limit=1`
   let res
   try {
     res = await fetch(url, {
@@ -125,6 +130,33 @@ async function loadProfileByEmail(supabaseUrl, serviceKey, email) {
   if (!res.ok) {
     console.error('[invite-coach] email lookup HTTP', res.status)
     return { ok: false, status: 502, error: 'Could not check for an existing account' }
+  }
+  const rows = await res.json().catch(() => null)
+  return { ok: true, profile: Array.isArray(rows) && rows[0] ? rows[0] : null }
+}
+
+// Commit E: look up an existing profile by id — the fast path for the
+// "add existing coach" picker (SettingsSection), which already knows the
+// profile_id from its own coach_orgs query and shouldn't need a redundant
+// email lookup. Same shape/contract as loadProfileByEmail so callers can
+// use either interchangeably.
+async function loadProfileById(supabaseUrl, serviceKey, profileId) {
+  const url = `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(profileId)}&select=id,full_name,account_id&limit=1`
+  let res
+  try {
+    res = await fetch(url, {
+      headers: {
+        'apikey':        serviceKey,
+        'Authorization': `Bearer ${serviceKey}`,
+      },
+    })
+  } catch (err) {
+    console.error('[invite-coach] profile-id lookup network error:', err)
+    return { ok: false, status: 502, error: 'Could not look up that coach' }
+  }
+  if (!res.ok) {
+    console.error('[invite-coach] profile-id lookup HTTP', res.status)
+    return { ok: false, status: 502, error: 'Could not look up that coach' }
   }
   const rows = await res.json().catch(() => null)
   return { ok: true, profile: Array.isArray(rows) && rows[0] ? rows[0] : null }
@@ -262,7 +294,7 @@ export default async function handler(req) {
   } catch {
     return json({ error: 'Invalid request body' }, 400)
   }
-  const { email, name, role, org_id } = body
+  const { email, name, role, org_id, profile_id } = body
   if (!email || !org_id) {
     return json({ error: 'email and org_id are required' }, 400)
   }
@@ -328,18 +360,42 @@ export default async function handler(req) {
     return json({ error: 'Invalid role' }, 400)
   }
 
-  // ── 5. Existing-user check (Commit D) ─────────────────────────────────────
+  // ── 5. Existing-user check (Commit D, profile_id fast path Commit E) ─────
   // If this email already has a PracticePace account, add them to this
   // program via coach_orgs instead of creating a second auth user. No
   // invite email is sent for this path — they can already log in, so
   // there's nothing to "accept" (see AcceptInvite.jsx, unchanged).
+  //
+  // The "add existing coach" picker (SettingsSection) already knows the
+  // profile_id from its own coach_orgs query — an optional profile_id in
+  // the body skips the email lookup and goes straight to a by-id lookup.
+  // Both paths converge on the same { id, full_name, account_id } shape,
+  // so everything below (account-match check, membership check, insert)
+  // is identical either way.
   const normalizedEmail = email.trim().toLowerCase()
-  const existing = await loadProfileByEmail(supabaseUrl, serviceRoleKey, normalizedEmail)
+  const existing = profile_id
+    ? await loadProfileById(supabaseUrl, serviceRoleKey, profile_id)
+    : await loadProfileByEmail(supabaseUrl, serviceRoleKey, normalizedEmail)
   if (!existing.ok) {
     return json({ error: existing.error }, existing.status)
   }
 
   if (existing.profile) {
+    // Commit E fix: loadProfileByEmail matches GLOBALLY, across every
+    // account — cross-account coaches were never a supported case (see
+    // Commit D's own open question) and silently allowing it here would
+    // let an AD attach a stranger from an unrelated school's account to
+    // their own program via coach_orgs. Reject explicitly instead.
+    if (existing.profile.account_id !== callerAccountId) {
+      console.warn(
+        '[invite-coach] cross-account invite blocked — email', normalizedEmail,
+        'belongs to account', existing.profile.account_id, 'caller account', callerAccountId
+      )
+      return json({
+        error: `${normalizedEmail} already has an account, but it's on a different school/account. Cross-account coaches aren't supported — ask them to use a different email, or contact support.`,
+      }, 409)
+    }
+
     const profileId   = existing.profile.id
     const displayName = existing.profile.full_name || normalizedEmail
 

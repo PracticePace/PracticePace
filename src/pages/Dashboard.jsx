@@ -66,7 +66,7 @@ const NAV = [
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const { user, profile: authProfile, signOut, loading: authLoading } = useAuth()
+  const { user, profile: authProfile, signOut, loading: authLoading, switchCurrentOrg } = useAuth()
   const navigate = useNavigate()
 
   // Anonymous Supabase users have is_anonymous === true
@@ -76,6 +76,16 @@ export default function Dashboard() {
   // Commit B: this is the org the coach is actively viewing, distinct from
   // the permanent profile.org_id "home" org.
   const contextOrgId = authProfile?.current_org_id ?? null
+
+  // Commit E: program switcher for a non-AD coach who belongs to 2+
+  // programs (coachOrgs, from AuthContext/Commit B-C). Deliberately
+  // excludes AD — an AD with multiple programs already has the
+  // account-wide switcher below (allOrgs-driven, localStorage-backed);
+  // showing both here would be two overlapping switchers for the same
+  // person. See switchCoachOrg() for the DB-write mechanics that make
+  // this distinct from the AD switcher.
+  const coachOrgs = authProfile?.coachOrgs ?? []
+  const showCoachSwitcher = !isGuest && !isAd(authProfile?.role) && coachOrgs.length > 1
 
   // Default landing tab is Scripts. The Practice tab is one click away on
   // the bottom nav, and handleSetActive() still auto-jumps to Practice when
@@ -726,6 +736,61 @@ export default function Dashboard() {
     }
   }
 
+  // ── Coach program switch (Commit E) ───────────────────────────────────────
+  // A multi-program coach (non-AD) picked a different program from the
+  // header switcher. Mirrors switchProgram() above, with two differences:
+  //   1. Persists via switchCurrentOrg() (AuthContext) — a real DB write
+  //      to profiles.current_org_id, not localStorage. That's what makes
+  //      the switch "stick" across devices/logins, and what RLS now keys
+  //      off (get_my_org_id() reads current_org_id — migration
+  //      20260812020000). The AD switcher's localStorage persistence is
+  //      untouched; ADs don't reach this function.
+  //   2. Org list comes from coachOrgs (the coach's own memberships), not
+  //      allOrgs (RLS-visible orgs, which for a non-AD is just their one
+  //      pinned org and wouldn't show the other program at all).
+  async function switchCoachOrg(orgId) {
+    if (!orgId || orgId === activeOrgId) return
+    const target = coachOrgs.find(c => c.org_id === orgId)
+    if (!target) {
+      console.warn('[Dashboard] switchCoachOrg: orgId not in coachOrgs', orgId)
+      return
+    }
+
+    const result = await switchCurrentOrg(orgId)
+    if (!result.ok) {
+      console.warn('[Dashboard] switchCoachOrg: switchCurrentOrg failed:', result.error)
+      return
+    }
+
+    setActiveOrgId(orgId)
+    // coachOrgs only carries {org_id, role, org_name} — fetch the full row
+    // (colors, sport, logo, …) that org/orgColor and every section prop
+    // downstream expect.
+    const { data: orgData } = await supabase
+      .from('organizations')
+      .select('*')
+      .eq('id', orgId)
+      .maybeSingle()
+    setOrg(orgData ?? null)
+
+    await loadScripts(orgId)
+    await loadWhiteboardImages(orgId)
+    setActiveScript(null)
+
+    try {
+      const { data: songsData } = await supabase
+        .from('songs')
+        .select('*')
+        .eq('org_id', orgId)
+        .order('position',   { ascending: true })
+        .order('created_at', { ascending: true })
+      setAudioQueue(songsData ?? [], null, { force: true })
+    } catch (err) {
+      console.warn('[Dashboard] songs reload on coach org switch failed:', err?.message ?? err)
+      setAudioQueue([], null, { force: true })
+    }
+  }
+
   // Guest taps Settings tab → redirect to scripts (guests don't have settings)
   function handleNavClick(id) {
     if (isGuest && id === 'settings') return // blocked
@@ -770,6 +835,27 @@ export default function Dashboard() {
               orgs={allOrgs}
               activeOrgId={activeOrgId}
               onSelect={switchProgram}
+              orgColor={orgColor}
+            />
+          </div>
+        )}
+
+        {/* Program switcher — non-AD, multi-program coach (Commit E).
+            Same component/placement/styling as the AD switcher above for a
+            consistent feel — the two are mutually exclusive per viewer
+            (showCoachSwitcher excludes AD), so there's no risk of showing
+            both. The only real difference (persists to the DB via
+            switchCurrentOrg, not localStorage) isn't user-visible, so a
+            second visual treatment would just be inconsistency for its
+            own sake. coachOrgs only carries {org_id, role, org_name} — no
+            sport — so the switcher's optional sport line just doesn't
+            render for these entries. */}
+        {showCoachSwitcher && (
+          <div className="ml-3 shrink-0">
+            <ProgramSwitcher
+              orgs={coachOrgs.map(c => ({ id: c.org_id, name: c.org_name }))}
+              activeOrgId={activeOrgId}
+              onSelect={switchCoachOrg}
               orgColor={orgColor}
             />
           </div>
