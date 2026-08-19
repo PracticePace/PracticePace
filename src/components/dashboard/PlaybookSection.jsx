@@ -206,60 +206,53 @@ export default function PlaybookSection({ orgColor = '#cc1111' }) {
         </span>
       </div>
 
-      {/* Header banner — full-width weight-room shot. Mirrors the marketing
-          hero treatment: object-cover with a clamped height so the banner
-          scales on narrow screens without ever dominating the page, plus a
-          bottom gradient that bleeds into the page background. */}
-      <div className="relative w-full overflow-hidden">
-        <img
-          src="/marketing/weightlifting.png"
-          alt="An athlete setting up for a deadlift in a weight room."
-          className="w-full object-cover"
-          style={{
-            height:         'clamp(160px, 26vw, 300px)',
-            // Bias the crop upward — a centred crop of this 3:2 source lands on
-            // the lifter's midsection, which reads as an anonymous torso. 18%
-            // keeps the head, shoulders and the rack behind them in frame.
-            objectPosition: 'center 18%',
-          }}
-          loading="eager"
-          decoding="async"
-        />
-        <div
-          className="absolute inset-x-0 bottom-0 pointer-events-none"
-          style={{ height: '35%', background: 'linear-gradient(to top, #0d0000 0%, transparent 100%)' }}
-        />
-      </div>
-
-      {/* Page intro — sits above the section cards */}
+      {/* Page intro — left-text / right-image split, both halves vertically
+          centred in the same row (per the Boostr mockup). The image is shown
+          in full rather than cropped: width-constrained with h-auto so its
+          natural 3:2 aspect ratio is preserved at every breakpoint. Stacks to
+          a single column below md, image first so it still reads as a header. */}
       <div className="px-4 md:px-6 pt-6 pb-2">
-        <div className="max-w-4xl mx-auto flex flex-col gap-2">
-          <h1
-            className="font-black tracking-widest uppercase"
-            style={{
-              fontFamily:    "'Bebas Neue', sans-serif",
-              fontSize:      'clamp(1.8rem, 4vw, 2.4rem)',
-              color:         orgColor,
-              letterSpacing: '0.1em',
-              lineHeight:    1.05,
-            }}
-          >
-            Optimal settings for Practice:Pace
-          </h1>
-          <p className="text-sm leading-relaxed" style={{ color: '#9a8080' }}>
-            Practice:Pace will operate on any computer or tablet, but these are
-            suggestions for optimal use.
-          </p>
-          <p className="text-xs" style={{ color: '#7a5050' }}>
-            For technical help, email{' '}
-            <a
-              href="mailto:practicepace@gmail.com"
-              className="underline transition-opacity hover:opacity-80"
-              style={{ color: orgColor }}
+        <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-8 items-center">
+          {/* Left — title + copy */}
+          <div className="flex flex-col gap-2 order-2 md:order-1">
+            <h1
+              className="font-black tracking-widest uppercase"
+              style={{
+                fontFamily:    "'Bebas Neue', sans-serif",
+                fontSize:      'clamp(1.8rem, 4vw, 2.4rem)',
+                color:         '#ffffff',
+                letterSpacing: '0.1em',
+                lineHeight:    1.05,
+              }}
             >
-              practicepace@gmail.com
-            </a>
-          </p>
+              Optimal settings for Practice:Pace
+            </h1>
+            <p className="text-sm leading-relaxed" style={{ color: '#9a8080' }}>
+              Practice:Pace will operate on any computer or tablet, but these are
+              suggestions for optimal use.
+            </p>
+            <p className="text-xs" style={{ color: '#7a5050' }}>
+              For technical help, email{' '}
+              <a
+                href="mailto:practicepace@gmail.com"
+                className="underline transition-opacity hover:opacity-80"
+                style={{ color: orgColor }}
+              >
+                practicepace@gmail.com
+              </a>
+            </p>
+          </div>
+
+          {/* Right — hero image, uncropped */}
+          <div className="order-1 md:order-2">
+            <img
+              src="/marketing/weightlifting.png"
+              alt="An athlete setting up for a deadlift in a weight room."
+              className="w-full h-auto rounded-xl"
+              loading="eager"
+              decoding="async"
+            />
+          </div>
         </div>
       </div>
 
