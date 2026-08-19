@@ -15,11 +15,33 @@
 //   • Whiteboard feature                     → 'whiteboard' section
 //   • +1m / −1m / preset buttons             → 'tips'     section
 
+// ── Card icons ────────────────────────────────────────────────────────────────
+// Stroked SVGs replacing the previous emoji glyphs — emoji render differently
+// per-platform and can't take the program's brand colour. These inherit
+// currentColor, so SectionCard tints them with orgColor the same way the ✦
+// bullets are tinted. Shape convention (24px box, 2px stroke, round caps)
+// matches the existing icons in Dashboard.jsx and WhiteboardSection.jsx.
+const Ico = ({ children }) => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {children}
+  </svg>
+)
+const ZapIcon       = () => <Ico><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></Ico>
+const ClipboardIcon = () => <Ico><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6"/><path d="M9 16h6"/></Ico>
+const MonitorIcon   = () => <Ico><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></Ico>
+const MusicIcon     = () => <Ico><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></Ico>
+const TrophyIcon    = () => <Ico><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></Ico>
+const UsersIcon     = () => <Ico><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></Ico>
+const PencilIcon    = () => <Ico><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></Ico>
+const ScriptIcon    = () => <Ico><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></Ico>
+const BulbIcon      = () => <Ico><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></Ico>
+
 const SECTIONS = [
   {
     id: 'getting-started',
-    title: 'Getting Started',
-    icon: '⚡',
+    title: 'Better Startup',
+    Icon: ZapIcon,
     items: [
       'Best viewed on an iPad running Safari as a PWA — tap Share → Add to Home Screen for the full experience.',
       'Sign in and set up your program in Settings before your first practice.',
@@ -30,7 +52,7 @@ const SECTIONS = [
   {
     id: 'practice-day',
     title: 'Practice Day Setup',
-    icon: '📋',
+    Icon: ClipboardIcon,
     items: [
       'Open PracticePace on your iPad before practice begins.',
       'Load your script in the Scripts tab — tap Set Active.',
@@ -42,7 +64,7 @@ const SECTIONS = [
   {
     id: 'display',
     title: 'Display & Mirroring',
-    icon: '📺',
+    Icon: MonitorIcon,
     items: [
       'Mirror the iPad to a TV or jumbotron via AirPlay or HDMI for the best sideline display experience.',
       'The practice timer is designed to be readable from 30+ yards away.',
@@ -53,7 +75,7 @@ const SECTIONS = [
   {
     id: 'music',
     title: 'Music',
-    icon: '🎵',
+    Icon: MusicIcon,
     items: [
       'Use the Music tab to upload MP3s and build a practice playlist. Music plays through the iPad speaker or any connected Bluetooth speaker.',
       'The mini player bar at the top of the Music tab gives you full controls: play, pause, skip, volume, shuffle, and loop.',
@@ -68,7 +90,7 @@ const SECTIONS = [
   {
     id: 'scoreboard',
     title: 'Scoreboards',
-    icon: '🏆',
+    Icon: TrophyIcon,
     items: [
       'Tap the Scoreboard tab and select your sport.',
       'Football — game clock, down & distance, play clock, timeouts.',
@@ -80,7 +102,7 @@ const SECTIONS = [
   {
     id: 'coaching-staff',
     title: 'Coaching Staff',
-    icon: '👥',
+    Icon: UsersIcon,
     items: [
       'Invite coaches in Settings → Coaches & Staff → Send Invite.',
       'Coaches receive an email invite and set their own password, then land directly in your account’s dashboard.',
@@ -93,7 +115,7 @@ const SECTIONS = [
   {
     id: 'whiteboard',
     title: 'Whiteboard',
-    icon: '✏️',
+    Icon: PencilIcon,
     items: [
       'Tap the Whiteboard tab to draw plays with your finger or Apple Pencil. Whatever you draw shows on the AirPlay-mirrored jumbotron in real time.',
       'Choose a background to draw on: Blank (white), Football field, Basketball court, Soccer pitch, and more — pick whichever surface fits the play.',
@@ -106,7 +128,7 @@ const SECTIONS = [
   {
     id: 'scripts',
     title: 'Scripts & Drills',
-    icon: '📝',
+    Icon: ScriptIcon,
     items: [
       'Build a script in the Scripts tab — name it, set the sport, add drills.',
       'Each drill has a name, duration, optional notes, and an optional cue MP3.',
@@ -120,7 +142,7 @@ const SECTIONS = [
   {
     id: 'tips',
     title: 'Tips & Tricks',
-    icon: '⚡',
+    Icon: BulbIcon,
     items: [
       'Use the +1m / −1m buttons during practice to adjust the active period on the fly. Preset buttons (5m / 10m / 15m / 20m) jump to a specific time.',
       'The Next button blows the air horn and starts the next drill.',
@@ -134,7 +156,7 @@ const SECTIONS = [
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function SectionCard({ title, icon, items, orgColor }) {
+function SectionCard({ title, Icon, items, orgColor }) {
   return (
     <div
       className="flex flex-col gap-3 p-5 rounded-2xl"
@@ -142,7 +164,7 @@ function SectionCard({ title, icon, items, orgColor }) {
     >
       {/* Header */}
       <div className="flex items-center gap-2.5">
-        <span style={{ fontSize: '1.25rem', lineHeight: 1 }}>{icon}</span>
+        <span style={{ color: orgColor, lineHeight: 0 }}>{Icon ? <Icon /> : null}</span>
         <h2
           className="font-black tracking-widest uppercase"
           style={{
@@ -225,11 +247,12 @@ export default function PlaybookSection({ orgColor = '#cc1111' }) {
                 lineHeight:    1.05,
               }}
             >
-              Optimal settings for Practice:Pace
+              Optimal settings for{' '}
+              <span style={{ color: orgColor }}>Practice:Pace</span>
             </h1>
             <p className="text-sm leading-relaxed" style={{ color: '#9a8080' }}>
-              Practice:Pace will operate on any computer or tablet, but these are
-              suggestions for optimal use.
+              Practice:Pace will operate at top speed on this device, but these
+              settings ensure the best experience for optimal use.
             </p>
             <p className="text-xs" style={{ color: '#7a5050' }}>
               For technical help, email{' '}
@@ -263,7 +286,7 @@ export default function PlaybookSection({ orgColor = '#cc1111' }) {
             <SectionCard
               key={s.id}
               title={s.title}
-              icon={s.icon}
+              Icon={s.Icon}
               items={s.items}
               orgColor={orgColor}
             />
