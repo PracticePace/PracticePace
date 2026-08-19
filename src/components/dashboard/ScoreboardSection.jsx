@@ -1450,6 +1450,16 @@ function TabataScoreboard({ orgColor, programName }) {
     setTimer({ started: false, running: false, completed: false, phase: 'work', round: 1, secsLeft: workSecs })
   }
 
+  // Keep the pre-start clock seeded from the Work setting. secsLeft is only
+  // otherwise re-seeded on reset/restart, so bumping Work from 20s to 30s
+  // before starting left the display — and the first work interval — on the
+  // stale 20s. Guarded on `started` so it can never stomp a live countdown,
+  // and returns `prev` unchanged when already in sync so it can't loop.
+  useEffect(() => {
+    if (timer.started) return
+    setTimer(prev => (prev.secsLeft === workSecs ? prev : { ...prev, secsLeft: workSecs }))
+  }, [workSecs, timer.started])
+
   function handleStartPause() {
     if (timer.completed) {
       setTimer({ started: true, running: true, completed: false, phase: 'work', round: 1, secsLeft: workSecs })
