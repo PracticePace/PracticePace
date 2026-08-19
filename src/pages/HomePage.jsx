@@ -202,8 +202,8 @@ export default function HomePage() {
               left-edge gradient bleeds the image into the text side. */}
           <div className="relative order-1 lg:order-2 w-full" style={{ minHeight: 'min(50vh, 500px)' }}>
             <img
-              src="/marketing/practice-football-1.jpg"
-              alt="A football team running a practice drill together on the field."
+              src="/marketing/practice-cheer-3.jpg"
+              alt="Cheerleaders celebrating mid-routine under stadium lights."
               className="w-full h-full object-cover"
               style={{ minHeight: 'min(50vh, 500px)', maxHeight: '85vh' }}
               loading="eager"
