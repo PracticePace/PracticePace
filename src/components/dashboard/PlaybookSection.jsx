@@ -148,7 +148,9 @@ function SectionCard({ title, icon, items, orgColor }) {
           style={{
             fontFamily:    "'Bebas Neue', sans-serif",
             fontSize:      '1.15rem',
-            color:         orgColor,
+            // Category titles are intentionally white rather than orgColor —
+            // the card's icon and ✦ bullets still carry the org's brand color.
+            color:         '#ffffff',
             letterSpacing: '0.1em',
           }}
         >
@@ -202,6 +204,31 @@ export default function PlaybookSection({ orgColor = '#cc1111' }) {
         <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#4a2020' }}>
           Quick-Start Guide
         </span>
+      </div>
+
+      {/* Header banner — full-width weight-room shot. Mirrors the marketing
+          hero treatment: object-cover with a clamped height so the banner
+          scales on narrow screens without ever dominating the page, plus a
+          bottom gradient that bleeds into the page background. */}
+      <div className="relative w-full overflow-hidden">
+        <img
+          src="/marketing/weightlifting.png"
+          alt="An athlete setting up for a deadlift in a weight room."
+          className="w-full object-cover"
+          style={{
+            height:         'clamp(160px, 26vw, 300px)',
+            // Bias the crop upward — a centred crop of this 3:2 source lands on
+            // the lifter's midsection, which reads as an anonymous torso. 18%
+            // keeps the head, shoulders and the rack behind them in frame.
+            objectPosition: 'center 18%',
+          }}
+          loading="eager"
+          decoding="async"
+        />
+        <div
+          className="absolute inset-x-0 bottom-0 pointer-events-none"
+          style={{ height: '35%', background: 'linear-gradient(to top, #0d0000 0%, transparent 100%)' }}
+        />
       </div>
 
       {/* Page intro — sits above the section cards */}
