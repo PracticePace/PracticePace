@@ -1059,8 +1059,27 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
                       style={{
                         width:           i === currentDrillIdx ? 10 : 7,
                         height:          i === currentDrillIdx ? 10 : 7,
-                        backgroundColor: i <= currentDrillIdx ? orgColor : '#2a0000',
-                        opacity:         i < currentDrillIdx ? 0.35 : 1,
+                        // Contrast: these dots sit over the coach's uploaded
+                        // background photo, and the dim slider defaults to 0,
+                        // so the backdrop is arbitrary rather than a known dark
+                        // surface. Tiers keep the original ordering — current
+                        // brightest, then done, then upcoming — but all three
+                        // were previously near-invisible on the app's own
+                        // #0d0000 base (3.59 / 1.35 / 1.08 contrast).
+                        //   • current  — #ffffff (3.59 -> 20.65). Was orgColor,
+                        //     which is per-program: navy #000b61 scored 1.20,
+                        //     i.e. invisible. White is the palette's primary
+                        //     foreground and is reliable for every program.
+                        //   • done     — orgColor at full opacity (1.35 ->
+                        //     3.59); the 0.35 fade is what made it vanish.
+                        //   • upcoming — #9a8080, the palette's secondary text
+                        //     colour, at 0.55 (1.08 -> 2.37). Was #2a0000, the
+                        //     hairline-border colour. The 0.55 keeps it below
+                        //     `done` so the tiers stay in order.
+                        backgroundColor: i === currentDrillIdx
+                          ? '#ffffff'
+                          : i < currentDrillIdx ? orgColor : '#9a8080',
+                        opacity:         i > currentDrillIdx ? 0.55 : 1,
                       }}
                     />
                   ))}
