@@ -124,11 +124,27 @@ export default function AcceptInvite() {
   }, [])
 
   // ── Server-side profile creation (bypasses profiles RLS) ───────────────────
-  async function createProfileServerSide(userId) {
+  // /api/accept-invite now requires a Supabase JWT and takes the user id from
+  // that verified session. The id is no longer sent in the body: passing one
+  // let an unauthenticated caller rebuild somebody else's profile from stale
+  // invite metadata, which reinstated removed coaches and undid demotions.
+  //
+  // The session already exists by this point — verifyOtp() consumed the invite
+  // token and minted it before this function is ever reached.
+  async function createProfileServerSide() {
+    const { data: { session } } = await supabase.auth.getSession()
+    const accessToken = session?.access_token ?? null
+    if (!accessToken) {
+      throw new Error('Your invite session has expired — open the invite link again.')
+    }
+
     const res = await fetch('/api/accept-invite', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ userId }),
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+      },
+      body:    JSON.stringify({}),
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
@@ -213,7 +229,7 @@ export default function AcceptInvite() {
       console.log('[AcceptInvite] state → stage="creating-profile"')
       setStage('creating-profile')
       console.log('[AcceptInvite] calling /api/accept-invite')
-      const apiData = await createProfileServerSide(authUser.id)
+      const apiData = await createProfileServerSide()
       console.log('[AcceptInvite] /api/accept-invite ok', apiData)
 
       // Step 3: announce success and redirect.
