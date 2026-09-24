@@ -23,10 +23,12 @@
 //       here and tell the user to delete the account instead if that's
 //       really what they want.
 //
-//   The endpoint also auto-syncs accounts.account_type +
-//   accounts.plan_type back to 'program' / 'single_program' if the
-//   account drops to exactly 1 program. /api/add-program does the
-//   mirror in the other direction.
+//   The endpoint NO LONGER touches accounts.account_type / plan_type.
+//   That auto-downgrade (and its mirror in /api/add-program) was removed
+//   on 2026-09-24: deriving the tier from the org count is what let an
+//   account reach the School tier without paying for it, and it rewrote
+//   the tier of paying School customers who deleted down to one program.
+//   accounts.price_id is the entitlement source now.
 //
 // REQUEST BODY
 //   { org_id: <uuid> }     — required; the org to delete.
@@ -231,25 +233,24 @@ export default async function handler(req) {
   // Mirror of /api/add-program. If we just dropped from N>1 to 1, the
   // account is now single-program and should flip back to that tier.
   // Non-fatal — drift is self-healing on the next add/delete.
+  // The auto-downgrade that lived here (flip account_type+plan_type back to
+  // 'program'/'single_program' once the account was down to one org) has been
+  // REMOVED, together with its mirror in api/add-program.js.
+  //
+  // It was actively harmful once entitlement matters: a customer paying for
+  // School who deleted down to one program had their tier rewritten to
+  // single_program while Stripe kept billing them the School price — and with
+  // a cap in place that would then have locked them out of re-adding the
+  // programs they had just paid for.
+  //
+  // plan_type/account_type are no longer derived from the org count in either
+  // direction. accounts.price_id, written by api/stripe-webhook.js from the
+  // live Stripe subscription, is the entitlement source.
   let newCount = currentCount - 1
   try {
     newCount = await countOrgsForAccount(supabaseUrl, serviceRoleKey, callerAccountId)
-    if (newCount === 1) {
-      const syncRes = await fetch(
-        `${supabaseUrl}/rest/v1/accounts?id=eq.${encodeURIComponent(callerAccountId)}`,
-        {
-          method:  'PATCH',
-          headers: sbHeaders(serviceRoleKey),
-          body:    JSON.stringify({ account_type: 'program', plan_type: 'single_program' }),
-        }
-      )
-      if (!syncRes.ok) {
-        const text = await syncRes.text().catch(() => '')
-        console.warn('[delete-program] account-tier sync failed (non-fatal):', syncRes.status, text)
-      }
-    }
   } catch (err) {
-    console.warn('[delete-program] account-tier sync threw (non-fatal):', err?.message ?? err)
+    console.warn('[delete-program] post-delete org count failed (non-fatal):', err?.message ?? err)
   }
 
   return json({ ok: true, programCount: newCount })

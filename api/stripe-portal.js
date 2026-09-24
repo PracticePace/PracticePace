@@ -58,7 +58,17 @@ async function verifyCallerJwt(req, supabaseUrl, anonOrAuthKey) {
     return { ok: false, status: 502, error: 'Auth verification failed' }
   }
   if (!res.ok) {
-    return { ok: false, status: res.status === 401 ? 401 : 502, error: 'Invalid or expired session' }
+    // Supabase answers a MALFORMED token with 400/403 and an EXPIRED one with
+    // 401. Both are the caller's problem, so both must surface as 401 — the
+    // previous `=== 401 ? 401 : 502` mapped a garbage token to 502, which
+    // wrongly reads as "our upstream is broken" and would hide a real Supabase
+    // outage in monitoring. 502 is now reserved for genuine upstream failure.
+    const callerFault = res.status === 400 || res.status === 401 || res.status === 403
+    return {
+      ok:     false,
+      status: callerFault ? 401 : 502,
+      error:  callerFault ? 'Invalid or expired session' : 'Auth verification failed',
+    }
   }
   const user   = await res.json().catch(() => null)
   const userId = user?.id

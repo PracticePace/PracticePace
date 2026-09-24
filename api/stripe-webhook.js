@@ -53,6 +53,19 @@ function verifyStripeSignature(rawBody, sigHeader, secret) {
   if (!match) throw new Error('Webhook signature mismatch')
 }
 
+// Pull the Stripe Price id off a subscription object. This is the ground
+// truth for what a customer actually bought, and the only trustworthy input
+// to the program cap — accounts.plan_type can't serve that role because it is
+// derived from the org count by add-program/delete-program, and its initial
+// value comes from a caller-supplied planType in the unauthenticated
+// /api/create-account.
+//
+// A subscription can carry multiple items; we take the first, which matches
+// how api/stripe-checkout.js builds the session (a single line_items[0]).
+function priceIdFromSubscription(subData) {
+  return subData?.items?.data?.[0]?.price?.id ?? null
+}
+
 // ── Supabase REST helpers (service role — bypasses RLS) ──────────────────────
 function sbHeaders(serviceKey) {
   return {
@@ -206,6 +219,11 @@ export default async function handler(req, res) {
         // Do NOT hardcode 'trialing' — when skipTrial was true the sub is 'active' immediately.
         let subStatus   = 'trialing'
         let trialEndsAt = null
+        // Prefer the price on the live subscription over session.metadata.priceId:
+        // metadata is whatever the checkout call asked for, the subscription is
+        // what Stripe actually created. They agree today, but only one of them
+        // stays correct after a plan change.
+        let livePriceId = null
         if (secretKey) {
           try {
             const subRes  = await fetch(`https://api.stripe.com/v1/subscriptions/${subscriptionId}`, {
@@ -216,7 +234,8 @@ export default async function handler(req, res) {
             trialEndsAt = subData.trial_end
               ? new Date(subData.trial_end * 1000).toISOString()
               : null
-            console.log('[webhook] Stripe subscription:', { status: subStatus, trial_end: trialEndsAt })
+            livePriceId = priceIdFromSubscription(subData)
+            console.log('[webhook] Stripe subscription:', { status: subStatus, trial_end: trialEndsAt, price_id: livePriceId })
           } catch (err) {
             console.error('[webhook] Failed to fetch Stripe subscription — defaulting to trialing:', err.message)
           }
@@ -229,6 +248,10 @@ export default async function handler(req, res) {
           stripe_subscription_id: subscriptionId,
           status:                 subStatus,
           trial_ends_at:          trialEndsAt,
+          // Falls back to the session metadata when the subscription fetch
+          // above failed. Omitted entirely if we know neither, so a failed
+          // fetch never blanks a price we already had.
+          ...((livePriceId ?? priceId) ? { price_id: livePriceId ?? priceId } : {}),
         }
         console.log('[webhook] patching account', accountId, JSON.stringify(patch))
 
@@ -254,10 +277,15 @@ export default async function handler(req, res) {
 
         console.log('[webhook] subscription.updated:', { customerId, subscriptionId, status })
 
+        // Plan changes (single -> school and back) arrive here, so this is the
+        // event that keeps price_id honest over the life of a subscription.
+        const updatedPriceId = priceIdFromSubscription(sub)
+
         const patch = {
           stripe_subscription_id: subscriptionId,
           status,
           ...(trialEndsAt !== null && { trial_ends_at: trialEndsAt }),
+          ...(updatedPriceId ? { price_id: updatedPriceId } : {}),
         }
 
         try {
