@@ -9,11 +9,32 @@
 //   VITE_SUPABASE_URL        (same key re-used from the frontend)
 //   SUPABASE_SERVICE_ROLE_KEY
 //
-// Supabase table used: accounts
-//   columns: id (matches org_id / accountId from Stripe metadata),
-//            stripe_customer_id, stripe_subscription_id,
-//            status ('trialing'|'active'|'past_due'|'canceled'),
-//            trial_ends_at
+// Supabase tables used:
+//   accounts — id (matches accountId from Stripe metadata),
+//              stripe_customer_id, stripe_subscription_id,
+//              status ('trialing'|'active'|'past_due'|'canceled'|'complimentary'),
+//              trial_ends_at, price_id
+//   stripe_webhook_events — idempotency + ordering (migration 20260924020000)
+//
+// DURABILITY (2026-09-24). This handler used to return 200 no matter what,
+// including when the Supabase write failed. Stripe treats 200 as "delivered"
+// and never retries, so a DB blip during checkout.session.completed left a
+// charged customer with no access and nothing to replay. The rule now:
+//
+//   5xx  — a retry could plausibly succeed: Supabase unreachable or erroring,
+//          the Stripe subscription fetch failing, required env vars missing,
+//          or a 0-row match on an event less than RETRY_WINDOW_MS old (the
+//          account row may not exist yet — a real race at signup).
+//   200  — a retry cannot help: an event type we don't handle, a replay we
+//          have already applied, a stale out-of-order event, missing metadata,
+//          or a 0-row match on an event older than the retry window (logged at
+//          error level — loud loss beats silent loss).
+//   4xx  — the request is malformed: bad signature, unparseable JSON. Stripe
+//          does not retry 4xx, which is correct; a bad signature will not
+//          become valid.
+//
+// The 'trialing' fallback when the subscription fetch failed is GONE. Writing
+// a guessed status for someone who may have just paid is worse than retrying.
 
 import crypto from 'crypto'
 
@@ -116,6 +137,75 @@ async function sbUpsert(table, data, onConflict, supabaseUrl, serviceKey) {
   return JSON.parse(text)
 }
 
+// ── Durability: retry policy, idempotency, ordering ──────────────────────────
+
+// A 0-row match can mean a genuine race (the webhook beat the account row into
+// existence at signup) or a permanently missing account. Retry forever is a
+// storm; never retry loses a real payment. Decide on event age: young events
+// retry, old ones give up loudly. Stripe does not expose an attempt counter in
+// the payload, so age is the available signal.
+const RETRY_WINDOW_MS = 60 * 60 * 1000   // 1 hour
+
+// Thrown to signal "return 5xx so Stripe retries".
+function retryable(message) {
+  const err = new Error(message)
+  err.retryable = true
+  return err
+}
+
+// Stripe's evt_... id is stable across redeliveries, so its presence in the
+// log means we have already applied this event.
+async function alreadyProcessed(eventId, supabaseUrl, serviceKey) {
+  const rows = await sbSelect(
+    'stripe_webhook_events',
+    `event_id=eq.${encodeURIComponent(eventId)}`,
+    supabaseUrl, serviceKey,
+  )
+  return Array.isArray(rows) && rows.length > 0
+}
+
+// Ordering is per customer: a stale event for one customer must not be
+// suppressed by a newer event for a different one. Events with no customer id
+// are never considered stale — there is nothing to compare them against.
+async function isStaleEvent(customerId, eventCreatedIso, supabaseUrl, serviceKey) {
+  if (!customerId) return false
+  const url = `${supabaseUrl}/rest/v1/stripe_webhook_events`
+    + `?stripe_customer_id=eq.${encodeURIComponent(customerId)}`
+    + '&order=event_created.desc&limit=1&select=event_created'
+  const res = await fetch(url, { headers: sbHeaders(serviceKey) })
+  const text = await res.text()
+  if (!res.ok) throw new Error(`Supabase ordering lookup failed (${res.status}): ${text}`)
+  const rows = JSON.parse(text)
+  const newest = Array.isArray(rows) ? rows[0]?.event_created : null
+  if (!newest) return false
+  return new Date(eventCreatedIso) < new Date(newest)
+}
+
+// Recorded only AFTER the accounts write succeeds — see the migration comment.
+// Upsert rather than insert so a concurrent duplicate can't 409 us into a
+// pointless retry of work that already landed.
+async function recordEvent(event, customerId, supabaseUrl, serviceKey) {
+  await sbUpsert('stripe_webhook_events', {
+    event_id:           event.id,
+    event_type:         event.type,
+    event_created:      new Date(event.created * 1000).toISOString(),
+    stripe_customer_id: customerId ?? null,
+  }, 'event_id', supabaseUrl, serviceKey)
+}
+
+// Shared handling for "the PATCH matched nothing".
+function handleZeroRows(label, event, detail) {
+  const ageMs = Date.now() - event.created * 1000
+  if (ageMs < RETRY_WINDOW_MS) {
+    throw retryable(`${label}: 0 rows matched (${detail}); event is ${Math.round(ageMs / 1000)}s old — retrying`)
+  }
+  console.error(
+    `[webhook] ${label}: 0 rows matched (${detail}) and the event is `
+    + `${Math.round(ageMs / 60000)} minutes old — giving up and returning 200. `
+    + 'THIS IS A DROPPED BILLING UPDATE; reconcile this account by hand.'
+  )
+}
+
 // ── Main handler ─────────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -137,9 +227,13 @@ export default async function handler(req, res) {
   })
 
   if (!webhookSecret) {
+    // Was 200 to avoid retry storms on an unconfigured endpoint, but that
+    // silently discarded real billing events. Same call as the Supabase env
+    // check below: 5xx keeps ~3 days of Stripe retries as the window to fix
+    // the config. A forged request costs nothing here — without the secret we
+    // process nothing either way.
     console.error('[webhook] STRIPE_WEBHOOK_SECRET is not set — cannot verify signature')
-    // Return 200 so Stripe doesn't retry an unconfigured endpoint forever
-    res.status(200).json({ received: true, warning: 'webhook secret not configured' })
+    res.status(503).json({ error: 'Webhook secret not configured' })
     return
   }
 
@@ -187,8 +281,36 @@ export default async function handler(req, res) {
   // ──────────────────────────────────────────────────────────────────────────
 
   if (!supabaseUrl || !serviceKey) {
-    console.error('[webhook] Supabase env vars missing — event received but not stored:', event.type)
-    res.status(200).json({ received: true, warning: 'supabase not configured' })
+    // Was 200, which silently discarded the event forever. A config error is
+    // not transient, but Stripe retries 5xx for ~3 days — enough of a window
+    // to notice and fix rather than lose the billing update outright.
+    console.error('[webhook] Supabase env vars missing — refusing to drop event:', event.type)
+    res.status(503).json({ error: 'Supabase not configured' })
+    return
+  }
+
+  // ── Idempotency + ordering gate ───────────────────────────────────────────
+  // Both lookups are inside the retryable path: if the log itself is
+  // unreachable we must NOT fall through and re-apply blindly.
+  const eventCreatedIso = new Date(event.created * 1000).toISOString()
+  // session.customer, subscription.customer and invoice.customer all live at
+  // the same path, so one expression covers every event type we handle.
+  const eventCustomerId = event.data?.object?.customer ?? null
+
+  try {
+    if (await alreadyProcessed(event.id, supabaseUrl, serviceKey)) {
+      console.log('[webhook] replay of already-processed event — skipping:', event.id, event.type)
+      res.status(200).json({ received: true, skipped: 'duplicate' })
+      return
+    }
+    if (await isStaleEvent(eventCustomerId, eventCreatedIso, supabaseUrl, serviceKey)) {
+      console.log('[webhook] stale out-of-order event — skipping:', event.id, event.type, eventCreatedIso)
+      res.status(200).json({ received: true, skipped: 'stale' })
+      return
+    }
+  } catch (err) {
+    console.error('[webhook] idempotency/ordering lookup failed — retrying:', err?.message ?? err)
+    res.status(503).json({ error: 'Event log unavailable' })
     return
   }
 
@@ -217,28 +339,32 @@ export default async function handler(req, res) {
 
         // Fetch the Stripe subscription to get actual status + trial_end.
         // Do NOT hardcode 'trialing' — when skipTrial was true the sub is 'active' immediately.
-        let subStatus   = 'trialing'
-        let trialEndsAt = null
-        // Prefer the price on the live subscription over session.metadata.priceId:
-        // metadata is whatever the checkout call asked for, the subscription is
-        // what Stripe actually created. They agree today, but only one of them
-        // stays correct after a plan change.
-        let livePriceId = null
-        if (secretKey) {
-          try {
-            const subRes  = await fetch(`https://api.stripe.com/v1/subscriptions/${subscriptionId}`, {
-              headers: { 'Authorization': `Bearer ${secretKey}` },
-            })
-            const subData = await subRes.json()
-            subStatus   = subData.status ?? 'trialing'
-            trialEndsAt = subData.trial_end
-              ? new Date(subData.trial_end * 1000).toISOString()
-              : null
-            livePriceId = priceIdFromSubscription(subData)
-            console.log('[webhook] Stripe subscription:', { status: subStatus, trial_end: trialEndsAt, price_id: livePriceId })
-          } catch (err) {
-            console.error('[webhook] Failed to fetch Stripe subscription — defaulting to trialing:', err.message)
-          }
+        // The 'trialing' fallback that used to live here is GONE. If this fetch
+        // fails we no longer guess a status for someone who may have just paid
+        // — we throw, return 5xx, and let Stripe redeliver.
+        if (!secretKey) {
+          throw retryable('checkout.session.completed: STRIPE_SECRET_KEY missing, cannot read subscription')
+        }
+        let subStatus, trialEndsAt, livePriceId
+        try {
+          const subRes = await fetch(`https://api.stripe.com/v1/subscriptions/${subscriptionId}`, {
+            headers: { 'Authorization': `Bearer ${secretKey}` },
+          })
+          if (!subRes.ok) throw new Error(`Stripe subscription fetch HTTP ${subRes.status}`)
+          const subData = await subRes.json()
+          subStatus   = subData.status
+          trialEndsAt = subData.trial_end ? new Date(subData.trial_end * 1000).toISOString() : null
+          // Prefer the price on the live subscription over session.metadata.priceId:
+          // metadata is whatever the checkout call asked for, the subscription is
+          // what Stripe actually created. They agree today, but only one of them
+          // stays correct after a plan change.
+          livePriceId = priceIdFromSubscription(subData)
+          console.log('[webhook] Stripe subscription:', { status: subStatus, trial_end: trialEndsAt, price_id: livePriceId })
+        } catch (err) {
+          throw retryable(`checkout.session.completed: subscription fetch failed — ${err?.message ?? err}`)
+        }
+        if (!subStatus) {
+          throw retryable('checkout.session.completed: Stripe returned no subscription status')
         }
 
         // The accounts row already exists (created during onboarding).
@@ -255,14 +381,13 @@ export default async function handler(req, res) {
         }
         console.log('[webhook] patching account', accountId, JSON.stringify(patch))
 
-        try {
-          const rows = await sbPatch('accounts', `id=eq.${accountId}`, patch, supabaseUrl, serviceKey)
-          console.log('[webhook] checkout.session.completed: patched account rows:', rows.length, '— accountId:', accountId)
-          if (rows.length === 0) {
-            console.warn('[webhook] PATCH matched 0 rows — accountId may not exist in accounts table:', accountId)
-          }
-        } catch (dbErr) {
-          console.error('[webhook] DB patch failed for checkout.session.completed:', dbErr.message)
+        // No try/catch: a Supabase failure must propagate to a 5xx so Stripe
+        // redelivers. Swallowing it here is what let a charged customer end up
+        // with no access and nothing to replay.
+        const rows = await sbPatch('accounts', `id=eq.${accountId}`, patch, supabaseUrl, serviceKey)
+        console.log('[webhook] checkout.session.completed: patched account rows:', rows.length, '— accountId:', accountId)
+        if (rows.length === 0) {
+          handleZeroRows('checkout.session.completed', event, `accountId=${accountId}`)
         }
         break
       }
@@ -288,17 +413,16 @@ export default async function handler(req, res) {
           ...(updatedPriceId ? { price_id: updatedPriceId } : {}),
         }
 
-        try {
-          const updated = await sbPatch(
-            'accounts',
-            `stripe_customer_id=eq.${customerId}`,
-            patch,
-            supabaseUrl,
-            serviceKey
-          )
-          console.log(`[webhook] subscription.updated: ${customerId} → ${status} (${updated.length} rows updated)`)
-        } catch (dbErr) {
-          console.error('[webhook] DB patch failed for subscription.updated:', dbErr.message)
+        const updated = await sbPatch(
+          'accounts',
+          `stripe_customer_id=eq.${customerId}`,
+          patch,
+          supabaseUrl,
+          serviceKey
+        )
+        console.log(`[webhook] subscription.updated: ${customerId} → ${status} (${updated.length} rows updated)`)
+        if (updated.length === 0) {
+          handleZeroRows('customer.subscription.updated', event, `stripe_customer_id=${customerId}`)
         }
         break
       }
@@ -310,18 +434,53 @@ export default async function handler(req, res) {
 
         console.log('[webhook] subscription.deleted:', { customerId, subId: sub.id })
 
-        try {
-          const updated = await sbPatch(
-            'accounts',
-            `stripe_customer_id=eq.${customerId}`,
-            { status: 'canceled' },
-            supabaseUrl,
-            serviceKey
-          )
-          console.log(`[webhook] subscription.deleted: ${customerId} → canceled (${updated.length} rows)`)
-        } catch (dbErr) {
-          console.error('[webhook] DB patch failed for subscription.deleted:', dbErr.message)
+        const updated = await sbPatch(
+          'accounts',
+          `stripe_customer_id=eq.${customerId}`,
+          { status: 'canceled' },
+          supabaseUrl,
+          serviceKey
+        )
+        console.log(`[webhook] subscription.deleted: ${customerId} → canceled (${updated.length} rows)`)
+        if (updated.length === 0) {
+          handleZeroRows('customer.subscription.deleted', event, `stripe_customer_id=${customerId}`)
         }
+        break
+      }
+
+      // ── Payment recovered ──────────────────────────────────────────────────
+      // Deliberately NARROW: past_due -> active only, via a PostgREST filter on
+      // status. It is not a general status writer.
+      //
+      // Both this and customer.subscription.updated fire on a successful
+      // renewal, so an unscoped write here would fight that handler for
+      // authority — and worse, a final invoice settling AFTER a cancellation
+      // would resurrect 'active' over 'canceled' and hand access back to
+      // someone who already left. The status=eq.past_due filter makes this a
+      // no-op in every case except the recovery it exists for.
+      //
+      // It also must not write price_id or stripe_subscription_id: those stay
+      // owned by the two subscription events.
+      case 'invoice.payment_succeeded': {
+        const invoice    = event.data.object
+        const customerId = invoice.customer
+
+        console.log('[webhook] invoice.payment_succeeded:', { customerId, invoiceId: invoice.id })
+
+        const updated = await sbPatch(
+          'accounts',
+          `stripe_customer_id=eq.${customerId}&status=eq.past_due`,
+          { status: 'active' },
+          supabaseUrl,
+          serviceKey
+        )
+        // 0 rows is the NORMAL case here (the account wasn't past_due), so this
+        // never calls handleZeroRows — there is nothing to reconcile.
+        console.log(
+          updated.length > 0
+            ? `[webhook] invoice.payment_succeeded: ${customerId} past_due → active`
+            : `[webhook] invoice.payment_succeeded: ${customerId} was not past_due — no change`
+        )
         break
       }
 
@@ -332,17 +491,16 @@ export default async function handler(req, res) {
 
         console.log('[webhook] invoice.payment_failed:', { customerId, invoiceId: invoice.id })
 
-        try {
-          const updated = await sbPatch(
-            'accounts',
-            `stripe_customer_id=eq.${customerId}`,
-            { status: 'past_due' },
-            supabaseUrl,
-            serviceKey
-          )
-          console.log(`[webhook] invoice.payment_failed: ${customerId} → past_due (${updated.length} rows)`)
-        } catch (dbErr) {
-          console.error('[webhook] DB patch failed for invoice.payment_failed:', dbErr.message)
+        const updated = await sbPatch(
+          'accounts',
+          `stripe_customer_id=eq.${customerId}`,
+          { status: 'past_due' },
+          supabaseUrl,
+          serviceKey
+        )
+        console.log(`[webhook] invoice.payment_failed: ${customerId} → past_due (${updated.length} rows)`)
+        if (updated.length === 0) {
+          handleZeroRows('invoice.payment_failed', event, `stripe_customer_id=${customerId}`)
         }
         break
       }
@@ -351,10 +509,30 @@ export default async function handler(req, res) {
         console.log('[webhook] Unhandled event type (ignored):', event.type)
     }
   } catch (err) {
-    // Safety net — still return 200
-    console.error('[webhook] Unexpected error processing', event.type, ':', err.message, err.stack)
+    // A thrown error now means "we could not apply this event". Retryable ones
+    // get a 5xx so Stripe redelivers; anything else is an unexpected bug, which
+    // we also treat as retryable rather than silently acknowledging a billing
+    // update we failed to write.
+    console.error('[webhook] failed processing', event.type, event.id, ':', err?.message ?? err)
+    if (err?.stack) console.error(err.stack)
+    res.status(503).json({ error: 'Event processing failed — please retry' })
+    return
   }
 
-  // Always acknowledge to Stripe
+  // ── Record the event AFTER the write succeeded ────────────────────────────
+  // Order matters: recording first would mean a failed write plus a retry sees
+  // "already processed" and skips forever. Recording after can let a concurrent
+  // duplicate apply twice, which is harmless — every write above is an
+  // idempotent "set column to X".
+  //
+  // A failure here is NOT retryable: the accounts write already landed, and
+  // replaying it would be a no-op anyway. Log and acknowledge, accepting that
+  // a redelivery of this same event would re-apply rather than skip.
+  try {
+    await recordEvent(event, eventCustomerId, supabaseUrl, serviceKey)
+  } catch (err) {
+    console.error('[webhook] applied event but failed to record it:', event.id, err?.message ?? err)
+  }
+
   res.status(200).json({ received: true })
 }
