@@ -8,16 +8,34 @@
 //   ad / head_coach / assistant_coach / team_manager
 //   (formerly owner / admin / coach / readonly)
 //
+// AUTH REQUIRED (2026-09-24). This endpoint previously had no JWT check and
+// took `userId` from the request body, then UPSERTED profiles on that id with
+// the service role. Because the upsert is keyed on `id`, naming somebody
+// else's user id OVERWROTE their profile row — re-pointing their account_id,
+// org_id and email at an attacker-created org. RLS keys off org_id/account_id,
+// so the victim lost access to their real program. Other users' profile ids
+// are readable from the dashboard (the add-existing-coach picker selects
+// profile_id), so this was reachable by any coach against a colleague.
+//
+// The caller's identity now comes from the verified session only. `userId` and
+// `email` in the body are ignored. The existing prevent_self_role_change
+// trigger did NOT mitigate this — the service role has auth.uid() = NULL, so
+// it passes straight through and writes role='ad'.
+//
+// planType is likewise no longer accepted: every new account starts
+// single_program. Entitlement lives in accounts.price_id, written by
+// api/stripe-webhook.js from the live Stripe subscription.
+//
 // REQUIRED ENV VARS:
 //   VITE_SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY
 //
-// Request body:
-//   { userId, email, fullName, orgName, sport, planType,
-//     primaryColor, secondaryColor, schoolName }
+// Request:  Authorization: Bearer <supabase jwt>
+//   body:   { fullName, orgName, sport, primaryColor, secondaryColor }
+//           userId / email / planType / schoolName are ignored if sent.
 //
 // Response:
-//   { accountId, orgId }
+//   { accountId, orgId }   — or 409 if the caller already has a profile.
 
 export const config = { runtime: 'edge' }
 
@@ -32,6 +50,58 @@ function json(body, status = 200) {
     status,
     headers: { ...CORS, 'Content-Type': 'application/json' },
   })
+}
+
+// Verify the inbound Authorization: Bearer <jwt> header by asking Supabase
+// to resolve it to a user. We trust Supabase to validate the JWT signature
+// and expiry rather than rolling our own JWT verification at the edge.
+// Mirrors api/invite-coach.js / api/stripe-checkout.js.
+async function verifyCallerJwt(req, supabaseUrl, anonOrAuthKey) {
+  const authHeader = req.headers.get('authorization') ?? req.headers.get('Authorization')
+  if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
+    return { ok: false, status: 401, error: 'Authorization header required' }
+  }
+  const jwt = authHeader.slice(7).trim()
+  if (!jwt) return { ok: false, status: 401, error: 'Empty bearer token' }
+
+  let res
+  try {
+    res = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: { 'apikey': anonOrAuthKey, 'Authorization': `Bearer ${jwt}` },
+    })
+  } catch (err) {
+    console.error('[create-account] auth verify network error:', err)
+    return { ok: false, status: 502, error: 'Auth verification failed' }
+  }
+  if (!res.ok) {
+    // Supabase answers a MALFORMED token with 400/403 and an EXPIRED one with
+    // 401. Both are the caller's problem, so both surface as 401; 502 is
+    // reserved for genuine upstream failure.
+    const callerFault = res.status === 400 || res.status === 401 || res.status === 403
+    return {
+      ok:     false,
+      status: callerFault ? 401 : 502,
+      error:  callerFault ? 'Invalid or expired session' : 'Auth verification failed',
+    }
+  }
+  const user   = await res.json().catch(() => null)
+  const userId = user?.id
+  if (!userId) return { ok: false, status: 401, error: 'Auth user missing id' }
+  return { ok: true, userId, email: user?.email ?? null }
+}
+
+// Onboarding is a once-per-user action. Re-running it used to silently upsert
+// the profile, re-pointing an existing user at a brand-new account and org and
+// orphaning everything they had — a bug that looks like data loss and reads
+// like nothing at all in the logs. Refuse instead.
+async function profileExists(supabaseUrl, serviceKey, userId) {
+  const url = `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=id&limit=1`
+  const res = await fetch(url, {
+    headers: { 'apikey': serviceKey, 'Authorization': `Bearer ${serviceKey}` },
+  })
+  if (!res.ok) throw new Error(`profile lookup HTTP ${res.status}`)
+  const rows = await res.json()
+  return Array.isArray(rows) && rows.length > 0
 }
 
 function sbHeaders(serviceKey) {
@@ -95,19 +165,43 @@ export default async function handler(req) {
     return json({ error: 'Invalid request body' }, 400)
   }
 
+  // userId / email / planType / schoolName are deliberately NOT destructured.
+  // Identity comes from the verified session below; the tier is forced; and
+  // schoolName was accepted but never read by anything.
   const {
-    userId, email, fullName, orgName, sport,
-    planType = 'single_program', primaryColor = '#cc1111',
-    secondaryColor = '#ffffff', schoolName,
+    fullName, orgName, sport,
+    primaryColor = '#cc1111', secondaryColor = '#ffffff',
   } = body
 
-  console.log('[create-account] incoming:', {
-    userId, email, orgName, sport, planType,
-  })
-
-  if (!userId || !email || !orgName || !sport) {
-    return json({ error: 'userId, email, orgName, and sport are required' }, 400)
+  if (!orgName || !sport) {
+    return json({ error: 'orgName and sport are required' }, 400)
   }
+
+  // ── Who is calling? Identity is the session's, never the body's ───────────
+  const authCheck = await verifyCallerJwt(req, supabaseUrl, serviceKey)
+  if (!authCheck.ok) return json({ error: authCheck.error }, authCheck.status)
+
+  const userId = authCheck.userId
+  const email  = authCheck.email
+  if (!email) {
+    console.error('[create-account] auth user has no email:', userId)
+    return json({ error: 'No email on file for this account.' }, 403)
+  }
+
+  // ── Onboarding runs once. A second run would re-point an existing user at
+  //    a brand-new account/org, orphaning everything they already had. ──────
+  try {
+    if (await profileExists(supabaseUrl, serviceKey, userId)) {
+      return json({
+        error: 'This account has already completed onboarding. Reload the page to go to your dashboard — if something looks wrong, contact support rather than signing up again.',
+      }, 409)
+    }
+  } catch (err) {
+    console.error('[create-account] profile existence check failed:', err?.message ?? err)
+    return json({ error: 'Could not verify account state — please try again.' }, 502)
+  }
+
+  console.log('[create-account] authorised:', { userId, orgName, sport })
 
   try {
     // 1. Create account row — trial starts immediately.
@@ -122,11 +216,16 @@ export default async function handler(req) {
     // accounts_plan_type_check. Set both tier columns from the same source
     // and explicitly write the billing cycle to make the contract visible.
     const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
-    const isSchoolTier = planType === 'school'
+    // Every new account starts single_program, full stop. The tier used to
+    // come from a caller-supplied planType, so anyone could self-declare
+    // 'school' at signup. It is not a purchase — entitlement is
+    // accounts.price_id, written by api/stripe-webhook.js from the live Stripe
+    // subscription, and the program cap reads that. The onboarding plan picker
+    // remains a pre-sales preference; the real choice happens at checkout.
     const account = await sbInsert(supabaseUrl, serviceKey, 'accounts', {
       name:          orgName,
-      account_type:  isSchoolTier ? 'school' : 'program',
-      plan_type:     isSchoolTier ? 'school' : 'single_program',
+      account_type:  'program',
+      plan_type:     'single_program',
       plan:          'monthly',
       status:        'trialing',
       trial_ends_at: trialEndsAt,

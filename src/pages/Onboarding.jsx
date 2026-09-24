@@ -418,22 +418,31 @@ export default function Onboarding() {
     setLoading(true)
 
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error('Not authenticated.')
+      // /api/create-account now requires a Supabase JWT and takes the caller's
+      // identity from it. userId and email are no longer sent: passing a user
+      // id in the body let anyone overwrite another user's profile row, since
+      // the endpoint upserts profiles on that id with the service role.
+      //
+      // planType is no longer sent either — every new account starts
+      // single_program and entitlement comes from Stripe. `accountType` stays
+      // a pre-sales preference for the Step 3 summary; the real plan choice
+      // happens at checkout. schoolName was never read by the endpoint.
+      const { data: { session } } = await supabase.auth.getSession()
+      const accessToken = session?.access_token ?? null
+      if (!accessToken) throw new Error('Your session has expired — please sign in again.')
 
       const res  = await fetch('/api/create-account', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
         body:    JSON.stringify({
-          userId:         user.id,
-          email:          user.email ?? '',
           fullName:       form.fullName,
           orgName:        form.programName,
           sport:          form.sport,
-          planType:       accountType || 'single_program',
           primaryColor:   form.primaryColor,
           secondaryColor: form.secondaryColor,
-          schoolName:     form.schoolName,
         }),
       })
 

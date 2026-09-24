@@ -83,6 +83,18 @@ const PRICE_LABELS = {
   [import.meta.env.VITE_STRIPE_PRICE_SCHOOL_ANNUAL]:  'School — Annual',
 }
 
+// The School price ids, for deciding whether to offer the upgrade CTA.
+// This is deliberately keyed on price_id (what Stripe says was bought) and not
+// on plan_type: since /api/create-account stopped accepting a caller-supplied
+// planType, every account is created 'single_program' and nothing ever writes
+// 'school' to that column — the webhook doesn't touch it. Keying the CTA on
+// plan_type would therefore show "Upgrade to School Plan" to customers who are
+// already paying for School.
+const SCHOOL_PRICE_IDS = [
+  import.meta.env.VITE_STRIPE_PRICE_SCHOOL_MONTHLY,
+  import.meta.env.VITE_STRIPE_PRICE_SCHOOL_ANNUAL,
+].filter(Boolean)
+
 const STATUS_LABELS = {
   trialing:      { label: 'Free Trial',    color: '#cc8800', bg: '#1a0d00', border: '#3a2000' },
   active:        { label: 'Active',        color: '#66cc88', bg: '#001a00', border: '#003300' },
@@ -1737,7 +1749,12 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                 const planLabel = PRICE_LABELS[sub.price_id] ?? (
                   sub.plan_type === 'school' ? 'School — All Programs' : 'Single Program'
                 )
-                const isSingle = sub.plan_type !== 'school'
+                // Hide the upgrade CTA for anyone on a School price. Falls back
+                // to plan_type only when price_id isn't populated yet (accounts
+                // that subscribed before the webhook began writing it).
+                const isSingle = sub.price_id
+                  ? !SCHOOL_PRICE_IDS.includes(sub.price_id)
+                  : sub.plan_type !== 'school'
                 return (
                   <div className="flex flex-col gap-4">
                     <div className="flex flex-col gap-2">
