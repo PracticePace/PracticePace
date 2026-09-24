@@ -439,38 +439,29 @@ export default function Dashboard() {
       return
     }
 
-    // skipTrial = coach is converting from an existing in-app trial.
-    // Stripe will show "Subscribe" not "Start trial" and won't add another
-    // 14-day grace period on top of the one they already received.
-    const trialStillActive =
-      subscription?.status === 'trialing' &&
-      subscription?.trial_ends_at &&
-      new Date(subscription.trial_ends_at) > new Date()
-    const skipTrial = trialStillActive
-
-    // accountId must be the accounts table UUID (not the organizations UUID).
-    // subscription state IS the accounts row, so subscription.id is correct.
-    const accountId = subscription?.id ?? null
-    if (!accountId) {
-      setCheckoutError('Account ID not found — please reload and try again.')
-      console.error('[Dashboard] startCheckout: subscription.id is missing', { subscription })
-      return
-    }
-
-    console.log('[Dashboard] startCheckout →', { priceId, skipTrial, accountId, orgId: org.id })
+    console.log('[Dashboard] startCheckout →', { priceId, orgId: org.id })
 
     setCheckoutLoading(true)
     try {
+      // /api/stripe-checkout requires a Supabase JWT. accountId, email,
+      // orgName and skipTrial are NOT sent any more — the endpoint derives
+      // all four from the verified session. They used to come from the body,
+      // which meant the caller chose which account the subscription landed on
+      // (the webhook writes entitlement against that accountId) and could mint
+      // itself a fresh 14-day trial by omitting skipTrial.
+      const { data: { session } } = await supabase.auth.getSession()
+      const accessToken = session?.access_token ?? null
+      if (!accessToken) {
+        throw new Error('Your session has expired — please sign in again.')
+      }
+
       const res = await fetch('/api/stripe-checkout', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          priceId,
-          accountId,           // accounts.id — the webhook upserts WHERE id = accountId
-          email:     user.email,
-          orgName:   org.name ?? '',
-          skipTrial,
-        }),
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body:    JSON.stringify({ priceId }),
       })
       const data = await res.json().catch(() => ({}))
       console.log('[Dashboard] startCheckout ← API response', res.status, data)

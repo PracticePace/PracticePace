@@ -802,15 +802,27 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
   }
 
   async function openBillingPortal() {
-    const customerId = subscription?.stripe_customer_id
-    if (!customerId) return
+    // The button still hides itself when there's no customer on file, but the
+    // id is no longer sent — /api/stripe-portal resolves the Stripe customer
+    // from the caller's own account row. It used to trust a customerId from
+    // the body, which let anyone with a cus_... id open someone else's portal.
+    if (!subscription?.stripe_customer_id) return
     setPortalLoading(true)
     setPortalError('')
     try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const accessToken = session?.access_token ?? null
+      if (!accessToken) {
+        throw new Error('Your session has expired — please sign in again.')
+      }
+
       const res = await fetch('/api/stripe-portal', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ customerId }),
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body:    JSON.stringify({}),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Portal session failed')

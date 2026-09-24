@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { supabase } from '../lib/supabase'
 import Logo from '../components/Logo'
 
 // ── Plan definitions ──────────────────────────────────────────────────────────
@@ -60,8 +61,6 @@ export default function Pricing() {
   const [error,   setError]   = useState('')
 
   const orgId   = profile?.current_org_id ?? null
-  const email   = user?.email     ?? ''
-  const orgName = ''   // caller can pass this; we leave blank if unknown
 
   async function startTrial(plan) {
     const priceId = annual ? plan.priceIdAnnual : plan.priceIdMonthly
@@ -77,10 +76,25 @@ export default function Pricing() {
     setError('')
     setLoading(priceId)
     try {
+      // /api/stripe-checkout requires a Supabase JWT and derives the account,
+      // email and program name from the verified session. This call used to
+      // send `accountId: orgId` — an ORGANIZATION id where the endpoint and
+      // webhook both expect an ACCOUNTS id, so the webhook's PATCH matched
+      // zero rows and entitlement was never written. Deriving it server-side
+      // removes the spoofing hole and fixes that mismatch at the same time.
+      const { data: { session } } = await supabase.auth.getSession()
+      const accessToken = session?.access_token ?? null
+      if (!accessToken) {
+        throw new Error('Your session has expired — please sign in again.')
+      }
+
       const res = await fetch('/api/stripe-checkout', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ priceId, accountId: orgId, email, orgName }),
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body:    JSON.stringify({ priceId }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Checkout failed')

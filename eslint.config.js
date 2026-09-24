@@ -31,4 +31,17 @@ export default defineConfig([
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
     },
   },
+  {
+    // api/ is server code (Vercel Edge + Node functions), not browser code.
+    // Without node globals declared, every `process.env` read and every
+    // `Buffer` use in these files trips no-undef — stripe-webhook.js alone
+    // carried five such errors before this block existed. Scoped to api/ so
+    // the browser bundle keeps its stricter global list.
+    files: ['api/**/*.js'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
 ])
