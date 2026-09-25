@@ -16,6 +16,7 @@ import VideoSection      from '../components/dashboard/VideoSection'
 import SettingsSection   from '../components/dashboard/SettingsSection'
 import WhiteboardSection from '../components/dashboard/WhiteboardSection'
 import PlaybookSection   from '../components/dashboard/PlaybookSection'
+import { getSnapshot as getPracticeSnapshot } from '../lib/practiceTimer'
 import PlanSelectModal   from '../components/dashboard/PlanSelectModal'
 import ProgramSwitcher   from '../components/dashboard/ProgramSwitcher'
 
@@ -739,6 +740,33 @@ export default function Dashboard() {
   //   2. Org list comes from coachOrgs (the coach's own memberships), not
   //      allOrgs (RLS-visible orgs, which for a non-AD is just their one
   //      pinned org and wouldn't show the other program at all).
+  // ── Guard: switching programs mid-practice ────────────────────────────────
+  // Switching tears down the practice screen and clears the Active script.
+  // Switching back does NOT restore it — the practice is simply over. That is
+  // a lot to lose to a mis-tap on a tablet mid-session, so confirm first.
+  // (This is only a warning; per-program practice state is deliberately not
+  // implemented.)
+  //
+  // `hasStarted` covers both running and paused, and also a Quick Timer with
+  // no script loaded — all three are a practice in progress from the coach's
+  // point of view.
+  const [pendingSwitch, setPendingSwitch] = useState(null)   // { orgId, run } | null
+
+  function practiceInProgress() {
+    try { return !!getPracticeSnapshot()?.hasStarted } catch { return false }
+  }
+
+  // Wraps either switcher: confirm first when a practice is live, otherwise
+  // switch straight through so the common case is unchanged.
+  function guardedSwitch(orgId, run) {
+    if (!orgId || orgId === activeOrgId) return
+    if (practiceInProgress()) {
+      setPendingSwitch({ orgId, run })
+      return
+    }
+    run(orgId)
+  }
+
   async function switchCoachOrg(orgId) {
     if (!orgId || orgId === activeOrgId) return
     const target = coachOrgs.find(c => c.org_id === orgId)
@@ -825,7 +853,7 @@ export default function Dashboard() {
             <ProgramSwitcher
               orgs={allOrgs}
               activeOrgId={activeOrgId}
-              onSelect={switchProgram}
+              onSelect={id => guardedSwitch(id, switchProgram)}
               orgColor={orgColor}
             />
           </div>
@@ -846,7 +874,7 @@ export default function Dashboard() {
             <ProgramSwitcher
               orgs={coachOrgs.map(c => ({ id: c.org_id, name: c.org_name }))}
               activeOrgId={activeOrgId}
-              onSelect={switchCoachOrg}
+              onSelect={id => guardedSwitch(id, switchCoachOrg)}
               orgColor={orgColor}
             />
           </div>
@@ -957,6 +985,56 @@ export default function Dashboard() {
           </button>
         </div>
       )}
+
+      {/* ── Confirm: switching programs ends the running practice ─────────── */}
+      {pendingSwitch && (() => {
+        const targetName =
+          (allOrgs.find(o => o.id === pendingSwitch.orgId)?.name)
+          ?? (coachOrgs.find(c => c.org_id === pendingSwitch.orgId)?.org_name)
+          ?? 'another program'
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            style={{ backgroundColor: 'rgba(0,0,0,0.88)' }}
+          >
+            <div
+              className="w-full max-w-md rounded-2xl p-6 flex flex-col gap-4"
+              style={{ backgroundColor: '#110000', border: '1px solid #2a0000' }}
+            >
+              <h3 className="font-bold text-white text-lg">End practice and switch programs?</h3>
+              <p className="text-sm leading-relaxed" style={{ color: '#c8a0a0' }}>
+                You have a practice in progress. Switching to{' '}
+                <span className="font-semibold text-white">{targetName}</span>{' '}
+                ends it now and clears the Active script.
+              </p>
+              <p className="text-sm leading-relaxed" style={{ color: '#9a8080' }}>
+                This can&rsquo;t be undone — switching back will not restore the practice,
+                and you&rsquo;ll need to load your script again.
+              </p>
+              <div className="flex gap-2 justify-end pt-1">
+                <button
+                  onClick={() => setPendingSwitch(null)}
+                  className="px-4 py-2.5 rounded-lg text-sm font-semibold"
+                  style={{ border: '1px solid #2a0000', color: '#9a8080', minHeight: 44 }}
+                >
+                  Keep practicing
+                </button>
+                <button
+                  onClick={() => {
+                    const { orgId, run } = pendingSwitch
+                    setPendingSwitch(null)
+                    run(orgId)
+                  }}
+                  className="px-4 py-2.5 rounded-lg text-sm font-bold text-white"
+                  style={{ backgroundColor: '#7a2020', minHeight: 44 }}
+                >
+                  End practice &amp; switch
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ── Subscription paywall — shown when trial expired, canceled, or past_due ── */}
       {showPaywall && (

@@ -21,6 +21,57 @@ function pad(n) { return String(n).padStart(2, '0') }
 function fmt(s) { const sec = Number(s) || 0; return `${pad(Math.floor(sec / 60))}:${pad(sec % 60)}` }
 function totalSec(drills) { return (drills ?? []).reduce((s, d) => s + (Number(d.duration) || 0), 0) }
 
+// ── Drill duration limits ────────────────────────────────────────────────────
+// The duration fields used to accept anything: -4:-30 saved fine, 0:00 saved
+// fine, and 99999 minutes rendered a script total of "100000:30". Zero and
+// negative drills are worse than cosmetic — the practice timer skips straight
+// past them, so a coach building a script gets a drill that silently never
+// runs.
+const DUR_MAX_MINUTES = 60
+const DUR_MAX_SECONDS = 59
+const DUR_MIN_TOTAL   = 5                                              // seconds
+const DUR_MAX_TOTAL   = DUR_MAX_MINUTES * 60 + DUR_MAX_SECONDS         // 3659s
+
+// Shared by the add form and the edit form so they can't drift apart.
+// Returns { ok, seconds, message } — message is null when ok.
+function validateDuration(mins, secs) {
+  const m = mins === '' || mins === null || mins === undefined ? 0 : Number(mins)
+  const c = secs === '' || secs === null || secs === undefined ? 0 : Number(secs)
+
+  if (!Number.isFinite(m) || !Number.isFinite(c) || !Number.isInteger(m) || !Number.isInteger(c)) {
+    return { ok: false, seconds: 0, message: 'Enter whole numbers for minutes and seconds.' }
+  }
+  if (m < 0 || c < 0) {
+    return { ok: false, seconds: 0, message: "Duration can't be negative." }
+  }
+  if (m > DUR_MAX_MINUTES) {
+    return { ok: false, seconds: 0, message: `Minutes can't be more than ${DUR_MAX_MINUTES}.` }
+  }
+  if (c > DUR_MAX_SECONDS) {
+    return { ok: false, seconds: 0, message: `Seconds can't be more than ${DUR_MAX_SECONDS}.` }
+  }
+  const seconds = m * 60 + c
+  if (seconds < DUR_MIN_TOTAL) {
+    return { ok: false, seconds, message: `Drills must be at least ${DUR_MIN_TOTAL} seconds.` }
+  }
+  return { ok: true, seconds, message: null }
+}
+
+// Existing scripts may already hold out-of-range durations saved before the
+// validation above existed. Clamp them on load rather than refusing to open
+// the script — a coach locked out of their own practice plan is a worse
+// outcome than a silently corrected drill.
+function clampDrillDurations(drills) {
+  return (drills ?? []).map(d => {
+    const raw = Number(d?.duration)
+    const safe = !Number.isFinite(raw)
+      ? DUR_MIN_TOTAL
+      : Math.min(DUR_MAX_TOTAL, Math.max(DUR_MIN_TOTAL, Math.round(raw)))
+    return safe === raw ? d : { ...d, duration: safe }
+  })
+}
+
+
 // Sport list for the script's per-drill-set sport. Aliases the central
 // SPORTS in src/lib/sports.js so the script sport picker stays in lock-
 // step with Program Settings. Scripts don't have their own custom-label
@@ -847,9 +898,13 @@ function AddDrillForm({
   const hasNotes = notes.trim().length > 0
   const effectiveShowNotes = hasNotes && showNotes
 
+  const durCheck = validateDuration(mins, secs)
+  const canAdd   = !!name.trim() && durCheck.ok
+
   function handleAdd() {
+    if (!canAdd) return          // belt-and-braces; the button is disabled
     const drillName = name.trim()
-    const duration  = Number(mins || 0) * 60 + Number(secs || 0)
+    const duration  = durCheck.seconds
     console.log('[AddDrill] name:', JSON.stringify(drillName), 'mins:', mins, 'secs:', secs, '→ duration (s):', duration)
     onAdd({
       name:        drillName,
@@ -895,7 +950,7 @@ function AddDrillForm({
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-xs shrink-0" style={{ color: '#9a8080' }}>Duration:</span>
         <input
-          type="number" value={mins} min={0} placeholder="Min"
+          type="number" value={mins} min={0} max={DUR_MAX_MINUTES} placeholder="Min"
           onChange={e => setMins(e.target.value)}
           className="w-16 rounded-lg px-2 py-2 text-sm text-center outline-none"
           style={{ backgroundColor: '#1a0000', border: '1px solid #3a0000', color: '#fff' }} />
@@ -999,7 +1054,15 @@ function AddDrillForm({
         </button>
       )}
 
-      <button onClick={handleAdd} disabled={!name.trim()}
+      {/* Inline duration error — only once the coach has typed something, so
+          an untouched form doesn't nag before they've started. */}
+      {(mins !== '' || secs !== '') && durCheck.message && (
+        <p className="text-xs px-1" style={{ color: '#ff6666' }}>
+          {durCheck.message}
+        </p>
+      )}
+
+      <button onClick={handleAdd} disabled={!canAdd}
         className="w-full py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-40"
         style={{ backgroundColor: orgColor }}>
         + Add Drill
@@ -1051,6 +1114,8 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
   }, [isEditing, drill])
 
   const editHasNotes = editNotes.trim().length > 0
+  const editDurCheck = validateDuration(editMins, editSecs)
+  const canSaveEdit  = !!editName.trim() && editDurCheck.ok
   const editEffectiveShowNotes = editHasNotes && editShowNotes
 
   // Tonal hierarchy on top of the dashboard's #0d0000 page bg:
@@ -1096,7 +1161,7 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
           />
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs shrink-0" style={{ color: '#9a8080' }}>Duration:</span>
-            <input type="number" value={editMins} min={0} placeholder="Min"
+            <input type="number" value={editMins} min={0} max={DUR_MAX_MINUTES} placeholder="Min"
               onChange={e => setEditMins(e.target.value)}
               className="w-16 rounded-lg px-2 py-2 text-sm text-center outline-none"
               style={{ backgroundColor: '#0d0000', border: '1px solid #3a0000', color: '#fff' }} />
@@ -1199,6 +1264,12 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
             </button>
           )}
 
+          {editDurCheck.message && (
+            <p className="text-xs px-1" style={{ color: '#ff6666' }}>
+              {editDurCheck.message}
+            </p>
+          )}
+
           <div className="flex gap-2 justify-end">
             <button onClick={onEditCancel}
               className="px-3 py-2 rounded-lg text-xs font-semibold"
@@ -1206,14 +1277,15 @@ function DrillRow({ drill, index, isEditing, isDragging, isOver, orgColor, orgId
               Cancel
             </button>
             <button
+              disabled={!canSaveEdit}
               onClick={() => onEditSave(index, {
                 name:        editName.trim(),
-                duration:    Number(editMins || 0) * 60 + Number(editSecs || 0),
+                duration:    editDurCheck.seconds,
                 notes:       editNotes.trim(),
                 show_notes:  editEffectiveShowNotes,
                 cue_mp3_url: editCueUrl,
               })}
-              className="px-3 py-2 rounded-lg text-xs font-bold text-white"
+              className="px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-40"
               style={{ backgroundColor: orgColor }}>
               Save
             </button>
@@ -1379,7 +1451,7 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
 }) {
   const [name,       setName]       = useState(script.name  ?? '')
   const [sport,      setSport]      = useState(script.sport ?? 'football')
-  const [drills,     setDrills]     = useState(script.drills ?? [])
+  const [drills,     setDrills]     = useState(() => clampDrillDurations(script.drills))
   // Commit C: script-level music playlist. null = "None" (fall through to
   // the full library at practice time — Commit D wires the auto-start).
   const [playlistId, setPlaylistId] = useState(script.playlist_id ?? null)

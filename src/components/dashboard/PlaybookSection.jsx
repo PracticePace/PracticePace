@@ -55,7 +55,7 @@ const SECTIONS = [
     Icon: ClipboardIcon,
     items: [
       'Open PracticePace on your iPad before practice begins.',
-      'Load your script in the Scripts tab — tap Set Active.',
+      'Load your script in the Scripts tab — tap Load. (Inside a script the same button reads Load to Practice.)',
       'Go to the Practice tab — your script loads automatically.',
       'Keep PracticePace as the active app during practice — switching apps may pause the timer.',
       'For best results, set iPad Auto-Lock to Never during practice: Settings → Display & Brightness → Auto-Lock → Never.',
@@ -92,9 +92,9 @@ const SECTIONS = [
     title: 'Scoreboards',
     Icon: TrophyIcon,
     items: [
-      'Tap the Scoreboard tab and select your sport.',
-      'Football — game clock, down & distance, play clock, timeouts.',
-      'Basketball — game clock, shot clock, fouls, timeouts, quarters or halves.',
+      'Tap the Scoreboard tab — it opens the right scoreboard for your program automatically, based on the sport set in Settings. There is no sport to pick here.',
+      'Football — game clock, quarter, down & distance, ball on, play clock, and timeouts.',
+      'Basketball — game clock, shot clock, period, team fouls with bonus, and possession. (No timeout tracking on this one.)',
       'Tap the game clock to set any time manually.',
       'Shot clock hot buttons: 35s (college), 24s (NBA/varsity), 14s (inbound).',
     ],
