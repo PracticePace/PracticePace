@@ -45,6 +45,7 @@ const SECTIONS = [
     Icon: ZapIcon,
     items: [
       'Best viewed on an iPad running Safari as a PWA — tap Share → Add to Home Screen for the full experience.',
+      'Lock your iPad in landscape before practice: swipe down from the top-right corner and tap Rotation Lock — the button highlights when it\'s on. Practice:Pace is built for landscape and will look wrong in portrait.',
       'Sign in and set up your program in Settings before your first practice.',
       'Build your first practice script in the Scripts tab.',
       'Upload your team background and program logo in Settings.',
