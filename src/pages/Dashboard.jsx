@@ -90,7 +90,7 @@ export default function Dashboard() {
 
   // Default landing tab is Scripts. The Practice tab is one click away on
   // the bottom nav, and handleSetActive() still auto-jumps to Practice when
-  // a coach taps "Set Active" on a script — so the run-a-practice flow is
+  // a coach taps "Load" on a script — so the run-a-practice flow is
   // unchanged. Switching the default to Scripts makes the first-load view
   // match how coaches actually start a session (pick a script, then run it)
   // and avoids landing in an empty Practice screen when no script is set

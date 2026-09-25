@@ -1104,7 +1104,7 @@ export default function PracticeSection({ activeScript, orgColor, backgroundUrl,
             <div className="text-center">
               <p className="font-bold text-white text-sm">Quick Timer</p>
               <p className="text-xs" style={{ color: '#9a8080' }}>
-                Go to Scripts and tap Set Active to load a script.
+                Go to Scripts and tap Load to load a script.
               </p>
             </div>
           )}
