@@ -645,22 +645,48 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
     if (!removeId) return
     setRemoving(true); setRemoveErr('')
     try {
-      // Delete the profile row — removes org access.
-      // Their Supabase auth account remains (they can still sign in but
-      // will have no profile / org and be treated as a new user).
-      const { error } = await supabase
-        .from('profiles')
-        .delete()
-        .eq('id', removeId)
-      if (error) throw error
+      // Removal goes through /api/remove-coach, NOT a direct profiles delete.
+      //
+      // The direct delete left the coach's auth user and user_metadata intact
+      // — including org_id and their ORIGINAL invited role — which
+      // /api/accept-invite would happily rebuild a profile from, letting a
+      // removed coach reinstate themselves. The endpoint clears that metadata
+      // BEFORE deleting the profile, so there is nothing left to rebuild.
+      //
+      // Both paths cannot coexist: the direct delete still leaves the drift,
+      // so it is gone rather than kept as a fallback.
+      //
+      // The endpoint also enforces the same permissions as the RLS policy
+      // (AD: account-wide; head_coach: same-org non-AD) plus two refusals the
+      // policy does not express — self-removal and removing the last AD.
+      const { data: { session } } = await supabase.auth.getSession()
+      const accessToken = session?.access_token ?? null
+      if (!accessToken) {
+        throw new Error('Your session has expired — please sign in again.')
+      }
+
+      const res = await fetch('/api/remove-coach', {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body:    JSON.stringify({ profileId: removeId }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        // The endpoint returns specific copy for cannot_remove_self,
+        // not_permitted, last_ad, metadata_clear_failed and delete_failed —
+        // show it rather than a generic message.
+        throw new Error(data.error ?? `Couldn't remove (${res.status}).`)
+      }
+
       setRemoveId(null)
       await loadCoaches()
     } catch (err) {
       console.error('[Settings] removeCoach error:', err?.message ?? err)
-      // Surface inline so the user can retry or cancel; don't auto-
-      // close the dialog. Most likely cause is RLS rejection
-      // (head_coach trying to remove an AD) — the message helps the
-      // maintainer figure out which gate fired in support logs.
+      // Surface inline so the user can retry or cancel; don't auto-close the
+      // dialog.
       setRemoveErr(err?.message ?? "Couldn't remove — try again.")
     } finally {
       setRemoving(false)
