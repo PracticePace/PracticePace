@@ -1153,6 +1153,7 @@ export default function Dashboard() {
 
           {section === 'scoreboard' && (
             <ScoreboardSection
+                orgId={org?.id ?? activeOrgId}
                 orgColor={orgColor}
                 accountId={subscription?.id ?? null}
                 homeTeamName={subscription?.home_team_name ?? null}

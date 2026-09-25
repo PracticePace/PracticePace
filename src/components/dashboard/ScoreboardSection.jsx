@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '../../lib/supabase'
 import StadiumNoiseToggle from '../StadiumNoiseToggle'
 import { useOrg } from '../../context/OrgContext'
 import { canAdminister } from '../../lib/permissions'
+import { subscribe as sbSubscribe, getBoardState, patchBoard } from '../../lib/scoreboardStore'
 import { playWhistle, playAirHorn } from '../../lib/sounds'
 
 function pad(n) { return String(n).padStart(2, '0') }
@@ -187,27 +188,59 @@ function TeamLabel({ name, draft, editing, onStartEdit, onChange, onCommit, onCa
 }
 
 // ── Football scoreboard ───────────────────────────────────────────────────────
-function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, programName }) {
 
-  // ── Timer state ─────────────────────────────────────────────────────────────
-  const [gameSecs, setGameSecs]     = useState(15 * 60)
-  const [gameRun, setGameRun]       = useState(false)
-  const [playSecs, setPlaySecs]     = useState(40)
-  const [playRun, setPlayRun]       = useState(false)
-  const [playPreset, setPlayPreset] = useState(40)
+// ── Store binding ─────────────────────────────────────────────────────────────
+// Binds a scoreboard surface to the module-scope store in src/lib/scoreboardStore.js.
+// The store owns the state AND the clock tick, which is the whole point: the
+// Dashboard renders sections conditionally, so switching to the Practice tab
+// unmounts this subtree. Anything held in useState here dies with it — that is
+// why a two-minute drill came back as 0-0 and 10:00.
+//
+// Returns [state, patch]. `patch` merges and persists; the component re-renders
+// on any store change (including the tick, which is how a running clock keeps
+// counting while this component is mounted).
+function useBoard(orgId, surface, defaults) {
+  const [, force] = useState(0)
+  useEffect(() => sbSubscribe(() => force(n => n + 1)), [])
+  const state = getBoardState(orgId, surface, defaults)
+  const patch = useCallback(p => patchBoard(orgId, surface, p), [orgId, surface])
+  return [state, patch]
+}
 
-  // ── Game state ───────────────────────────────────────────────────────────────
-  const [quarter, setQuarter]   = useState(0)
-  const [down, setDown]         = useState(0)
-  const [distance, setDistance] = useState(10)
-  const [ballOn, setBallOn]         = useState(25)
+function FootballScoreboard({ orgId, orgColor, accountId, homeTeamName, awayTeamName, programName }) {
+
+  // ── Persisted board state ───────────────────────────────────────────────────
+  // Everything the coach can change during a game-scenario drill lives in the
+  // store, not in useState — this component is unmounted the moment they tab to
+  // Practice, which is exactly when a two-minute drill is running. The store
+  // also owns the clock tick, so both clocks keep counting while we are gone.
+  const [board, patch] = useBoard(orgId, 'football', {
+    gameSecs: 15 * 60, gameRun: false,
+    playSecs: 40,      playRun: false, playPreset: 40,
+    quarter: 0, down: 0, distance: 10, ballOn: 25,
+    homeScore: 0, awayScore: 0, homeTimeouts: 3, awayTimeouts: 3,
+  })
+  const { gameSecs, gameRun, playSecs, playRun, playPreset,
+          quarter, down, distance, ballOn,
+          homeScore, awayScore, homeTimeouts, awayTimeouts } = board
+
+  const setGameSecs     = v => patch({ gameSecs:     typeof v === 'function' ? v(gameSecs)     : v })
+  const setGameRun      = v => patch({ gameRun:      typeof v === 'function' ? v(gameRun)      : v })
+  const setPlaySecs     = v => patch({ playSecs:     typeof v === 'function' ? v(playSecs)     : v })
+  const setPlayRun      = v => patch({ playRun:      typeof v === 'function' ? v(playRun)      : v })
+  const setPlayPreset   = v => patch({ playPreset:   typeof v === 'function' ? v(playPreset)   : v })
+  const setQuarter      = v => patch({ quarter:      typeof v === 'function' ? v(quarter)      : v })
+  const setDown         = v => patch({ down:         typeof v === 'function' ? v(down)         : v })
+  const setDistance     = v => patch({ distance:     typeof v === 'function' ? v(distance)     : v })
+  const setBallOn       = v => patch({ ballOn:       typeof v === 'function' ? v(ballOn)       : v })
+  const setHomeScore    = v => patch({ homeScore:    typeof v === 'function' ? v(homeScore)    : v })
+  const setAwayScore    = v => patch({ awayScore:    typeof v === 'function' ? v(awayScore)    : v })
+  const setHomeTimeouts = v => patch({ homeTimeouts: typeof v === 'function' ? v(homeTimeouts) : v })
+  const setAwayTimeouts = v => patch({ awayTimeouts: typeof v === 'function' ? v(awayTimeouts) : v })
+
+  // Transient UI only — never persisted. Restoring a coach into a half-typed
+  // rename or an open editor is worse than not restoring it.
   const [editingBallOn, setEditingBallOn] = useState(false)
-
-  // ── Score panels ─────────────────────────────────────────────────────────────
-  const [homeScore, setHomeScore]       = useState(0)
-  const [awayScore, setAwayScore]       = useState(0)
-  const [homeTimeouts, setHomeTimeouts] = useState(3)
-  const [awayTimeouts, setAwayTimeouts] = useState(3)
 
   // ── Editable team names ──────────────────────────────────────────────────────
   const defaultHome = ((homeTeamName ?? programName ?? 'HOME')).toUpperCase()
@@ -230,17 +263,11 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
   }, [awayTeamName])
 
   // ── Timers ───────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!gameRun) return
-    const id = setInterval(() => setGameSecs(s => { if (s <= 0) { setGameRun(false); return 0 } return s - 1 }), 1000)
-    return () => clearInterval(id)
-  }, [gameRun])
+  // Deliberately NOT here any more. Both clocks are ticked by
+  // src/lib/scoreboardStore.js so they keep running while this component is
+  // unmounted (the coach tabbing to Practice mid-drill). A local setInterval
+  // would die with the component, which is the bug being fixed.
 
-  useEffect(() => {
-    if (!playRun) return
-    const id = setInterval(() => setPlaySecs(s => { if (s <= 0) { setPlayRun(false); return 0 } return s - 1 }), 1000)
-    return () => clearInterval(id)
-  }, [playRun])
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
   function resetPlay(p = playPreset) { setPlayRun(false); setPlaySecs(p); setPlayPreset(p) }
@@ -845,32 +872,34 @@ function FootballScoreboard({ orgColor, accountId, homeTeamName, awayTeamName, p
 const PERIODS_Q = ['Q1', 'Q2', 'Q3', 'Q4', 'OT']
 const PERIODS_H = ['H1', 'H2', 'OT']
 
-function BasketballScoreboard({ orgColor }) {
-  const [home, setHome] = useState({ name: 'HOME', score: 0, fouls: 0 })
-  const [away, setAway] = useState({ name: 'AWAY', score: 0, fouls: 0 })
-  const [period, setPeriod]         = useState(0)
-  const [periodType, setPeriodType] = useState('quarters')
-  const [possession, setPossession] = useState(null)
-  const [gameSecs, setGameSecs]     = useState(10 * 60)
-  const [gameRun, setGameRun]       = useState(false)
-  const [shotSecs, setShotSecs]     = useState(35)
-  const [shotRun, setShotRun]       = useState(false)
-  const [shotPreset, setShotPreset] = useState(35)
+function BasketballScoreboard({ orgId, orgColor }) {
+  // Store-backed for the same reason football is — see useBoard above. The
+  // store also owns both clock ticks.
+  const [board, patch] = useBoard(orgId, 'basketball', {
+    home: { name: 'HOME', score: 0, fouls: 0 },
+    away: { name: 'AWAY', score: 0, fouls: 0 },
+    period: 0, periodType: 'quarters', possession: null,
+    gameSecs: 10 * 60, gameRun: false,
+    shotSecs: 35, shotRun: false, shotPreset: 35,
+  })
+  const { home, away, period, periodType, possession,
+          gameSecs, gameRun, shotSecs, shotRun, shotPreset } = board
+
+  const setHome       = v => patch({ home:       typeof v === 'function' ? v(home)       : v })
+  const setAway       = v => patch({ away:       typeof v === 'function' ? v(away)       : v })
+  const setPeriod     = v => patch({ period:     typeof v === 'function' ? v(period)     : v })
+  const setPeriodType = v => patch({ periodType: typeof v === 'function' ? v(periodType) : v })
+  const setPossession = v => patch({ possession: typeof v === 'function' ? v(possession) : v })
+  const setGameSecs   = v => patch({ gameSecs:   typeof v === 'function' ? v(gameSecs)   : v })
+  const setGameRun    = v => patch({ gameRun:    typeof v === 'function' ? v(gameRun)    : v })
+  const setShotSecs   = v => patch({ shotSecs:   typeof v === 'function' ? v(shotSecs)   : v })
+  const setShotRun    = v => patch({ shotRun:    typeof v === 'function' ? v(shotRun)    : v })
+  const setShotPreset = v => patch({ shotPreset: typeof v === 'function' ? v(shotPreset) : v })
 
   const pLabels = periodType === 'halves' ? PERIODS_H : PERIODS_Q
   const pDur    = periodType === 'halves' ? 20 * 60   : 10 * 60
 
-  useEffect(() => {
-    if (!gameRun) return
-    const id = setInterval(() => setGameSecs(s => { if (s <= 0) { setGameRun(false); return 0 } return s - 1 }), 1000)
-    return () => clearInterval(id)
-  }, [gameRun])
 
-  useEffect(() => {
-    if (!shotRun) return
-    const id = setInterval(() => setShotSecs(s => { if (s <= 0) { setShotRun(false); return 0 } return s - 1 }), 1000)
-    return () => clearInterval(id)
-  }, [shotRun])
 
   function resetShot(p = shotPreset) { setShotRun(false); setShotSecs(p); setShotPreset(p) }
   function adj(setTeam, pts) { setTeam(t => ({ ...t, score: Math.max(0, t.score + pts) })) }
@@ -1126,7 +1155,7 @@ function BasketballScoreboard({ orgColor }) {
 //
 // No DB writes — purely client-side, so any role with access to the
 // Scoreboard tab can operate this surface.
-function CheerScoreboard({ orgColor, programName }) {
+function CheerScoreboard({ orgId, orgColor, programName }) {
   const DEFAULT_SECS = 150  // 2:30
 
   const [squadName, setSquadName] = useState(programName ?? '')
@@ -1134,31 +1163,20 @@ function CheerScoreboard({ orgColor, programName }) {
   // AD switches programs while the Scoreboard tab is mounted).
   useEffect(() => { setSquadName(programName ?? '') }, [programName])
 
-  const [secsLeft, setSecsLeft] = useState(DEFAULT_SECS)
-  const [running,  setRunning]  = useState(false)
-  const [presetSecs, setPresetSecs] = useState(DEFAULT_SECS)
+  // Store-backed, same as the other surfaces. The clock is ticked by
+  // src/lib/scoreboardStore.js so it survives this component unmounting.
+  const [board, patch] = useBoard(orgId, 'cheer', {
+    secsLeft: DEFAULT_SECS, running: false, presetSecs: DEFAULT_SECS, score: 0,
+  })
+  const { secsLeft, running, presetSecs, score } = board
+  const setSecsLeft   = v => patch({ secsLeft:   typeof v === 'function' ? v(secsLeft)   : v })
+  const setRunning    = v => patch({ running:    typeof v === 'function' ? v(running)    : v })
+  const setPresetSecs = v => patch({ presetSecs: typeof v === 'function' ? v(presetSecs) : v })
+  const setScore      = v => patch({ score:      typeof v === 'function' ? v(score)      : v })
+
+  // Transient only — never persisted.
   const [editingClock, setEditingClock] = useState(false)
   const [clockDraft,   setClockDraft]   = useState('')
-  const [score, setScore] = useState(0)
-  const intervalRef = useRef(null)
-
-  // tick loop — same setInterval pattern as the football scoreboard
-  useEffect(() => {
-    if (!running) return
-    intervalRef.current = setInterval(() => {
-      setSecsLeft(prev => {
-        if (prev <= 1) {
-          // Reached 00:00 — stop the timer and hold at zero.
-          setRunning(false)
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-    }
-  }, [running])
 
   function commitClockEdit() {
     const parsed = parseTimeInput(clockDraft)
@@ -1601,24 +1619,22 @@ function TabataScoreboard({ orgColor, programName }) {
 // No DB writes — all state is local React. Operate-only roles
 // (team_manager) can run this entirely client-side; the sport-config
 // gates ad+head_coach (set in Program Settings, not here).
-function GenericScoreboard({ orgColor, homeTeamName, awayTeamName, programName, sportDisplayLabel }) {
-  const [home, setHome] = useState({ name: homeTeamName || 'HOME', score: 0 })
-  const [away, setAway] = useState({ name: awayTeamName || 'AWAY', score: 0 })
-  const [period, setPeriod] = useState(1)
+function GenericScoreboard({ orgId, orgColor, homeTeamName, awayTeamName, programName, sportDisplayLabel }) {
+  const [board, patch] = useBoard(orgId, 'generic', {
+    home: { name: homeTeamName || 'HOME', score: 0 },
+    away: { name: awayTeamName || 'AWAY', score: 0 },
+    period: 1, gameSecs: 12 * 60, gameRun: false,
+  })
+  const { home, away, period, gameSecs, gameRun } = board
+  const setHome     = v => patch({ home:     typeof v === 'function' ? v(home)     : v })
+  const setAway     = v => patch({ away:     typeof v === 'function' ? v(away)     : v })
+  const setPeriod   = v => patch({ period:   typeof v === 'function' ? v(period)   : v })
+  const setGameSecs = v => patch({ gameSecs: typeof v === 'function' ? v(gameSecs) : v })
+  const setGameRun  = v => patch({ gameRun:  typeof v === 'function' ? v(gameRun)  : v })
   // Default to 12:00 — middling between basketball halves (20:00),
   // soccer halves (45:00), and volleyball sets (no clock). Coaches can
   // tap to retype anything.
-  const [gameSecs, setGameSecs] = useState(12 * 60)
-  const [gameRun,  setGameRun]  = useState(false)
 
-  useEffect(() => {
-    if (!gameRun) return
-    const id = setInterval(
-      () => setGameSecs(s => { if (s <= 0) { setGameRun(false); return 0 } return s - 1 }),
-      1000,
-    )
-    return () => clearInterval(id)
-  }, [gameRun])
 
   function adj(setTeam, pts) {
     setTeam(t => ({ ...t, score: Math.max(0, t.score + pts) }))
@@ -1757,7 +1773,7 @@ function sportToScoreboard(orgSport) {
 }
 
 export default function ScoreboardSection({
-  orgColor, accountId, homeTeamName, awayTeamName, programName,
+  orgId, orgColor, accountId, homeTeamName, awayTeamName, programName,
   sport: orgSport, sportCustomLabel,
 }) {
   const surface = sportToScoreboard(orgSport)
@@ -1782,6 +1798,7 @@ export default function ScoreboardSection({
   if (surface === 'football') {
     surfaceEl = (
       <FootballScoreboard
+        orgId={orgId}
         orgColor={orgColor}
         accountId={accountId}
         homeTeamName={homeTeamName}
@@ -1790,14 +1807,15 @@ export default function ScoreboardSection({
       />
     )
   } else if (surface === 'basketball') {
-    surfaceEl = <BasketballScoreboard orgColor={orgColor} />
+    surfaceEl = <BasketballScoreboard orgId={orgId} orgColor={orgColor} />
   } else if (surface === 'cheer') {
-    surfaceEl = <CheerScoreboard orgColor={orgColor} programName={programName} />
+    surfaceEl = <CheerScoreboard orgId={orgId} orgColor={orgColor} programName={programName} />
   } else if (surface === 'tabata') {
     surfaceEl = <TabataScoreboard orgColor={orgColor} programName={programName} />
   } else {
     surfaceEl = (
       <GenericScoreboard
+        orgId={orgId}
         orgColor={orgColor}
         homeTeamName={homeTeamName}
         awayTeamName={awayTeamName}
