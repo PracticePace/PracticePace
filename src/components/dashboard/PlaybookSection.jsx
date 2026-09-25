@@ -35,6 +35,7 @@ const TrophyIcon    = () => <Ico><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d
 const UsersIcon     = () => <Ico><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></Ico>
 const PencilIcon    = () => <Ico><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></Ico>
 const ScriptIcon    = () => <Ico><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></Ico>
+const VideoIcon     = () => <Ico><path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/></Ico>
 const BulbIcon      = () => <Ico><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></Ico>
 
 const SECTIONS = [
@@ -47,6 +48,7 @@ const SECTIONS = [
       'Sign in and set up your program in Settings before your first practice.',
       'Build your first practice script in the Scripts tab.',
       'Upload your team background and program logo in Settings.',
+      'Coaching more than one program? Tap the program name at the top of the screen to switch. If a practice is running it asks first, because switching ends it.',
     ],
   },
   {
@@ -95,6 +97,9 @@ const SECTIONS = [
       'Tap the Scoreboard tab — it opens the right scoreboard for your program automatically, based on the sport set in Settings. There is no sport to pick here.',
       'Football — game clock, quarter, down & distance, ball on, play clock, and timeouts.',
       'Basketball — game clock, shot clock, period, team fouls with bonus, and possession. (No timeout tracking on this one.)',
+      'Cheer — a countdown clock for routines, starting at 2:30, plus a score.',
+      'Weight Training — a work and rest timer. Set your work time, rest time and rounds, then tap Start. A whistle marks each switch and an air horn ends it.',
+      'Your score and clocks stay put when you switch tabs, and the clocks keep running while you\'re away. Reloading the page keeps everything but pauses the clocks.',
       'Tap the game clock to set any time manually.',
       'Shot clock hot buttons: 35s (college), 24s (NBA/varsity), 14s (inbound).',
     ],
@@ -106,10 +111,10 @@ const SECTIONS = [
     items: [
       'Invite coaches in Settings → Coaches & Staff → Send Invite.',
       'Coaches receive an email invite and set their own password, then land directly in your account’s dashboard.',
-      'Athletic Director — full access including subscription and billing. The Athletic Director is the person who created the account. (On a single-program account, this role displays as "Head Coach".)',
+      'Athletic Director — full access, including billing. Usually whoever set up the account, but a head coach who adds a program can become one too. (On a single-program account this shows as "Head Coach".)',
       'Head Coach — can manage coaches, edit the program logo, and use all practice tools. Cannot access billing.',
       'Assistant Coach — can run practice, edit scripts and drills, and use all practice tools. Cannot manage coaches or edit program settings.',
-      'Team Manager — view-only. Can run a practice, view scripts and drills, and watch the whiteboard, but cannot create or edit anything and cannot run the scoreboard.',
+      'Team Manager — can run practice and the scoreboard, and look at scripts, drills and the whiteboard. Can\'t create or change anything.',
     ],
   },
   {
@@ -118,11 +123,21 @@ const SECTIONS = [
     Icon: PencilIcon,
     items: [
       'Tap the Whiteboard tab to draw plays with your finger or Apple Pencil. Whatever you draw shows on the AirPlay-mirrored jumbotron in real time.',
-      'Choose a background to draw on: Blank (white), Football field, Basketball court, Soccer pitch, and more — pick whichever surface fits the play.',
+      'Pick a background that matches your sport, or draw on a blank white board.',
       'Color picker, thickness options, and eraser tool let you sketch in detail.',
       'Use Undo and Redo to step back and forward through your strokes.',
       'Tap Clear to wipe the whole board and start fresh.',
       'Drawings persist until you manually clear them — switch tabs, close the app, come back later, your board is still there.',
+    ],
+  },
+  {
+    id: 'video',
+    title: 'Video',
+    Icon: VideoIcon,
+    items: [
+      'Tap the Video tab to keep game film and clips in one place.',
+      'Paste a link from YouTube, Vimeo or Hudl, give it a name, and tap + Add Video.',
+      'Tap Play to watch it right here. YouTube and Vimeo play in the app; anything else opens in a new tab.',
     ],
   },
   {
