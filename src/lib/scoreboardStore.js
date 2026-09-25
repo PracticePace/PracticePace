@@ -107,7 +107,18 @@ function advanceBoard(surface, state, elapsedSecs) {
   let changed = false
   for (const [secsField, runField] of clocksFor(surface)) {
     if (!state[runField]) continue
-    const cur = Number(state[secsField]) || 0
+
+    // A clock whose seconds field is missing or non-numeric is NOT an expired
+    // clock — we simply have nothing to count down, so leave it alone.
+    //
+    // This previously read `Number(undefined) || 0`, i.e. 0, and the very next
+    // branch treated 0 as "time is up" and cleared the run flag. Tapping Start
+    // stored only { gameRun: true } (patchBoard merged a delta onto an empty
+    // board, so gameSecs was absent), and the first tick one second later
+    // switched it straight back off. The clock could never start.
+    const cur = Number(state[secsField])
+    if (!Number.isFinite(cur)) continue
+
     const next = Math.max(0, cur - elapsedSecs)
     if (next !== cur) { state[secsField] = next; changed = true }
     if (next === 0 && state[runField]) { state[runField] = false; changed = true }
@@ -207,11 +218,15 @@ export function getBoardState(orgId, surface, defaults) {
   return { ...defaults, ...entry.state }
 }
 
-export function patchBoard(orgId, surface, patch) {
+// `defaults` seeds any field the board has never held, so the stored state is
+// always COMPLETE. Storing bare deltas was the root cause of the clock bug: the
+// first patch from the Start button wrote { gameRun: true } with no gameSecs
+// alongside it, and the tick has to be able to read both halves of a clock.
+export function patchBoard(orgId, surface, patch, defaults = {}) {
   if (!orgId || !surface) return
   boards[orgId] = boards[orgId] ?? {}
   const prev = boards[orgId][surface]?.state ?? {}
-  const next = { ...prev, ...patch }
+  const next = { ...defaults, ...prev, ...patch }
   for (const k of TRANSIENT) delete next[k]
   boards[orgId][surface] = { state: next, savedAt: Date.now() }
 

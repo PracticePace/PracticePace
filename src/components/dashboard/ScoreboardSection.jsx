@@ -203,7 +203,9 @@ function useBoard(orgId, surface, defaults) {
   const [, force] = useState(0)
   useEffect(() => sbSubscribe(() => force(n => n + 1)), [])
   const state = getBoardState(orgId, surface, defaults)
-  const patch = useCallback(p => patchBoard(orgId, surface, p), [orgId, surface])
+  // Pass defaults through so the store always persists a COMPLETE board. A
+  // bare delta leaves the tick unable to see the other half of a clock.
+  const patch = useCallback(p => patchBoard(orgId, surface, p, defaults), [orgId, surface, defaults])
   return [state, patch]
 }
 
