@@ -7,6 +7,7 @@
 
 import { playAirHorn, playBell, playPeriodEnd, loadHorn, loadBell, getAutoSounds, setAutoSound } from './sounds'
 import { duckForHorn, pause as audioPause } from './audioPlayer'
+import { clampDrills } from './drillDuration'
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = 'pp_practice_timer'
@@ -422,6 +423,23 @@ export function subtractMinute() {
  * disturbed.
  */
 export function setActiveScript(script) {
+  // Floor every drill on the way in. The Scripts editor clamps too, but that
+  // only helps if a coach opened the script — and the bug being fixed is that
+  // a script loaded STRAIGHT to practice carried 0-second and negative drills
+  // that the timer skipped past instantly. This is the choke point every load
+  // path goes through (the Load button, restore-on-mount, guest samples), so
+  // clamping here means no run can carry a sub-minimum drill.
+  //
+  // In memory only — nothing is written back. A coach who never edits the
+  // script never has it rewritten.
+  if (script?.drills) {
+    const { drills: safeDrills, changed } = clampDrills(script.drills)
+    if (changed > 0) {
+      console.warn(`[practiceTimer] clamped ${changed} out-of-range drill duration(s) on load:`, script?.name ?? '(unnamed)')
+      script = { ...script, drills: safeDrills }
+    }
+  }
+
   const newId = script?.id ?? null
   const curId = s.activeScript?.id ?? null
   if (newId === curId) {

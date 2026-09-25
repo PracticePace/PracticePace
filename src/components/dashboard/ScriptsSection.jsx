@@ -10,6 +10,7 @@ import {
 import { useOrg } from '../../context/OrgContext'
 import { canEdit } from '../../lib/permissions'
 import { SPORTS as LAUNCH_SPORTS, sportLabel } from '../../lib/sports'
+import { validateDuration, clampDrills, DUR_MAX_MINUTES, DUR_MIN_TOTAL } from '../../lib/drillDuration'
 import WhiteboardImageFrameDialog   from './WhiteboardImageFrameDialog'
 import WhiteboardImageNameDialog    from './WhiteboardImageNameDialog'
 import WhiteboardImageLibraryDialog from './WhiteboardImageLibraryDialog'
@@ -20,57 +21,6 @@ import AutocompleteInput            from '../AutocompleteInput'
 function pad(n) { return String(n).padStart(2, '0') }
 function fmt(s) { const sec = Number(s) || 0; return `${pad(Math.floor(sec / 60))}:${pad(sec % 60)}` }
 function totalSec(drills) { return (drills ?? []).reduce((s, d) => s + (Number(d.duration) || 0), 0) }
-
-// ── Drill duration limits ────────────────────────────────────────────────────
-// The duration fields used to accept anything: -4:-30 saved fine, 0:00 saved
-// fine, and 99999 minutes rendered a script total of "100000:30". Zero and
-// negative drills are worse than cosmetic — the practice timer skips straight
-// past them, so a coach building a script gets a drill that silently never
-// runs.
-const DUR_MAX_MINUTES = 60
-const DUR_MAX_SECONDS = 59
-const DUR_MIN_TOTAL   = 5                                              // seconds
-const DUR_MAX_TOTAL   = DUR_MAX_MINUTES * 60 + DUR_MAX_SECONDS         // 3659s
-
-// Shared by the add form and the edit form so they can't drift apart.
-// Returns { ok, seconds, message } — message is null when ok.
-function validateDuration(mins, secs) {
-  const m = mins === '' || mins === null || mins === undefined ? 0 : Number(mins)
-  const c = secs === '' || secs === null || secs === undefined ? 0 : Number(secs)
-
-  if (!Number.isFinite(m) || !Number.isFinite(c) || !Number.isInteger(m) || !Number.isInteger(c)) {
-    return { ok: false, seconds: 0, message: 'Enter whole numbers for minutes and seconds.' }
-  }
-  if (m < 0 || c < 0) {
-    return { ok: false, seconds: 0, message: "Duration can't be negative." }
-  }
-  if (m > DUR_MAX_MINUTES) {
-    return { ok: false, seconds: 0, message: `Minutes can't be more than ${DUR_MAX_MINUTES}.` }
-  }
-  if (c > DUR_MAX_SECONDS) {
-    return { ok: false, seconds: 0, message: `Seconds can't be more than ${DUR_MAX_SECONDS}.` }
-  }
-  const seconds = m * 60 + c
-  if (seconds < DUR_MIN_TOTAL) {
-    return { ok: false, seconds, message: `Drills must be at least ${DUR_MIN_TOTAL} seconds.` }
-  }
-  return { ok: true, seconds, message: null }
-}
-
-// Existing scripts may already hold out-of-range durations saved before the
-// validation above existed. Clamp them on load rather than refusing to open
-// the script — a coach locked out of their own practice plan is a worse
-// outcome than a silently corrected drill.
-function clampDrillDurations(drills) {
-  return (drills ?? []).map(d => {
-    const raw = Number(d?.duration)
-    const safe = !Number.isFinite(raw)
-      ? DUR_MIN_TOTAL
-      : Math.min(DUR_MAX_TOTAL, Math.max(DUR_MIN_TOTAL, Math.round(raw)))
-    return safe === raw ? d : { ...d, duration: safe }
-  })
-}
-
 
 // Sport list for the script's per-drill-set sport. Aliases the central
 // SPORTS in src/lib/sports.js so the script sport picker stays in lock-
@@ -1451,7 +1401,14 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
 }) {
   const [name,       setName]       = useState(script.name  ?? '')
   const [sport,      setSport]      = useState(script.sport ?? 'football')
-  const [drills,     setDrills]     = useState(() => clampDrillDurations(script.drills))
+  // Clamp on open so a coach can still get into a script saved before the
+  // duration rules existed, rather than being locked out of their own practice
+  // plan. `clampedCount` drives the dismissible notice below — silently
+  // rewriting durations the coach never set, and then persisting that on their
+  // next unrelated edit, is not something to do without telling them.
+  const initialClamp = useMemo(() => clampDrills(script.drills), [script.drills])
+  const [drills,     setDrills]     = useState(initialClamp.drills)
+  const [clampNotice, setClampNotice] = useState(initialClamp.changed)
   // Commit C: script-level music playlist. null = "None" (fall through to
   // the full library at practice time — Commit D wires the auto-start).
   const [playlistId, setPlaylistId] = useState(script.playlist_id ?? null)
@@ -2081,6 +2038,33 @@ function ScriptEditor({ script, orgId, userId, orgColor, isGuest, isActive,
               ? 'You haven’t created any playlists yet. Create playlists in the Music tab.'
               : 'Plays during this practice, or leave as “None” to play from the full music library.'}
           </span>
+        </div>
+      )}
+
+      {/* Clamped-on-open notice. Inline and dismissible — not a modal, since
+          nothing is blocked and the coach may not care. Says what changed and
+          why, because the alternative is durations quietly differing from what
+          they saved, then being written to the database on their next
+          unrelated edit without them ever agreeing to it. */}
+      {clampNotice > 0 && (
+        <div
+          className="flex items-start gap-3 rounded-xl px-4 py-3"
+          style={{ backgroundColor: '#1a0d00', border: '1px solid #4a3000' }}
+        >
+          <span className="text-sm leading-relaxed flex-1" style={{ color: '#e8c088' }}>
+            {clampNotice === 1
+              ? `1 drill duration was adjusted to the ${DUR_MIN_TOTAL}-second minimum.`
+              : `${clampNotice} drill durations were adjusted to the ${DUR_MIN_TOTAL}-second minimum.`}
+            {' '}This is saved the next time you edit the script.
+          </span>
+          <button
+            onClick={() => setClampNotice(0)}
+            className="shrink-0 rounded-lg px-2 text-lg leading-none"
+            style={{ color: '#9a8080', minHeight: 44, minWidth: 44 }}
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
         </div>
       )}
 
