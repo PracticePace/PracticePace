@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { OrgProvider } from './context/OrgContext'
 import ProtectedRoute from './components/ProtectedRoute'
+import LandscapeOnly  from './components/LandscapeOnly'
 import ScrollToTop from './components/ScrollToTop'
 // Marketing site pages — foundation commit stubs; real content lands
 // in Commits 2-5 (Home, Sports, About, Contact respectively). The
@@ -71,12 +72,12 @@ export default function App() {
             <Route path="/contact"    element={<ContactPage />} />
             <Route path="/login"      element={<Login />} />
             <Route path="/pricing"    element={<Pricing />} />
-            <Route path="/onboarding" element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
-            <Route path="/dashboard"  element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-            <Route path="/display"    element={<ProtectedRoute><Display /></ProtectedRoute>} />
-            <Route path="/script"     element={<ProtectedRoute><Script /></ProtectedRoute>} />
-            <Route path="/scoreboard" element={<ProtectedRoute><Scoreboard /></ProtectedRoute>} />
-            <Route path="/admin"      element={<ProtectedRoute><Admin /></ProtectedRoute>} />
+            <Route path="/onboarding" element={<ProtectedRoute><LandscapeOnly><Onboarding /></LandscapeOnly></ProtectedRoute>} />
+            <Route path="/dashboard"  element={<ProtectedRoute><LandscapeOnly><Dashboard /></LandscapeOnly></ProtectedRoute>} />
+            <Route path="/display"    element={<ProtectedRoute><LandscapeOnly><Display /></LandscapeOnly></ProtectedRoute>} />
+            <Route path="/script"     element={<ProtectedRoute><LandscapeOnly><Script /></LandscapeOnly></ProtectedRoute>} />
+            <Route path="/scoreboard" element={<ProtectedRoute><LandscapeOnly><Scoreboard /></LandscapeOnly></ProtectedRoute>} />
+            <Route path="/admin"      element={<ProtectedRoute><LandscapeOnly><Admin /></LandscapeOnly></ProtectedRoute>} />
             <Route path="/invite"         element={<AcceptInvite />} />
             <Route path="/reset-password" element={<ResetPassword />} />
           </Routes>
