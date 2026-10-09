@@ -202,7 +202,19 @@ export default async function handler(req) {
     return json({ error: 'Server misconfigured — contact support.' }, 500)
   }
 
-  // ── Parse body — `plan` is the ONLY field honoured ─────────────────────────
+  // ── 1. Who is calling? ─────────────────────────────────────────────────────
+  // FIRST, ahead of reading the body and ahead of the price lookup.
+  //
+  // The price lookup used to run before this, which meant an anonymous caller
+  // hit the STRIPE_PRICE_* check first and got a 500 "This plan is not
+  // available right now" when the real answer was 401. Two things wrong with
+  // that: it answered a config question for someone with no standing to ask
+  // one, and it made a missing env var indistinguishable from a broken session
+  // in the logs. Caller-fault is settled before server-state, always.
+  const authCheck = await verifyCallerJwt(req, supabaseUrl, serviceKey)
+  if (!authCheck.ok) return json({ error: authCheck.error }, authCheck.status)
+
+  // ── 2. Parse body — `plan` is the ONLY field honoured ──────────────────────
   let body
   try { body = await req.json() } catch (e) {
     console.error('[stripe-checkout] Failed to parse request body:', e.message)
@@ -220,11 +232,7 @@ export default async function handler(req) {
   if (!priceLookup.ok) return json({ error: priceLookup.error }, priceLookup.status)
   const priceId = priceLookup.priceId
 
-  // ── 1. Who is calling? ──────────────────────────────────────────────────────
-  const authCheck = await verifyCallerJwt(req, supabaseUrl, serviceKey)
-  if (!authCheck.ok) return json({ error: authCheck.error }, authCheck.status)
-
-  // ── 2. Which account do they own? ──────────────────────────────────────────
+  // ── 3. Which account do they own? ──────────────────────────────────────────
   const profCheck = await loadCallerProfile(supabaseUrl, serviceKey, authCheck.userId)
   if (!profCheck.ok) return json({ error: profCheck.error }, profCheck.status)
 
@@ -235,7 +243,7 @@ export default async function handler(req) {
     return json({ error: 'No email on file for this account.' }, 403)
   }
 
-  // ── 3. Trial eligibility is ours to decide, not the caller's ───────────────
+  // ── 4. Trial eligibility is ours to decide, not the caller's ───────────────
   const acctCheck = await loadAccount(supabaseUrl, serviceKey, accountId)
   if (!acctCheck.ok) return json({ error: acctCheck.error }, acctCheck.status)
 
