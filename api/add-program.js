@@ -369,7 +369,9 @@ export default async function handler(req) {
       status:    ent.account.status,
       planTier:  ent.account.plan_tier,
       orgCount,
-      cap:       cap === null ? 'unknown-pass' : (cap === Infinity ? 'unlimited' : cap),
+      // null now covers comped, live trial, hand-granted and unrecognised
+      // price — every one of which means "do not gate".
+      cap:       (cap === null || cap === Infinity) ? 'unlimited' : cap,
     }))
   }
 

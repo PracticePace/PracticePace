@@ -138,6 +138,26 @@ export async function loadEntitlement(supabaseUrl, serviceKey, accountId) {
   return { ok: true, account }
 }
 
+// Is this trial running right now?
+//
+// ONE definition, shared by isEntitled() and programCapFor() so the gate and
+// the cap can never disagree about whether a trial is live — a split would
+// mean "you may use the product" and "you get one program" landing on
+// different sides of the same midnight.
+//
+// A null trial_ends_at counts as ACTIVE: a trialing row with no end date is a
+// trial nobody has bounded, not one that already lapsed. Same for a value
+// that won't parse — the column is timestamptz so that shouldn't happen, but
+// if it ever does, locking a brand-new signup out on day one is a far worse
+// failure than letting one malformed row run long.
+export function isTrialActive(account) {
+  if (account?.status !== 'trialing') return false
+  if (!account?.trial_ends_at) return true
+  const endsAt = new Date(account.trial_ends_at)
+  if (Number.isNaN(endsAt.getTime())) return true
+  return endsAt > new Date()
+}
+
 // Is this account allowed to use the product right now?
 //
 // Returns { entitled, status, reason }. `status` is the raw accounts.status so
@@ -152,11 +172,8 @@ export function isEntitled(account) {
 
   // A trial that has run out is not a subscription. Mirrors the trialExpired
   // rule in Dashboard.jsx so the server and the UI agree on the same moment.
-  if (status === 'trialing') {
-    const endsAt = account?.trial_ends_at ? new Date(account.trial_ends_at) : null
-    if (endsAt && endsAt < new Date()) {
-      return { entitled: false, status, reason: 'trial-expired' }
-    }
+  if (status === 'trialing' && !isTrialActive(account)) {
+    return { entitled: false, status, reason: 'trial-expired' }
   }
 
   return { entitled: true, status, reason: `ok-${status}` }
@@ -179,35 +196,68 @@ export function entitlementMessage(reason, status) {
 
 // ── Program cap ──────────────────────────────────────────────────────────────
 
-// Programs allowed for an account, or null when we genuinely cannot tell.
+// Programs allowed for an account: a number, or null for "unlimited / do not
+// gate". Only consulted after isEntitled() has already said yes.
 //
-// FAIL-OPEN, NARROWLY. Two cases return null and the caller lets the action
-// through:
+// ── THE TRUTH TABLE ─────────────────────────────────────────────────────────
+//
+//   status         trial      plan_tier     entitled  cap        why
+//   ------------   --------   -----------   --------  ---------  ----------------
+//   trialing       live       (any/none)    yes       unlimited  full access
+//   trialing       expired    none          NO        1          gate refuses
+//   active         –          individual    yes       1          paid tier
+//   active         –          school        yes       unlimited  paid tier
+//   active         –          none, Stripe  yes       unlimited  config gap: open
+//   active         –          none, no sub  yes       unlimited  hand-granted
+//   complimentary  –          –             yes       unlimited  comped
+//   past_due       –          any           NO        –          gate refuses
+//   canceled       –          any           NO        –          gate refuses
+//
+// ── TRIALS GET EVERYTHING (2026-10-09) ──────────────────────────────────────
+// An unexpired trial is unlimited regardless of what the coach clicked during
+// onboarding. That click is a pre-sales preference, not a purchase — nothing
+// is charged and nothing is committed — so letting it cap the trial meant an
+// AD evaluating Practice:Pace for a whole athletic department hit "upgrade to
+// add more" before they had been given a reason to. Entitlement starts
+// following plan_tier the moment the trial ends, which is the moment there is
+// actually a plan to follow.
+//
+// This reverses the previous note here, which capped trials at Individual to
+// avoid a "downgrade surprise on day 15". The surprise is real but it is the
+// cheaper problem: a trialing school that built three programs has shown us
+// exactly which plan it needs, and that is a far better sales conversation
+// than a wall on day two. Enforcement at conversion is unchanged — the cap
+// below applies in full the moment status leaves 'trialing'.
+//
+// ── FAIL-OPEN, NARROWLY ─────────────────────────────────────────────────────
+// Two cases return null because we genuinely cannot tell, and refusing would
+// punish the customer for our own gap:
 //
 //   1. A comped / hand-granted account: active with no Stripe subscription at
 //      all. These exist by decision and were never sold a tier.
 //   2. An account WITH a Stripe subscription whose price we don't recognise —
-//      i.e. STRIPE_PRICE_* is misconfigured, or someone was sold a price that
-//      isn't in the environment. Refusing here would block a customer who
-//      actually paid because of our own config error. It logs at error level
-//      so it surfaces instead of sitting silent.
-//
-// A trialing account is capped like Individual rather than being exempt. The
-// old cap exempted trials outright on the theory that a trial user adding a
-// second program is what sells the School plan; with only two plans and one
-// of them defined as "one program", letting the trial exceed what it converts
-// into just sets up a downgrade surprise on day 15.
+//      STRIPE_PRICE_* misconfigured, or someone sold a price that isn't in
+//      this environment. Logged at error level so it surfaces.
 export function programCapFor(account) {
+  // Comped accounts are never gated.
   if (account?.status === 'complimentary') return null
 
-  const tier = account?.plan_tier ?? planTierForPriceId(account?.price_id)
+  // A live trial outranks everything below, including a plan_tier already
+  // written by the webhook for a Stripe-side trial. Must stay above the tier
+  // lookup or a trialing 'individual' row would be capped at one program.
+  if (isTrialActive(account)) return null
 
+  // Expired trial with nothing paid behind it. isEntitled() already refuses
+  // these, so this is belt-and-braces: without it an expired trial would fall
+  // through to the hand-granted branch below and be handed unlimited.
+  if (account?.status === 'trialing') return PROGRAM_CAPS.individual
+
+  // Paid: the tier decides.
+  const tier = account?.plan_tier ?? planTierForPriceId(account?.price_id)
   if (tier && PROGRAM_CAPS[tier] !== undefined) return PROGRAM_CAPS[tier]
 
-  // No recognisable tier. Which of the two fail-open cases is it?
+  // No recognisable tier — which of the two fail-open cases is it?
   if (!account?.price_id && !account?.stripe_subscription_id) {
-    // Trials have no Stripe subscription yet either, so separate them out.
-    if (account?.status === 'trialing') return PROGRAM_CAPS.individual
     console.log('[entitlements] no Stripe subscription on account — treating program cap as unlimited (manual grant)')
     return null
   }
