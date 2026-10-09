@@ -78,6 +78,13 @@
 // REQUIRED ENV VARS:
 //   VITE_SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY
+//   STRIPE_PRICE_INDIVIDUAL / STRIPE_PRICE_SCHOOL — only as a FALLBACK for the
+//     program cap, used when accounts.plan_tier is not yet populated. The cap
+//     reads plan_tier first; see api/_entitlements.js.
+
+import {
+  loadEntitlement, isEntitled, entitlementMessage, programCapFor,
+} from './_entitlements.js'
 
 export const config = { runtime: 'edge' }
 
@@ -157,102 +164,30 @@ async function loadCallerProfile(supabaseUrl, serviceKey, userId) {
   return { ok: true, profile }
 }
 
-// ── Program cap (WARN-ONLY, 2026-09-24) ──────────────────────────────────────
-// Entitlement is read from accounts.price_id, which api/stripe-webhook.js
-// writes from the live Stripe subscription. It is deliberately NOT read from
-// plan_type/account_type: those are derived from the org count by this very
-// endpoint (circular — they are written BY the action we want to gate), and
-// their initial value comes from a caller-supplied `planType` in the
-// unauthenticated /api/create-account.
+// ── Program cap ──────────────────────────────────────────────────────────────
+// Entitlement now lives in api/_entitlements.js and is ENFORCED, not logged.
 //
-// NOTHING IS BLOCKED YET. This logs the decision it *would* make so the real
-// numbers can be watched in the Vercel logs before enforcement is switched on.
-// To enforce: honour the `wouldBlock` result at the call site below.
-const SINGLE_PROGRAM_CAP = 1
-
-function entitledCapForPrice(priceId) {
-  if (!priceId) return null   // unknown — caller decides (we fail open)
-  const school = [
-    process.env.VITE_STRIPE_PRICE_SCHOOL_MONTHLY,
-    process.env.VITE_STRIPE_PRICE_SCHOOL_ANNUAL,
-  ].filter(Boolean)
-  const single = [
-    process.env.VITE_STRIPE_PRICE_SINGLE_MONTHLY,
-    process.env.VITE_STRIPE_PRICE_SINGLE_ANNUAL,
-  ].filter(Boolean)
-  if (school.includes(priceId)) return Infinity
-  if (single.includes(priceId)) return SINGLE_PROGRAM_CAP
-  return null                 // a price we don't recognise — fail open, log it
-}
-
-async function loadAccountForCap(supabaseUrl, serviceKey, accountId) {
-  const url = `${supabaseUrl}/rest/v1/accounts?id=eq.${encodeURIComponent(accountId)}&select=id,status,price_id,stripe_subscription_id&limit=1`
-  const res = await fetch(url, { headers: sbHeaders(serviceKey) })
-  if (!res.ok) throw new Error(`account lookup HTTP ${res.status}`)
-  const rows = await res.json()
-  return Array.isArray(rows) ? rows[0] ?? null : null
-}
-
-// Returns { wouldBlock, reason, currentCount, entitledCap } — never throws.
-// Every uncertain path fails OPEN (wouldBlock false) and says why.
+// WHAT WAS HERE BEFORE (2026-09-24 → 2026-10-09)
+// A ~90-line evaluateProgramCap() that read accounts.price_id, compared it
+// against four VITE_STRIPE_PRICE_* values, computed a `wouldBlock` boolean,
+// logged it with `enforcing: false`, and then let the program be created
+// anyway. The enforcement branch was commented out, and it sat BELOW the org
+// insert — so even uncommented it would have refused a program that already
+// existed. Both problems are fixed by deleting it: the check is now a shared
+// helper, it returns a decision the handler acts on, and it runs in step 4b,
+// before anything is written.
 //
-// FAIL-OPEN SAFETY DEPENDS ON THE BILLING GUARD. status, price_id and
-// stripe_subscription_id all sit inside accounts_billing_columns_guard
-// (migrations 20260924000000 + 20260924010000), so an end-user JWT cannot
-// write any of them. That is what makes "status='active' with no Stripe
-// subscription" mean "granted by hand via the service role" rather than
-// "self-granted". If that trigger is ever dropped, this fail-open path
-// becomes a self-serve bypass — set status='active', get unlimited programs.
-// Do not remove the guard without revisiting this function.
-async function evaluateProgramCap(supabaseUrl, serviceKey, accountId) {
-  let account
-  try {
-    account = await loadAccountForCap(supabaseUrl, serviceKey, accountId)
-  } catch (err) {
-    return { wouldBlock: false, reason: `account-lookup-failed: ${err?.message ?? err}` }
-  }
-  if (!account) return { wouldBlock: false, reason: 'account-row-missing' }
-
-  // Comped and trialing accounts are exempt by policy. A trial user adding a
-  // second program is the thing that sells the School plan.
-  if (account.status === 'complimentary') return { wouldBlock: false, reason: 'exempt-complimentary' }
-  if (account.status === 'trialing')      return { wouldBlock: false, reason: 'exempt-trialing' }
-  if (account.status !== 'active' && account.status !== 'past_due') {
-    return { wouldBlock: false, reason: `exempt-status-${account.status}` }
-  }
-
-  // Hand-granted / partner account: active but never went through Stripe.
-  if (!account.price_id && !account.stripe_subscription_id) {
-    return { wouldBlock: false, reason: 'exempt-manual-grant-no-stripe' }
-  }
-
-  let entitledCap = entitledCapForPrice(account.price_id)
-  if (entitledCap === null) {
-    // price_id not yet backfilled, or a price we don't recognise. The live
-    // Stripe lookup is the fallback; if it can't answer either, fail open.
-    return {
-      wouldBlock: false,
-      reason: account.price_id ? `unrecognised-price:${account.price_id}` : 'price-id-not-backfilled',
-    }
-  }
-
-  let currentCount
-  try {
-    currentCount = await countOrgsForAccount(supabaseUrl, serviceKey, accountId)
-  } catch (err) {
-    return { wouldBlock: false, reason: `org-count-failed: ${err?.message ?? err}` }
-  }
-
-  // Block on the INCREMENT only — an account already over its cap keeps every
-  // program it has. Nothing is ever revoked.
-  const wouldBlock = currentCount >= entitledCap
-  return {
-    wouldBlock,
-    reason: wouldBlock ? 'over-cap' : 'under-cap',
-    currentCount,
-    entitledCap: entitledCap === Infinity ? 'unlimited' : entitledCap,
-  }
-}
+// Entitlement is still read from the account's plan_tier / price_id — never
+// from plan_type or account_type. Those were derived from the org count by
+// this very endpoint, which made them circular: the thing being gated wrote
+// the value the gate read.
+//
+// FAIL-OPEN SAFETY STILL DEPENDS ON THE BILLING GUARD. status, price_id and
+// plan_tier all sit inside accounts_billing_columns_guard (migrations
+// 20260924000000, 20260924010000, 20261009000000), so an end-user JWT cannot
+// write any of them. That is what makes "active with no Stripe subscription"
+// mean "granted by hand via the service role" rather than "self-granted".
+// Do not remove the guard without revisiting programCapFor().
 
 async function countOrgsForAccount(supabaseUrl, serviceKey, accountId) {
   const url = `${supabaseUrl}/rest/v1/organizations?account_id=eq.${encodeURIComponent(accountId)}&select=id`
@@ -395,6 +330,49 @@ export default async function handler(req) {
     }
   }
 
+  // ── 4b. Subscription + program cap — ENFORCED, and BEFORE the insert ─────
+  // Position matters as much as the logic. The old advisory version of this
+  // check sat after the org insert, so even once enforced it would have
+  // refused a program that was already in the database. Everything below this
+  // point writes; everything above it only reads.
+  {
+    const ent = await loadEntitlement(supabaseUrl, serviceRoleKey, callerAccountId)
+    if (!ent.ok) return json({ error: ent.error }, ent.status)
+
+    const verdict = isEntitled(ent.account)
+    if (!verdict.entitled) {
+      console.warn('[add-program] blocked — not entitled:', {
+        accountId: callerAccountId, status: verdict.status, reason: verdict.reason,
+      })
+      return json({ error: entitlementMessage(verdict.reason, verdict.status) }, 403)
+    }
+
+    // programCapFor returns null when we genuinely cannot tell (comped
+    // account, or a Stripe subscription on a price missing from this
+    // environment). Those pass — refusing a customer because of our own
+    // config gap is the worse error. It logs at error level in the helper.
+    const cap = programCapFor(ent.account)
+    if (cap !== null && Number.isFinite(cap) && orgCount >= cap) {
+      console.warn('[add-program] blocked — over program cap:', {
+        accountId: callerAccountId, planTier: ent.account.plan_tier, orgCount, cap,
+      })
+      return json({
+        error: orgCount === 1
+          ? 'The Individual plan includes one program. Upgrade to School-Wide to add more.'
+          : `Your plan includes ${cap} program${cap === 1 ? '' : 's'}. Upgrade to School-Wide to add more.`,
+        code: 'program_cap',
+      }, 403)
+    }
+
+    console.log('[add-program][cap] allowed:', JSON.stringify({
+      accountId: callerAccountId,
+      status:    ent.account.status,
+      planTier:  ent.account.plan_tier,
+      orgCount,
+      cap:       cap === null ? 'unknown-pass' : (cap === Infinity ? 'unlimited' : cap),
+    }))
+  }
+
   // ── 5. Insert the new organization (service role — bypasses RLS) ──────────
   const slug = `${slugify(name)}-${Date.now()}`
   let newOrgId
@@ -427,40 +405,6 @@ export default async function handler(req) {
   } catch (err) {
     console.error('[add-program] org insert threw:', err?.message ?? err)
     return json({ error: 'Program creation failed — try again.' }, 500)
-  }
-
-  // ── 5b. Program cap — WARN ONLY ──────────────────────────────────────────
-  // The old auto-sync that lived here (flip account_type+plan_type to
-  // 'school' once the account had >=2 programs) has been REMOVED. It was the
-  // mechanism behind the cap hole: adding programs silently promoted the
-  // account to the School tier without anyone paying the School price, because
-  // the tier was written as a consequence of the org count instead of being
-  // checked against what was bought. delete-program's mirror downgrade is
-  // removed in the same commit. plan_type/account_type are no longer derived
-  // from org count in either direction; accounts.price_id is the entitlement
-  // source now.
-  //
-  // This block currently only LOGS what it would do. Grep Vercel logs for
-  // [add-program][cap] to see real decisions before enforcement is enabled.
-  try {
-    const cap = await evaluateProgramCap(supabaseUrl, serviceRoleKey, callerAccountId)
-    console.log('[add-program][cap]', JSON.stringify({
-      accountId: callerAccountId,
-      ...cap,
-      enforcing: false,
-    }))
-    // TO ENFORCE, un-comment — and note this must move ABOVE the org insert
-    // in step 5, otherwise the program is already created by the time we
-    // decide to refuse it.
-    //
-    // if (cap.wouldBlock) {
-    //   return json({
-    //     error: 'Your plan includes one program. Upgrade to the School plan to add more.',
-    //   }, 402)
-    // }
-  } catch (err) {
-    // Never let the cap evaluation break program creation while it is advisory.
-    console.warn('[add-program][cap] evaluation threw (non-fatal):', err?.message ?? err)
   }
 
   // ── 5c. coach_orgs row for the already-AD path (Commit D.5) ──────────────

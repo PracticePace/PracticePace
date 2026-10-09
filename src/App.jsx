@@ -12,6 +12,8 @@ import HomePage    from './pages/HomePage'
 import AboutPage   from './pages/AboutPage'
 import SportsPage  from './pages/SportsPage'
 import ContactPage from './pages/ContactPage'
+import TermsPage   from './pages/TermsPage'
+import PrivacyPage from './pages/PrivacyPage'
 import Login from './pages/Login'
 import Onboarding from './pages/Onboarding'
 import Dashboard from './pages/Dashboard'
@@ -72,6 +74,11 @@ export default function App() {
             <Route path="/contact"    element={<ContactPage />} />
             <Route path="/login"      element={<Login />} />
             <Route path="/pricing"    element={<Pricing />} />
+            {/* Legal — public and unauthenticated on purpose. Stripe's live
+                account review and a school's procurement check both need to
+                reach these without signing in. */}
+            <Route path="/terms"      element={<TermsPage />} />
+            <Route path="/privacy"    element={<PrivacyPage />} />
             <Route path="/onboarding" element={<ProtectedRoute><LandscapeOnly><Onboarding /></LandscapeOnly></ProtectedRoute>} />
             <Route path="/dashboard"  element={<ProtectedRoute><LandscapeOnly><Dashboard /></LandscapeOnly></ProtectedRoute>} />
             <Route path="/display"    element={<ProtectedRoute><LandscapeOnly><Display /></LandscapeOnly></ProtectedRoute>} />

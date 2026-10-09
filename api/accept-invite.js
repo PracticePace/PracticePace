@@ -57,6 +57,12 @@
 //   VITE_SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY
 
+// entitlementMessage is deliberately NOT imported here. Its copy is written
+// for the billing owner ("Subscribe from Settings → Subscription & Billing"),
+// and the person hitting this endpoint is an invited coach who has no access
+// to that screen. The message below points them at someone who does.
+import { loadEntitlement, isEntitled } from './_entitlements.js'
+
 export const config = { runtime: 'edge' }
 
 const CORS = {
@@ -259,6 +265,38 @@ export default async function handler(req) {
       return json({
         error: 'Your account already exists and is set up by your program. This invite link can\'t change it — ask your head coach or athletic director if something looks wrong.',
       }, 409)
+    }
+
+    // ── 3b. Subscription gate ─────────────────────────────────────────────
+    // A lapsed account doesn't get to onboard new coaches. Checked against
+    // account_id resolved from the organization row above, not from anything
+    // the invitee sent.
+    //
+    // DELIBERATELY AFTER the existing-profile branch. A coach who already
+    // belongs to this program must keep working: AcceptInvite.jsx re-runs this
+    // endpoint by design (a failed run retries and skips the password step),
+    // and the no-op and 409 paths above are how an already-set-up account is
+    // recognised. Gating before them would turn a billing lapse into "your
+    // existing coaches can no longer load the app", which is a different and
+    // much worse product decision than "you can't add new ones".
+    //
+    // So this only ever blocks the genuinely-new-profile path immediately
+    // below — the one that actually grows the account.
+    {
+      const ent = await loadEntitlement(supabaseUrl, serviceKey, account_id)
+      if (!ent.ok) return json({ error: ent.error }, ent.status)
+
+      const verdict = isEntitled(ent.account)
+      if (!verdict.entitled) {
+        console.warn('[accept-invite] blocked — account not entitled:', {
+          accountId: account_id, org_id, status: verdict.status, reason: verdict.reason,
+        })
+        // Worded for the invitee, who is not the billing owner and can do
+        // nothing about it themselves — so it points at the person who can.
+        return json({
+          error: 'This program\'s subscription isn\'t active, so new coaches can\'t be added right now. Ask your head coach or athletic director to check their billing.',
+        }, 403)
+      }
     }
 
     // Genuinely new user: create the profile. Plain INSERT, no on_conflict —

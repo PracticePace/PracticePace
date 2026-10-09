@@ -11,6 +11,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
+import { PLANS, planLabel } from '../../lib/plans'
 import { useAuth } from '../../context/AuthContext'
 import { SPORTS, sportLabel } from '../../lib/sports'
 import {
@@ -75,25 +76,16 @@ function Section({ title, children }) {
   )
 }
 
-// ── Price ID → human label ────────────────────────────────────────────────────
-const PRICE_LABELS = {
-  [import.meta.env.VITE_STRIPE_PRICE_SINGLE_MONTHLY]: 'Single Program — Monthly',
-  [import.meta.env.VITE_STRIPE_PRICE_SINGLE_ANNUAL]:  'Single Program — Annual',
-  [import.meta.env.VITE_STRIPE_PRICE_SCHOOL_MONTHLY]: 'School — Monthly',
-  [import.meta.env.VITE_STRIPE_PRICE_SCHOOL_ANNUAL]:  'School — Annual',
-}
-
-// The School price ids, for deciding whether to offer the upgrade CTA.
-// This is deliberately keyed on price_id (what Stripe says was bought) and not
-// on plan_type: since /api/create-account stopped accepting a caller-supplied
-// planType, every account is created 'single_program' and nothing ever writes
-// 'school' to that column — the webhook doesn't touch it. Keying the CTA on
-// plan_type would therefore show "Upgrade to School Plan" to customers who are
-// already paying for School.
-const SCHOOL_PRICE_IDS = [
-  import.meta.env.VITE_STRIPE_PRICE_SCHOOL_MONTHLY,
-  import.meta.env.VITE_STRIPE_PRICE_SCHOOL_ANNUAL,
-].filter(Boolean)
+// ── Plan tier → human label ──────────────────────────────────────────────────
+// Reads accounts.plan_tier, written by api/stripe-webhook.js from the price on
+// the live Stripe subscription (migration 20261009000000).
+//
+// This used to be a PRICE_LABELS map keyed on four import.meta.env
+// VITE_STRIPE_PRICE_* values, with a second SCHOOL_PRICE_IDS array beside it
+// for the upgrade CTA. Both broke the moment a price was rotated in Stripe:
+// the label fell back to a guess and the CTA started offering an upgrade to
+// customers already paying for School. plan_tier is the stable derived fact,
+// so neither question needs the environment any more.
 
 const STATUS_LABELS = {
   trialing:      { label: 'Free Trial',    color: '#cc8800', bg: '#1a0d00', border: '#3a2000' },
@@ -1772,21 +1764,21 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
 
               // ── Active subscription ────────────────────────────────────────
               if (status === 'active') {
-                const planLabel = PRICE_LABELS[sub.price_id] ?? (
-                  sub.plan_type === 'school' ? 'School — All Programs' : 'Single Program'
-                )
-                // Hide the upgrade CTA for anyone on a School price. Falls back
-                // to plan_type only when price_id isn't populated yet (accounts
-                // that subscribed before the webhook began writing it).
-                const isSingle = sub.price_id
-                  ? !SCHOOL_PRICE_IDS.includes(sub.price_id)
-                  : sub.plan_type !== 'school'
+                // 'Subscription' is the honest fallback when plan_tier is
+                // null on an active account — a comped or hand-granted row.
+                // Naming a plan we can't verify is how the old code ended up
+                // telling School customers to upgrade.
+                const planName = planLabel(sub.plan_tier) ?? 'Subscription'
+                // Only an Individual subscriber is offered the upgrade. A null
+                // tier is NOT treated as Individual: a comped account should
+                // not be nudged toward a plan it was never sold.
+                const canUpgrade = sub.plan_tier === 'individual'
                 return (
                   <div className="flex flex-col gap-4">
                     <div className="flex flex-col gap-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs uppercase tracking-widest" style={{ color: '#4a2020' }}>Plan</span>
-                        <span className="text-sm font-semibold text-white">{planLabel}</span>
+                        <span className="text-sm font-semibold text-white">{planName}</span>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-xs uppercase tracking-widest" style={{ color: '#4a2020' }}>Status</span>
@@ -1808,15 +1800,21 @@ export default function SettingsSection({ org, profile, orgColor, onOrgUpdate,
                           {portalLoading ? 'Opening…' : 'Manage Billing'}
                         </button>
                       )}
-                      {isSingle && (
-                        <button
-                          onClick={() => onStartCheckout?.()}
-                          disabled={checkoutLoading}
-                          className="py-2.5 rounded-lg text-sm font-bold disabled:opacity-50"
-                          style={{ border: `2px solid ${orgColor}`, backgroundColor: 'transparent', color: orgColor }}
-                        >
-                          {checkoutLoading ? 'Loading…' : 'Upgrade to School Plan'}
-                        </button>
+                      {canUpgrade && (
+                        <>
+                          <button
+                            onClick={() => onStartCheckout?.()}
+                            disabled={checkoutLoading}
+                            className="py-2.5 rounded-lg text-sm font-bold disabled:opacity-50"
+                            style={{ border: `2px solid ${orgColor}`, backgroundColor: 'transparent', color: orgColor }}
+                          >
+                            {checkoutLoading ? 'Loading…' : 'Upgrade to School-Wide'}
+                          </button>
+                          <p className="text-xs leading-relaxed" style={{ color: '#6a4040' }}>
+                            {PLANS.school.priceText}{PLANS.school.period} — {PLANS.school.summary}.
+                            Or change plans yourself under Manage Billing.
+                          </p>
+                        </>
                       )}
                       {portalError && (
                         <p className="text-xs p-2 rounded-lg" style={{ backgroundColor: '#2a0000', color: '#ff6666' }}>
