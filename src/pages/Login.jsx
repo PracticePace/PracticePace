@@ -1,19 +1,43 @@
-import { useState }   from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { supabase }    from '../lib/supabase'
 import Logo          from '../components/Logo'
 import Tagline       from '../components/Tagline'
 import PasswordInput from '../components/PasswordInput'
 import { SIGNUP_REDIRECT, RESET_PASSWORD_REDIRECT } from '../lib/authRedirects'
+import { PENDING_PLAN_KEY } from '../lib/siteConfig'
+import { PLAN_KEYS } from '../lib/plans'
+
+// Supabase's own minimum is 6. Eight is the number the form promises, so it
+// is the number the form enforces — a rule you state and don't check is worse
+// than no rule.
+const MIN_PASSWORD = 8
 
 export default function Login() {
   const navigate = useNavigate()
-  const [mode, setMode] = useState('signin') // 'signin' | 'create'
+  const [search] = useSearchParams()
+
+  // ?mode=signup opens straight on Create Account. Every "Get Started" and
+  // every pricing CTA sends people here, and landing on Sign In when you
+  // clicked "Get Started" is a dead end for someone who has no account yet.
+  const wantsSignup = search.get('mode') === 'signup' || search.get('mode') === 'create'
+  const [mode, setMode] = useState(wantsSignup ? 'create' : 'signin')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
+
+  // A plan chosen on /pricing rides in as ?plan=. It has to survive the whole
+  // confirm-your-email round-trip — a different tab, maybe a different app —
+  // so it is parked in localStorage rather than held in state or the URL.
+  // Onboarding reads and clears it.
+  useEffect(() => {
+    const plan = search.get('plan')
+    if (plan && PLAN_KEYS.includes(plan)) {
+      try { localStorage.setItem(PENDING_PLAN_KEY, plan) } catch { /* private mode */ }
+    }
+  }, [search])
 
   // Race any promise against a 10 s timeout — rejects with a typed error on timeout
   function withTimeout(promise, ms = 10_000) {
@@ -55,6 +79,24 @@ export default function Login() {
 
     try {
       if (mode === 'create') {
+        if (password.length < MIN_PASSWORD) {
+          setError(`Password must be at least ${MIN_PASSWORD} characters.`)
+          setLoading(false)
+          return
+        }
+
+        // A guest reaching this form still holds an anonymous Supabase
+        // session. signUp() on top of one is refused, so the anonymous
+        // session is dropped HERE — at the moment a real account is actually
+        // being created — and not a moment earlier. Their work is untouched:
+        // guest data lives in localStorage under pp_guest_*, which signOut
+        // does not clear.
+        const { data: { user: current } } = await supabase.auth.getUser()
+        if (current?.is_anonymous) {
+          console.log('[Login] dropping anonymous session before sign up')
+          await supabase.auth.signOut()
+        }
+
         console.log('[Login] Attempting sign up for', email)
         // emailRedirectTo was missing entirely, so the confirm link fell back
         // to the project's Site URL and landed the coach on the marketing home
@@ -148,9 +190,13 @@ export default function Login() {
       className="min-h-screen flex flex-col items-center justify-center px-4 py-12"
       style={{ backgroundColor: '#080000' }}
     >
-      {/* Logo + tagline — above the card */}
+      {/* Logo + tagline — above the card. The logo is a link home: this page
+          is reached from the marketing site and had no way back, so anyone
+          who clicked Get Started by mistake was stranded. */}
       <div className="flex flex-col items-center gap-3 mb-8">
-        <Logo variant="white" height={48} />
+        <Link to="/" aria-label="Practice:Pace home">
+          <Logo variant="white" height={48} />
+        </Link>
         <Tagline />
       </div>
 
@@ -234,6 +280,14 @@ export default function Login() {
               onFocus={e => (e.target.style.borderColor = '#cc1111')}
               onBlur={e => (e.target.style.borderColor = '#2a0000')}
             />
+            {mode === 'create' && (
+              <p
+                className="text-xs mt-0.5"
+                style={{ color: password.length > 0 && password.length < MIN_PASSWORD ? '#ff6666' : '#6a4040' }}
+              >
+                At least {MIN_PASSWORD} characters
+              </p>
+            )}
           </div>
 
           {/* Error / info */}
@@ -245,6 +299,17 @@ export default function Login() {
           {info && (
             <p className="text-sm text-center rounded-lg px-3 py-2" style={{ backgroundColor: '#001a00', color: '#66cc66' }}>
               {info}
+            </p>
+          )}
+
+          {/* Consent sits with the button that creates the obligation, not
+              buried in the page footer. */}
+          {mode === 'create' && (
+            <p className="text-xs text-center leading-relaxed" style={{ color: '#6a4040' }}>
+              By creating an account you agree to the{' '}
+              <Link to="/terms" className="underline" style={{ color: '#9a8080' }}>Terms</Link>
+              {' '}and{' '}
+              <Link to="/privacy" className="underline" style={{ color: '#9a8080' }}>Privacy Policy</Link>.
             </p>
           )}
 
@@ -292,6 +357,14 @@ export default function Login() {
           Continue as guest →
         </button>
       </div>
+
+      <Link
+        to="/"
+        className="mt-6 text-xs transition-opacity hover:opacity-70"
+        style={{ color: '#4a2020' }}
+      >
+        ← Back to practicepace.app
+      </Link>
     </div>
   )
 }

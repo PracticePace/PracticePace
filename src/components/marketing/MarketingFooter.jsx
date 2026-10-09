@@ -1,11 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // MarketingFooter — bottom-of-page footer for the 4 marketing pages.
 //
-// STUB SCOPE (foundation commit): the four sections from the Boostr
-// mockup — Brand block (wordmark + tagline), QUICK LINKS, SPORTS,
-// STAY CONNECTED (email input + red SUBSCRIBE button). Email subscribe
-// is a plain form that goes nowhere yet — a later commit will wire it
-// to whatever mailing-list backend Matt lands on.
+// Three columns: brand block (wordmark + tagline), QUICK LINKS, SPORTS,
+// over a bottom bar with the legal links.
+//
+// A fourth STAY CONNECTED column with an email capture was removed for
+// launch (2026-10-09): its submit handler was preventDefault() and nothing
+// else, so every address typed into it vanished silently. Bring it back when
+// there is a mailing list behind it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Link } from 'react-router-dom'
@@ -44,12 +46,6 @@ const LINK_STYLE = {
 }
 
 export default function MarketingFooter() {
-  function handleSubscribe(e) {
-    e.preventDefault()
-    // Wire-up placeholder — Commit 5 (Contact page) or later commit
-    // hooks this to the real signup endpoint. For now the input is
-    // controlled by the browser and this submit is a no-op.
-  }
 
   return (
     <footer
@@ -61,12 +57,16 @@ export default function MarketingFooter() {
       }}
     >
       <div className="max-w-7xl mx-auto px-4 md:px-6 py-12 md:py-16">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-10">
+        {/* Was 4 columns. The STAY CONNECTED newsletter block is gone for
+            launch — its form only ever called preventDefault(), so every
+            address typed into it was discarded without a word. A signup that
+            silently throws the address away is worse than no signup. */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-10">
           {/* BRAND */}
           <div className="flex flex-col gap-4">
             <Logo variant="white" height={32} />
             <p style={LINK_STYLE}>
-              The #1 practice management system for coaches who demand more.
+              The practice management system for coaches who demand more.
             </p>
           </div>
 
@@ -98,45 +98,6 @@ export default function MarketingFooter() {
             </ul>
           </div>
 
-          {/* STAY CONNECTED */}
-          <div className="flex flex-col gap-3">
-            <h4 style={H_STYLE}>Stay Connected</h4>
-            <p style={LINK_STYLE}>Get tips, updates and special offers.</p>
-            <form onSubmit={handleSubscribe} className="flex flex-col sm:flex-row gap-2 mt-1">
-              <input
-                type="email"
-                name="email"
-                placeholder="Your email"
-                required
-                className="flex-1 outline-none"
-                style={{
-                  backgroundColor: '#111111',
-                  border:          '1px solid #333333',
-                  color:           '#ffffff',
-                  padding:         '10px 12px',
-                  fontFamily:      'var(--font-body)',
-                  fontSize:        '0.9rem',
-                  borderRadius:    '4px',
-                  minWidth:        0,
-                }}
-              />
-              <button
-                type="submit"
-                className="uppercase transition-opacity hover:opacity-90"
-                style={{
-                  backgroundColor: 'var(--color-brand-red)',
-                  color:           '#ffffff',
-                  fontFamily:      'var(--font-button)',
-                  fontSize:        '0.9rem',
-                  letterSpacing:   '0.08em',
-                  padding:         '10px 16px',
-                  borderRadius:    '4px',
-                }}
-              >
-                Subscribe
-              </button>
-            </form>
-          </div>
         </div>
 
         <div

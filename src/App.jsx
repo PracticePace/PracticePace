@@ -15,6 +15,7 @@ import ContactPage from './pages/ContactPage'
 import TermsPage   from './pages/TermsPage'
 import PrivacyPage from './pages/PrivacyPage'
 import AuthCallback from './pages/AuthCallback'
+import NotFoundPage from './pages/NotFoundPage'
 import Login from './pages/Login'
 import Onboarding from './pages/Onboarding'
 import Dashboard from './pages/Dashboard'
@@ -92,6 +93,10 @@ export default function App() {
             <Route path="/auth/callback"  element={<AuthCallback />} />
             <Route path="/invite"         element={<AcceptInvite />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            {/* Catch-all. vercel.json rewrites every path to index.html, so an
+                unknown URL reached the router and matched nothing — which
+                React Router renders as a bare black page. */}
+            <Route path="*"           element={<NotFoundPage />} />
           </Routes>
         </OrgProvider>
       </AuthProvider>

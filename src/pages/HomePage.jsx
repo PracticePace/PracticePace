@@ -22,6 +22,7 @@ import MarketingHeader  from '../components/marketing/MarketingHeader'
 import MarketingFooter  from '../components/marketing/MarketingFooter'
 import ReadyToMaximize  from '../components/marketing/ReadyToMaximize'
 import VideoModal       from '../components/marketing/VideoModal'
+import { DEMO_VIDEO_ENABLED } from '../lib/siteConfig'
 
 // ── Inline SVG icons (Commit 1 convention: no lucide-react dep) ────────────
 // Currently used by the four rows in Section 3's features list. Small,
@@ -167,7 +168,7 @@ export default function HomePage() {
             </p>
             <div className="flex flex-col sm:flex-row gap-3 mt-2">
               <Link
-                to="/login"
+                to="/login?mode=signup"
                 className="font-button uppercase text-white text-center transition-opacity hover:opacity-90"
                 style={{
                   backgroundColor: 'var(--color-brand-red)',
@@ -179,21 +180,26 @@ export default function HomePage() {
               >
                 Get Started
               </Link>
-              <button
-                type="button"
-                onClick={() => setVideoOpen(true)}
-                className="font-button uppercase text-white text-center transition-opacity hover:opacity-90"
-                style={{
-                  backgroundColor: 'transparent',
-                  border:          '2px solid var(--color-brand-red)',
-                  padding:         '12px 28px',
-                  letterSpacing:   '0.08em',
-                  borderRadius:    '4px',
-                  fontSize:        '1rem',
-                }}
-              >
-                Watch Demo
-              </button>
+              {/* Hidden until a demo video exists — see src/lib/siteConfig.js.
+                  It used to open a modal that said "Demo video coming soon."
+                  right next to the primary conversion CTA. */}
+              {DEMO_VIDEO_ENABLED && (
+                <button
+                  type="button"
+                  onClick={() => setVideoOpen(true)}
+                  className="font-button uppercase text-white text-center transition-opacity hover:opacity-90"
+                  style={{
+                    backgroundColor: 'transparent',
+                    border:          '2px solid var(--color-brand-red)',
+                    padding:         '12px 28px',
+                    letterSpacing:   '0.08em',
+                    borderRadius:    '4px',
+                    fontSize:        '1rem',
+                  }}
+                >
+                  Watch Demo
+                </button>
+              )}
             </div>
           </div>
 
@@ -311,57 +317,59 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Right column — clickable video preview thumbnail with play
-              button overlay. Whole thumbnail is a <button> so it's a
-              proper keyboard-accessible target. */}
-          <div className="flex flex-col gap-4">
-            <button
-              type="button"
-              onClick={() => setVideoOpen(true)}
-              aria-label="Watch Practice:Pace demo video"
-              className="relative block w-full overflow-hidden rounded-lg group cursor-pointer"
-              style={{ aspectRatio: '16 / 10', border: 0, padding: 0 }}
-            >
-              <img
-                src="/marketing/practice-basketball-3.jpg"
-                alt="A basketball team running a practice drill — Practice:Pace demo preview."
-                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-                loading="lazy"
-              />
-              {/* Subtle dark overlay so the white play button reads on any
-                  photo. */}
-              <div className="absolute inset-0 pointer-events-none" style={{ backgroundColor: 'rgba(0,0,0,0.15)' }} />
-              {/* Center play button — white circle with red triangle, semi-
-                  transparent white ring around it. */}
-              <span
-                className="absolute top-1/2 left-1/2 rounded-full bg-white flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
-                style={{
-                  width:     '20%',
-                  maxWidth:  120,
-                  aspectRatio: '1 / 1',
-                  transform: 'translate(-50%, -50%)',
-                  boxShadow: '0 0 0 8px rgba(255,255,255,0.28)',
-                }}
+          {/* Right column — the demo video tile. Hidden with every other
+              demo affordance until a video exists; the features list on
+              the left then takes the full width of the grid. */}
+          {DEMO_VIDEO_ENABLED && (
+            <div className="flex flex-col gap-4">
+              <button
+                type="button"
+                onClick={() => setVideoOpen(true)}
+                aria-label="Watch Practice:Pace demo video"
+                className="relative block w-full overflow-hidden rounded-lg group cursor-pointer"
+                style={{ aspectRatio: '16 / 10', border: 0, padding: 0 }}
               >
-                <PlayIcon />
-              </span>
-            </button>
+                <img
+                  src="/marketing/practice-basketball-3.jpg"
+                  alt="A basketball team running a practice drill — Practice:Pace demo preview."
+                  className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                  loading="lazy"
+                />
+                {/* Subtle dark overlay so the white play button reads on any
+                    photo. */}
+                <div className="absolute inset-0 pointer-events-none" style={{ backgroundColor: 'rgba(0,0,0,0.15)' }} />
+                {/* Center play button — white circle with red triangle, semi-
+                    transparent white ring around it. */}
+                <span
+                  className="absolute top-1/2 left-1/2 rounded-full bg-white flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
+                  style={{
+                    width:     '20%',
+                    maxWidth:  120,
+                    aspectRatio: '1 / 1',
+                    transform: 'translate(-50%, -50%)',
+                    boxShadow: '0 0 0 8px rgba(255,255,255,0.28)',
+                  }}
+                >
+                  <PlayIcon />
+                </span>
+              </button>
 
-            <div className="flex flex-col gap-1 mt-2">
-              <span
-                className="font-display uppercase text-brand-red"
-                style={{ fontSize: '0.85rem', letterSpacing: '0.18em' }}
-              >
-                See It in Action
-              </span>
-              <p
-                className="font-body text-white"
-                style={{ fontSize: '0.95rem', lineHeight: 1.5 }}
-              >
-                Watch how Practice:Pace transforms the way coaches run practice.
-              </p>
+              <div className="flex flex-col gap-1 mt-2">
+                <span
+                  className="font-display uppercase text-brand-red"
+                  style={{ fontSize: '0.85rem', letterSpacing: '0.18em' }}
+                >
+                  See It in Action
+                </span>
+                <p
+                  className="font-body text-white"
+                  style={{ fontSize: '0.95rem', lineHeight: 1.5 }}
+                >
+                  Watch how Practice:Pace transforms the way coaches run practice.
+                </p>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </section>
 

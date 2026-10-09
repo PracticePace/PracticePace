@@ -981,8 +981,15 @@ export default function Dashboard() {
           style={{ backgroundColor: '#1a0d00', borderBottom: '1px solid #3a2000' }}
         >
           <span style={{ color: '#cc8800' }}>👤 Guest mode — data saved on this device only.</span>
+          {/* Was navigate('/'), which did nothing visible: a guest holds an
+              anonymous Supabase session, so RootRoute saw a logged-in user
+              and bounced straight back to /dashboard. /login has no such
+              guard, and ?mode=signup opens it on the right tab. The
+              anonymous session is dropped by Login at the moment an account
+              is actually created — guest work in pp_guest_* localStorage is
+              untouched either way. */}
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/login?mode=signup')}
             className="underline font-bold transition-opacity hover:opacity-70"
             style={{ color: '#ffaa00' }}
           >

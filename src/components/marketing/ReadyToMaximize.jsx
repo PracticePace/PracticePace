@@ -14,6 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Link } from 'react-router-dom'
+import { DEMO_VIDEO_ENABLED, DEMO_VIDEO_URL } from '../../lib/siteConfig'
 
 export default function ReadyToMaximize() {
   return (
@@ -56,7 +57,7 @@ export default function ReadyToMaximize() {
         <div className="flex flex-col sm:flex-row items-center gap-3 mt-2">
           {/* GET STARTED — inverted on the red bg: white fill, red text. */}
           <Link
-            to="/login"
+            to="/login?mode=signup"
             className="uppercase transition-opacity hover:opacity-90"
             style={{
               backgroundColor: '#ffffff',
@@ -71,25 +72,29 @@ export default function ReadyToMaximize() {
           >
             Get Started
           </Link>
-          {/* WATCH DEMO — outline. Routes to nothing yet (# href) — a
-              later commit wires this to a real demo video or embedded
-              player. */}
-          <a
-            href="#"
-            className="uppercase transition-opacity hover:opacity-85"
-            style={{
-              backgroundColor: 'transparent',
-              color:           '#ffffff',
-              fontFamily:      'var(--font-button)',
-              fontSize:        '1rem',
-              letterSpacing:   '0.08em',
-              padding:         '13px 26px',
-              border:          '2px solid #ffffff',
-              borderRadius:    '4px',
-            }}
-          >
-            Watch Demo
-          </a>
+          {/* WATCH DEMO — hidden until a demo video exists. It used to be
+              an href="#" that opened a modal reading "Demo video coming
+              soon."; see src/lib/siteConfig.js. */}
+          {DEMO_VIDEO_ENABLED && (
+            <a
+              href={DEMO_VIDEO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="uppercase transition-opacity hover:opacity-85"
+              style={{
+                backgroundColor: 'transparent',
+                color:           '#ffffff',
+                fontFamily:      'var(--font-button)',
+                fontSize:        '1rem',
+                letterSpacing:   '0.08em',
+                padding:         '13px 26px',
+                border:          '2px solid #ffffff',
+                borderRadius:    '4px',
+              }}
+            >
+              Watch Demo
+            </a>
+          )}
         </div>
       </div>
     </section>

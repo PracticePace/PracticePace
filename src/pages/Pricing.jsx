@@ -14,7 +14,8 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
 import { PLAN_LIST, TRIAL_DAYS } from '../lib/plans'
-import Logo from '../components/Logo'
+import MarketingHeader from '../components/marketing/MarketingHeader'
+import MarketingFooter from '../components/marketing/MarketingFooter'
 
 function fmt(n) {
   return n.toLocaleString('en-US')
@@ -29,11 +30,21 @@ export default function Pricing() {
   const orgId = profile?.current_org_id ?? null
 
   async function startTrial(plan) {
-    // Not logged in — send to login first
-    if (!user) { navigate('/'); return }
+    // Anonymous visitor: the Create Account tab, carrying the plan they
+    // clicked. This used to navigate('/') — the marketing home page — which
+    // for a signed-out visitor meant the button appeared to do nothing, and
+    // for a signed-in one bounced to the dashboard. Either way the plan
+    // choice was thrown away. Login parks ?plan= for Onboarding to preselect.
+    if (!user) {
+      navigate(`/login?mode=signup&plan=${encodeURIComponent(plan.key)}`)
+      return
+    }
 
+    // Signed in but no program yet — they belong in onboarding, not checkout.
+    // Previously this was a dead-end error telling them to go to Settings for
+    // something Settings can't do.
     if (!orgId) {
-      setError('Finish setting up your program in Settings before subscribing.')
+      navigate(`/onboarding?plan=${encodeURIComponent(plan.key)}`)
       return
     }
 
@@ -69,22 +80,12 @@ export default function Pricing() {
   }
 
   return (
+    // Wrapped in the same chrome as /about and /contact. This page used to
+    // carry its own cut-down nav and no footer at all, so it was the one
+    // marketing page you could not navigate away from — and the only one with
+    // no route to the legal pages.
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#080000' }}>
-
-      {/* ── Top nav ── */}
-      <nav className="flex items-center justify-between px-6 py-4"
-        style={{ borderBottom: '1px solid #1a0000' }}>
-        <button onClick={() => navigate(user ? '/dashboard' : '/')} className="flex items-center">
-          <Logo variant="default" height={36} />
-        </button>
-        <button
-          onClick={() => navigate(user ? '/dashboard' : '/')}
-          className="text-xs font-semibold px-4 py-2 rounded-lg"
-          style={{ border: '1px solid #2a0000', color: '#9a8080' }}
-        >
-          {user ? '← Dashboard' : 'Sign in'}
-        </button>
-      </nav>
+      <MarketingHeader />
 
       {/* ── Hero ── */}
       <div className="text-center px-6 pt-12 pb-8">
@@ -185,17 +186,16 @@ export default function Pricing() {
         <p className="text-center text-sm px-6 pb-6" style={{ color: '#ff6666' }}>{error}</p>
       )}
 
-      {/* ── Footer ── */}
-      <div className="text-center px-6 py-6 flex flex-col gap-2" style={{ borderTop: '1px solid #1a0000' }}>
+      {/* Fine print stays with the plans; site-wide links come from the
+          shared footer below. */}
+      <div className="text-center px-6 py-6" style={{ borderTop: '1px solid #1a0000' }}>
         <p className="text-xs" style={{ color: '#4a2020' }}>
           Secure payments via Stripe. Annual subscriptions renew automatically
           and can be cancelled any time from the billing portal. No prorated refunds.
         </p>
-        <p className="text-xs flex items-center justify-center gap-4" style={{ color: '#4a2020' }}>
-          <Link to="/terms"   className="hover:opacity-80 underline">Terms of Service</Link>
-          <Link to="/privacy" className="hover:opacity-80 underline">Privacy Policy</Link>
-        </p>
       </div>
+
+      <MarketingFooter />
     </div>
   )
 }

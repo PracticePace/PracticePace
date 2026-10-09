@@ -5,7 +5,8 @@ import { useAuth }             from '../context/AuthContext'
 import Logo    from '../components/Logo'
 import Tagline from '../components/Tagline'
 import { SPORTS } from '../lib/sports'
-import { PLAN_LIST, PLANS, planLabel } from '../lib/plans'
+import { PLAN_LIST, PLANS, planLabel, PLAN_KEYS } from '../lib/plans'
+import { PENDING_PLAN_KEY } from '../lib/siteConfig'
 
 const STEPS = ['Account Type', 'Program Details', 'Confirmation']
 
@@ -358,7 +359,26 @@ export default function Onboarding() {
 
   const [step, setStep] = useState(1)
   // Default to 'single' so there's always a valid plan even if user skips selection
-  const [accountType, setAccountType] = useState('individual')
+  // A plan clicked on /pricing arrives either on the URL (signed-in coach
+  // sent straight here) or parked in localStorage by Login (new coach, whose
+  // choice had to survive the confirm-your-email round-trip). Read once on
+  // mount, then cleared — a stale choice from three weeks ago shouldn't
+  // preselect anything.
+  const [accountType, setAccountType] = useState(() => {
+    try {
+      const fromUrl = new URLSearchParams(window.location.search).get('plan')
+      if (fromUrl && PLAN_KEYS.includes(fromUrl)) {
+        localStorage.removeItem(PENDING_PLAN_KEY)
+        return fromUrl
+      }
+      const parked = localStorage.getItem(PENDING_PLAN_KEY)
+      if (parked && PLAN_KEYS.includes(parked)) {
+        localStorage.removeItem(PENDING_PLAN_KEY)
+        return parked
+      }
+    } catch { /* private mode — fall through to the default */ }
+    return 'individual'
+  })
   const [form, setForm] = useState({
     fullName: '',
     programName: '',

@@ -10,11 +10,14 @@
 //   • ReadyToMaximize
 //   • MarketingFooter
 //
-// Delivery is mailto:practicepace@gmail.com — no backend, no
-// third-party services. Boostr can wire a real endpoint later; the
-// fallback address is always visible so anyone whose mailto: handler
-// misbehaves (Chromebooks, some Android profiles, browsers with no
-// default mail client set) can still reach us by copy-pasting.
+// Delivery is POST /api/contact, which sends through Resend.
+//
+// It used to be a mailto: link. On a school Chromebook with no mail client
+// configured — which is most of them — assigning window.location to a mailto:
+// URL does nothing at all: no error, no mail app, and the page cheerfully
+// showed "Opening your email client" while nothing opened. Every message sent
+// from a school computer was lost without either side knowing. The fallback
+// address stays visible regardless.
 //
 // Header / CTA / Footer inline per the Commits 1-4 per-page pattern
 // (no Outlet layout exists in App.jsx).
@@ -24,8 +27,8 @@ import MarketingHeader  from '../components/marketing/MarketingHeader'
 import MarketingFooter  from '../components/marketing/MarketingFooter'
 import ReadyToMaximize  from '../components/marketing/ReadyToMaximize'
 
-// Support inbox. Kept as a constant so the mailto: URL and the
-// visible fallback address can never drift out of sync.
+// Support inbox — the visible fallback. The server has its own copy; this
+// one is only ever rendered, never used to address anything.
 const SUPPORT_EMAIL = 'practicepace@gmail.com'
 
 // Basic RFC-5321-ish email shape check. Deliberately loose — we're
@@ -41,6 +44,11 @@ const EMPTY_FORM = {
   email:     '',
   phone:     '',
   message:   '',
+  // Honeypot. Off-screen, unlabelled, tabindex -1, autocomplete off — a
+  // person never fills it and a form-filling bot usually does. The server
+  // drops any submission that has it set, and answers 200 so the bot learns
+  // nothing.
+  company:   '',
 }
 
 function validate(form) {
@@ -54,9 +62,11 @@ function validate(form) {
 }
 
 export default function ContactPage() {
-  const [form,    setForm]    = useState(EMPTY_FORM)
-  const [errors,  setErrors]  = useState({})
-  const [sent,    setSent]    = useState(false)
+  const [form,      setForm]      = useState(EMPTY_FORM)
+  const [errors,    setErrors]    = useState({})
+  const [sent,      setSent]      = useState(false)
+  const [sending,   setSending]   = useState(false)
+  const [sendError, setSendError] = useState('')
 
   function handleChange(field) {
     return e => {
@@ -75,7 +85,7 @@ export default function ContactPage() {
     }
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault()
     const errs = validate(form)
     if (Object.keys(errs).length > 0) {
@@ -83,35 +93,40 @@ export default function ContactPage() {
       return
     }
     setErrors({})
+    setSendError('')
+    setSending(true)
 
-    // Build the mailto URL. encodeURIComponent takes care of
-    // newlines (\n → %0A), spaces, ampersands, quotes, etc.
-    const firstName = form.firstName.trim()
-    const lastName  = form.lastName.trim()
-    const email     = form.email.trim()
-    const phone     = form.phone.trim() || 'Not provided'
-    const message   = form.message.trim()
-    const subject = `Practice:Pace inquiry from ${firstName} ${lastName}`
-    const body    =
-      `Name: ${firstName} ${lastName}\n` +
-      `Email: ${email}\n` +
-      `Phone: ${phone}\n\n` +
-      `Message:\n${message}`
-    const mailtoUrl =
-      `mailto:${SUPPORT_EMAIL}` +
-      `?subject=${encodeURIComponent(subject)}` +
-      `&body=${encodeURIComponent(body)}`
-
-    // Trigger the mail client. Assignment (rather than open) so
-    // browsers that surface mailto: as a picker prompt keep the
-    // current tab context.
-    window.location.href = mailtoUrl
-    setSent(true)
+    try {
+      const res = await fetch('/api/contact', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          firstName: form.firstName.trim(),
+          lastName:  form.lastName.trim(),
+          email:     form.email.trim(),
+          phone:     form.phone.trim(),
+          message:   form.message.trim(),
+          company:   form.company,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      // The success screen appears on a 200 and nothing else. The old version
+      // showed it unconditionally, which is how a Chromebook user got a
+      // confirmation for a message that was never sent.
+      if (!res.ok) throw new Error(data.error ?? '')
+      setSent(true)
+    } catch (err) {
+      console.error('[Contact] send failed:', err?.message ?? err)
+      setSendError(err?.message || 'Something went wrong sending your message.')
+    } finally {
+      setSending(false)
+    }
   }
 
   function resetForm() {
     setForm(EMPTY_FORM)
     setErrors({})
+    setSendError('')
     setSent(false)
   }
 
@@ -191,6 +206,8 @@ export default function ContactPage() {
                 errors={errors}
                 onChange={handleChange}
                 onSubmit={handleSubmit}
+                sending={sending}
+                sendError={sendError}
               />
             )}
           </div>
@@ -225,9 +242,28 @@ export default function ContactPage() {
 // Extracted so the render logic stays readable. Fields use `htmlFor`/`id`
 // pairs for accessible labeling; required fields carry aria-required and
 // their error <p> uses role="alert" per spec.
-function ContactForm({ form, errors, onChange, onSubmit }) {
+function ContactForm({ form, errors, onChange, onSubmit, sending, sendError }) {
   return (
     <form onSubmit={onSubmit} noValidate className="w-full flex flex-col gap-5">
+      {/* Honeypot. Positioned off-screen rather than display:none — some bots
+          skip hidden inputs but fill positioned ones. aria-hidden and
+          tabindex -1 keep it away from screen readers and the tab order. */}
+      <div
+        aria-hidden="true"
+        style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, overflow: 'hidden' }}
+      >
+        <label htmlFor="company">Company</label>
+        <input
+          id="company"
+          name="company"
+          type="text"
+          tabIndex={-1}
+          autoComplete="off"
+          value={form.company}
+          onChange={onChange('company')}
+        />
+      </div>
+
       {/* Row 1 — First / Last name */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         <Field
@@ -287,9 +323,36 @@ function ContactForm({ form, errors, onChange, onSubmit }) {
 
       {/* Submit — brand-red-marketing, full width, Barlow Condensed
           (font-button) to match the GET STARTED button in the header. */}
+      {/* Send failure. Always names the address so the message isn't lost
+          just because our endpoint is having a bad day. */}
+      {sendError && (
+        <p
+          role="alert"
+          className="font-body rounded-md"
+          style={{
+            backgroundColor: 'rgba(223,31,38,0.12)',
+            border:          '1px solid var(--color-brand-red)',
+            color:           '#ffffff',
+            padding:         '12px 14px',
+            fontSize:        '0.95rem',
+            lineHeight:      1.5,
+          }}
+        >
+          {sendError} Please email us directly at{' '}
+          <a
+            href={`mailto:${SUPPORT_EMAIL}`}
+            className="text-brand-red"
+            style={{ textDecoration: 'underline' }}
+          >
+            {SUPPORT_EMAIL}
+          </a>.
+        </p>
+      )}
+
       <button
         type="submit"
-        className="font-button uppercase text-white transition-opacity hover:opacity-90 mt-2"
+        disabled={sending}
+        className="font-button uppercase text-white transition-opacity hover:opacity-90 mt-2 disabled:opacity-60"
         style={{
           backgroundColor: 'var(--color-brand-red)',
           padding:         '14px 24px',
@@ -299,15 +362,15 @@ function ContactForm({ form, errors, onChange, onSubmit }) {
           width:           '100%',
         }}
       >
-        Send Message
+        {sending ? 'Sending…' : 'Send Message'}
       </button>
     </form>
   )
 }
 
 // ── Success state ───────────────────────────────────────────────────────────
-// Replaces the form once mailto: has been triggered. Keeps the same
-// vertical space so the page doesn't jump.
+// Shown ONLY after /api/contact returns 200. It used to appear the instant
+// the mailto: was assigned, whether or not anything happened.
 function SuccessBlock({ onReset }) {
   return (
     <div className="w-full flex flex-col items-center text-center gap-4 py-4">
@@ -315,13 +378,14 @@ function SuccessBlock({ onReset }) {
         className="font-display uppercase text-brand-red leading-none tracking-wide"
         style={{ fontSize: 'clamp(2rem, 4.5vw, 2.75rem)' }}
       >
-        Opening Your Email Client
+        Message Sent
       </h3>
       <p
         className="font-body text-white"
         style={{ fontSize: '1rem', lineHeight: 1.6, maxWidth: '520px' }}
       >
-        If your email client didn&rsquo;t open, please send your message directly to{' '}
+        Thanks for reaching out — we&rsquo;ll get back to you at the email
+        address you gave us. You can also reach us any time at{' '}
         <a
           href={`mailto:${SUPPORT_EMAIL}`}
           className="text-brand-red transition-opacity hover:opacity-80"

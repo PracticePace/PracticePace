@@ -84,11 +84,11 @@ export default function MarketingHeader() {
             Log In
           </Link>
 
-          {/* GET STARTED — routes to the app's Login page (which is
-              also the account-create surface via its inline mode
-              toggle). Uses font-button (Barlow Condensed 700). */}
+          {/* GET STARTED — opens Login already on the Create Account tab.
+              It used to land on Sign In, which is the wrong half of the form
+              for someone who just clicked "Get Started". */}
           <Link
-            to="/login"
+            to="/login?mode=signup"
             className="font-button uppercase text-white transition-opacity hover:opacity-90"
             style={{
               backgroundColor: 'var(--color-brand-red)',
