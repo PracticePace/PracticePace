@@ -22,6 +22,10 @@
 // SUPABASE AUTH REQUIRED (Authentication → URL Configuration → Redirect URLs):
 //   Add:  https://www.practicepace.app/invite
 
+import {
+  loadEntitlement, isEntitled, entitlementMessage,
+} from './_entitlements.js'
+
 export const config = { runtime: 'edge' }
 
 const CORS = {
@@ -358,6 +362,29 @@ export default async function handler(req) {
   if (!['assistant_coach', 'team_manager', 'head_coach'].includes(invitedRole)) {
     console.warn('[invite-coach] disallowed invited role:', invitedRole)
     return json({ error: 'Invalid role' }, 400)
+  }
+
+  // ── 4b. Subscription gate ─────────────────────────────────────────────────
+  // Adding coaches is how an account grows, so it needs a live subscription.
+  // Placed after the role/ownership gates (so an unauthorised caller still
+  // gets 403 Forbidden and learns nothing about the account's billing state)
+  // and before step 5 (so a lapsed account never sends an invite email or
+  // writes a coach_orgs row).
+  //
+  // Reads the caller's own account via callerAccountId. Step 4 has already
+  // established that the target org belongs to that same account, so there is
+  // one account to check, not two.
+  {
+    const ent = await loadEntitlement(supabaseUrl, serviceRoleKey, callerAccountId)
+    if (!ent.ok) return json({ error: ent.error }, ent.status)
+
+    const verdict = isEntitled(ent.account)
+    if (!verdict.entitled) {
+      console.warn('[invite-coach] blocked — not entitled:', {
+        accountId: callerAccountId, status: verdict.status, reason: verdict.reason,
+      })
+      return json({ error: entitlementMessage(verdict.reason, verdict.status) }, 403)
+    }
   }
 
   // ── 5. Existing-user check (Commit D, profile_id fast path Commit E) ─────

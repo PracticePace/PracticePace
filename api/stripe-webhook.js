@@ -6,6 +6,8 @@
 // REQUIRED ENV VARS (set in Vercel → Settings → Environment Variables):
 //   STRIPE_SECRET_KEY
 //   STRIPE_WEBHOOK_SECRET
+//   STRIPE_PRICE_INDIVIDUAL  (needed to map a price back to a plan_tier)
+//   STRIPE_PRICE_SCHOOL
 //   VITE_SUPABASE_URL        (same key re-used from the frontend)
 //   SUPABASE_SERVICE_ROLE_KEY
 //
@@ -13,7 +15,7 @@
 //   accounts — id (matches accountId from Stripe metadata),
 //              stripe_customer_id, stripe_subscription_id,
 //              status ('trialing'|'active'|'past_due'|'canceled'|'complimentary'),
-//              trial_ends_at, price_id
+//              trial_ends_at, price_id, plan_tier
 //   stripe_webhook_events — idempotency + ordering (migration 20260924020000)
 //
 // DURABILITY (2026-09-24). This handler used to return 200 no matter what,
@@ -37,6 +39,7 @@
 // a guessed status for someone who may have just paid is worse than retrying.
 
 import crypto from 'crypto'
+import { planTierForPriceId } from './_entitlements.js'
 
 export const config = { api: { bodyParser: false } }
 
@@ -85,6 +88,39 @@ function verifyStripeSignature(rawBody, sigHeader, secret) {
 // how api/stripe-checkout.js builds the session (a single line_items[0]).
 function priceIdFromSubscription(subData) {
   return subData?.items?.data?.[0]?.price?.id ?? null
+}
+
+// Resolve accounts.plan_tier for a write.
+//
+// Two inputs, in priority order:
+//   1. The price on the live Stripe subscription, mapped through
+//      STRIPE_PRICE_INDIVIDUAL / STRIPE_PRICE_SCHOOL. This is ground truth —
+//      it is what Stripe is actually billing.
+//   2. The `plan` key api/stripe-checkout.js stamped into the subscription
+//      metadata. This is the fallback for exactly one case: the price was
+//      rotated in Stripe after the subscription was created, so (1) no longer
+//      resolves, but we still know which plan was sold.
+//
+// Returns null when neither can answer. A null is NOT written over an existing
+// tier — see the `...(tier ? {} : {})` spreads at the call sites. Blanking a
+// paying customer's tier because of a config gap would drop them to the
+// Individual program cap, which is a worse failure than a stale tier.
+function planTierFor(priceId, metadataPlan) {
+  const fromPrice = planTierForPriceId(priceId)
+  if (fromPrice) return fromPrice
+  if (metadataPlan === 'individual' || metadataPlan === 'school') {
+    console.warn(
+      `[webhook] price ${priceId ?? 'null'} did not match STRIPE_PRICE_INDIVIDUAL/`
+      + `STRIPE_PRICE_SCHOOL — falling back to metadata plan "${metadataPlan}"`
+    )
+    return metadataPlan
+  }
+  console.error(
+    `[webhook] cannot determine plan_tier: price=${priceId ?? 'null'},`
+    + ` metadata.plan=${metadataPlan ?? 'null'}.`
+    + ' Check STRIPE_PRICE_INDIVIDUAL / STRIPE_PRICE_SCHOOL in this environment.'
+  )
+  return null
 }
 
 // ── Supabase REST helpers (service role — bypasses RLS) ──────────────────────
@@ -324,6 +360,7 @@ export default async function handler(req, res) {
         const customerId     = session.customer
         const subscriptionId = session.subscription
         const priceId        = session.metadata?.priceId
+        const metadataPlan   = session.metadata?.plan
 
         console.log('[webhook] checkout.session.completed:', {
           accountId, customerId, subscriptionId, priceId,
@@ -369,6 +406,9 @@ export default async function handler(req, res) {
 
         // The accounts row already exists (created during onboarding).
         // PATCH only the Stripe fields — never touch name or other required columns.
+        const effectivePriceId = livePriceId ?? priceId
+        const planTier         = planTierFor(effectivePriceId, metadataPlan)
+
         const patch = {
           stripe_customer_id:     customerId,
           stripe_subscription_id: subscriptionId,
@@ -377,7 +417,10 @@ export default async function handler(req, res) {
           // Falls back to the session metadata when the subscription fetch
           // above failed. Omitted entirely if we know neither, so a failed
           // fetch never blanks a price we already had.
-          ...((livePriceId ?? priceId) ? { price_id: livePriceId ?? priceId } : {}),
+          ...(effectivePriceId ? { price_id: effectivePriceId } : {}),
+          // Same rule for the tier: write it when we can resolve it, leave the
+          // column alone when we can't rather than nulling a known tier.
+          ...(planTier ? { plan_tier: planTier } : {}),
         }
         console.log('[webhook] patching account', accountId, JSON.stringify(patch))
 
@@ -402,15 +445,21 @@ export default async function handler(req, res) {
 
         console.log('[webhook] subscription.updated:', { customerId, subscriptionId, status })
 
-        // Plan changes (single -> school and back) arrive here, so this is the
-        // event that keeps price_id honest over the life of a subscription.
+        // Plan changes (individual -> school and back) arrive here, so this is
+        // the event that keeps price_id AND plan_tier honest over the life of a
+        // subscription. An Individual customer who upgrades through the Stripe
+        // billing portal is seen only here — there is no second checkout
+        // session — so writing plan_tier on this event is what makes the
+        // upgrade actually lift the program cap.
         const updatedPriceId = priceIdFromSubscription(sub)
+        const updatedTier    = planTierFor(updatedPriceId, sub.metadata?.plan)
 
         const patch = {
           stripe_subscription_id: subscriptionId,
           status,
           ...(trialEndsAt !== null && { trial_ends_at: trialEndsAt }),
           ...(updatedPriceId ? { price_id: updatedPriceId } : {}),
+          ...(updatedTier ? { plan_tier: updatedTier } : {}),
         }
 
         const updated = await sbPatch(
@@ -434,14 +483,20 @@ export default async function handler(req, res) {
 
         console.log('[webhook] subscription.deleted:', { customerId, subId: sub.id })
 
+        // plan_tier is cleared alongside the status. A canceled account is not
+        // on a plan, and leaving a stale 'school' behind would let a lapsed
+        // subscriber keep the unlimited program cap the moment anything
+        // re-granted them a usable status by hand. price_id is deliberately
+        // KEPT — it is the audit trail of what they last paid for, and the
+        // entitlement path reads plan_tier first.
         const updated = await sbPatch(
           'accounts',
           `stripe_customer_id=eq.${customerId}`,
-          { status: 'canceled' },
+          { status: 'canceled', plan_tier: null },
           supabaseUrl,
           serviceKey
         )
-        console.log(`[webhook] subscription.deleted: ${customerId} → canceled (${updated.length} rows)`)
+        console.log(`[webhook] subscription.deleted: ${customerId} → canceled, plan_tier cleared (${updated.length} rows)`)
         if (updated.length === 0) {
           handleZeroRows('customer.subscription.deleted', event, `stripe_customer_id=${customerId}`)
         }

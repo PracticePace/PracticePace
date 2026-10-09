@@ -18,6 +18,7 @@ import WhiteboardSection from '../components/dashboard/WhiteboardSection'
 import PlaybookSection   from '../components/dashboard/PlaybookSection'
 import { getSnapshot as getPracticeSnapshot } from '../lib/practiceTimer'
 import PlanSelectModal   from '../components/dashboard/PlanSelectModal'
+import { PLAN_KEYS }     from '../lib/plans'
 import ProgramSwitcher   from '../components/dashboard/ProgramSwitcher'
 
 import {
@@ -421,7 +422,11 @@ export default function Dashboard() {
   }
 
   // ── Stripe checkout — called by PlanSelectModal after plan is chosen ───────
-  async function startCheckout(priceId) {
+  // Takes a PLAN KEY ('individual' | 'school'), not a Stripe price id. The
+  // server resolves the price from its own environment — see
+  // api/stripe-checkout.js and src/lib/plans.js for why the browser never
+  // holds a price id.
+  async function startCheckout(planKey) {
     setCheckoutError('')
 
     if (!org?.id) {
@@ -434,13 +439,13 @@ export default function Dashboard() {
       console.warn('[Dashboard] startCheckout: user.email is missing', { user })
       return
     }
-    if (!priceId || priceId === 'undefined') {
-      setCheckoutError('Stripe price ID is not configured — check VITE_STRIPE_PRICE_* environment variables.')
-      console.error('[Dashboard] startCheckout: priceId is invalid:', priceId)
+    if (!PLAN_KEYS.includes(planKey)) {
+      setCheckoutError('Pick a plan to continue.')
+      console.error('[Dashboard] startCheckout: invalid plan key:', planKey)
       return
     }
 
-    console.log('[Dashboard] startCheckout →', { priceId, orgId: org.id })
+    console.log('[Dashboard] startCheckout →', { plan: planKey, orgId: org.id })
 
     setCheckoutLoading(true)
     try {
@@ -462,7 +467,7 @@ export default function Dashboard() {
           'Content-Type':  'application/json',
           'Authorization': `Bearer ${accessToken}`,
         },
-        body:    JSON.stringify({ priceId }),
+        body:    JSON.stringify({ plan: planKey }),
       })
       const data = await res.json().catch(() => ({}))
       console.log('[Dashboard] startCheckout ← API response', res.status, data)
@@ -1234,10 +1239,11 @@ export default function Dashboard() {
       {/* ── Plan selector modal ── */}
       {showPlanModal && (
         <PlanSelectModal
-          onConfirm={priceId => startCheckout(priceId)}
+          onConfirm={planKey => startCheckout(planKey)}
           onClose={() => { setShowPlanModal(false); setCheckoutError('') }}
           loading={checkoutLoading}
           error={checkoutError}
+          currentTier={subscription?.plan_tier ?? null}
         />
       )}
 

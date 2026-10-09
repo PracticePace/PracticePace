@@ -146,9 +146,13 @@ export default function MarketingFooter() {
           <p style={{ ...LINK_STYLE, color: '#7a7a7a' }}>
             © 2026 Practice:Pace. All rights reserved.
           </p>
+          {/* Was two href="#" placeholders rendering on every marketing page.
+              A dead legal link is a worse signal than no link, and Stripe's
+              live-account review looks for reachable terms and privacy. */}
           <div className="flex items-center gap-5">
-            <a href="#" className="hover:opacity-80" style={{ ...LINK_STYLE, color: '#7a7a7a' }}>Privacy</a>
-            <a href="#" className="hover:opacity-80" style={{ ...LINK_STYLE, color: '#7a7a7a' }}>Terms</a>
+            <Link to="/privacy" className="hover:opacity-80" style={{ ...LINK_STYLE, color: '#7a7a7a' }}>Privacy</Link>
+            <Link to="/terms"   className="hover:opacity-80" style={{ ...LINK_STYLE, color: '#7a7a7a' }}>Terms</Link>
+            <Link to="/contact" className="hover:opacity-80" style={{ ...LINK_STYLE, color: '#7a7a7a' }}>Contact</Link>
           </div>
         </div>
       </div>

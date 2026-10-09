@@ -1,70 +1,34 @@
+// Pricing page — /pricing
+//
+// Plan names, prices and feature lists all come from src/lib/plans.js, which
+// the in-app paywall (PlanSelectModal.jsx) reads from too. Before that shared
+// config existed this file held the prices as numbers and the modal held them
+// again as hardcoded strings, with nothing keeping the two in agreement or
+// either of them in agreement with Stripe.
+//
+// The monthly/annual toggle is gone. Both plans are billed annually, so a
+// toggle with one position on each side was just a control that did nothing.
+
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
+import { PLAN_LIST, TRIAL_DAYS } from '../lib/plans'
 import Logo from '../components/Logo'
 
-// ── Plan definitions ──────────────────────────────────────────────────────────
-const PLANS = [
-  {
-    id:          'single',
-    name:        'Single Program',
-    desc:        'Perfect for one team or program',
-    monthlyPrice: 79,
-    annualPrice:  749,
-    annualNote:   'Save ~21%',
-    priceIdMonthly: import.meta.env.VITE_STRIPE_PRICE_SINGLE_MONTHLY,
-    priceIdAnnual:  import.meta.env.VITE_STRIPE_PRICE_SINGLE_ANNUAL,
-    features: [
-      'Unlimited practice scripts',
-      'Live timer with air horn',
-      'MP3 music player',
-      'Scoreboard display',
-      'Video library',
-      'Up to 5 coaches',
-      'iPad & desktop ready',
-    ],
-    highlight: false,
-  },
-  {
-    id:          'school',
-    name:        'School',
-    desc:        'Multiple programs, one account',
-    monthlyPrice: 199,
-    annualPrice:  1872,
-    annualNote:   'Save ~22%',
-    priceIdMonthly: import.meta.env.VITE_STRIPE_PRICE_SCHOOL_MONTHLY,
-    priceIdAnnual:  import.meta.env.VITE_STRIPE_PRICE_SCHOOL_ANNUAL,
-    features: [
-      'Everything in Single Program',
-      'Unlimited programs / teams',
-      'Unlimited coaches',
-      'Admin dashboard',
-      'Priority support',
-      'Early access to new features',
-    ],
-    highlight: true,
-  },
-]
-
-// ── Helper ────────────────────────────────────────────────────────────────────
 function fmt(n) {
   return n.toLocaleString('en-US')
 }
 
-// ── Pricing page ─────────────────────────────────────────────────────────────
 export default function Pricing() {
   const { user, profile } = useAuth()
   const navigate          = useNavigate()
-  const [annual,  setAnnual]  = useState(true)
-  const [loading, setLoading] = useState(null)  // priceId being checked out
+  const [loading, setLoading] = useState(null)   // plan key being checked out
   const [error,   setError]   = useState('')
 
-  const orgId   = profile?.current_org_id ?? null
+  const orgId = profile?.current_org_id ?? null
 
   async function startTrial(plan) {
-    const priceId = annual ? plan.priceIdAnnual : plan.priceIdMonthly
-
     // Not logged in — send to login first
     if (!user) { navigate('/'); return }
 
@@ -74,14 +38,13 @@ export default function Pricing() {
     }
 
     setError('')
-    setLoading(priceId)
+    setLoading(plan.key)
     try {
       // /api/stripe-checkout requires a Supabase JWT and derives the account,
-      // email and program name from the verified session. This call used to
-      // send `accountId: orgId` — an ORGANIZATION id where the endpoint and
-      // webhook both expect an ACCOUNTS id, so the webhook's PATCH matched
-      // zero rows and entitlement was never written. Deriving it server-side
-      // removes the spoofing hole and fixes that mismatch at the same time.
+      // email and program name from the verified session. The body carries
+      // only the PLAN KEY — the server maps that to a Stripe price from its own
+      // environment. Sending a price id from here would let a caller name any
+      // price on our Stripe account and get entitlement written from it.
       const { data: { session } } = await supabase.auth.getSession()
       const accessToken = session?.access_token ?? null
       if (!accessToken) {
@@ -94,7 +57,7 @@ export default function Pricing() {
           'Content-Type':  'application/json',
           'Authorization': `Bearer ${accessToken}`,
         },
-        body:    JSON.stringify({ priceId }),
+        body:    JSON.stringify({ plan: plan.key }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Checkout failed')
@@ -129,44 +92,21 @@ export default function Pricing() {
           Simple, honest pricing.
         </h1>
         <p className="text-base" style={{ color: '#9a8080' }}>
-          Start with a free 14-day trial. No credit card required to try.
+          Start with a free {TRIAL_DAYS}-day trial. No credit card required to try.
         </p>
-
-        {/* ── Annual / Monthly toggle ── */}
-        <div className="flex items-center justify-center gap-3 mt-6">
-          <span className="text-sm font-semibold"
-            style={{ color: !annual ? '#fff' : '#4a2020' }}>Monthly</span>
-          <button
-            onClick={() => setAnnual(a => !a)}
-            className="relative w-12 h-6 rounded-full transition-colors"
-            style={{ backgroundColor: annual ? '#cc1111' : '#2a0000' }}
-          >
-            <span
-              className="absolute top-1 w-4 h-4 rounded-full bg-white transition-all"
-              style={{ left: annual ? '1.625rem' : '0.25rem' }}
-            />
-          </button>
-          <span className="text-sm font-semibold"
-            style={{ color: annual ? '#fff' : '#4a2020' }}>
-            Annual
-            <span className="ml-1.5 text-xs font-bold px-1.5 py-0.5 rounded-full"
-              style={{ backgroundColor: '#cc111122', color: '#ff6666', border: '1px solid #cc111144' }}>
-              Save 20%
-            </span>
-          </span>
-        </div>
+        <p className="text-sm mt-2" style={{ color: '#6a4040' }}>
+          Two plans, both billed annually.
+        </p>
       </div>
 
       {/* ── Plan cards ── */}
       <div className="flex-1 flex items-start justify-center gap-5 px-6 pb-12 flex-wrap">
-        {PLANS.map(plan => {
-          const price     = annual ? plan.annualPrice   : plan.monthlyPrice
-          const priceId   = annual ? plan.priceIdAnnual : plan.priceIdMonthly
-          const isLoading = loading === priceId
+        {PLAN_LIST.map(plan => {
+          const isLoading = loading === plan.key
 
           return (
             <div
-              key={plan.id}
+              key={plan.key}
               className="w-full max-w-sm flex flex-col rounded-2xl overflow-hidden"
               style={{
                 backgroundColor: plan.highlight ? '#110000' : '#0d0000',
@@ -185,26 +125,23 @@ export default function Pricing() {
                 {/* Plan name */}
                 <div>
                   <h2 className="text-xl font-black text-white">{plan.name}</h2>
-                  <p className="text-sm mt-1" style={{ color: '#9a8080' }}>{plan.desc}</p>
+                  <p className="text-sm mt-1" style={{ color: '#9a8080' }}>{plan.tagline}</p>
                 </div>
 
                 {/* Price */}
                 <div className="flex items-end gap-1">
-                  <span className="text-4xl font-black text-white">${fmt(price)}</span>
+                  <span className="text-4xl font-black text-white">${fmt(plan.price)}</span>
                   <span className="text-sm mb-1.5" style={{ color: '#9a8080' }}>
-                    /{annual ? 'yr' : 'mo'}
+                    {plan.period}
                   </span>
-                  {annual && (
-                    <span className="ml-2 mb-1.5 text-xs font-bold px-2 py-0.5 rounded-full"
-                      style={{ backgroundColor: '#1a2200', color: '#88cc44', border: '1px solid #2a3300' }}>
-                      {plan.annualNote}
-                    </span>
-                  )}
                 </div>
+
+                {/* Who pays */}
+                <p className="text-xs" style={{ color: '#6a4040' }}>{plan.billedBy}</p>
 
                 {/* Trial note */}
                 <p className="text-xs font-semibold" style={{ color: '#cc8800' }}>
-                  ✦ 14-day free trial — cancel any time
+                  ✦ {TRIAL_DAYS}-day free trial — cancel any time
                 </p>
 
                 {/* Features */}
@@ -229,8 +166,15 @@ export default function Pricing() {
                     boxShadow:       plan.highlight ? '0 4px 20px #cc111166' : 'none',
                   }}
                 >
-                  {isLoading ? 'Starting…' : 'Start Free 14-Day Trial'}
+                  {isLoading ? 'Starting…' : `Start Free ${TRIAL_DAYS}-Day Trial`}
                 </button>
+
+                {/* Terms consent — sits with the button that creates the
+                    obligation, not buried in the page footer. */}
+                <p className="text-xs text-center leading-relaxed" style={{ color: '#4a2020' }}>
+                  By subscribing you agree to the{' '}
+                  <Link to="/terms" className="underline" style={{ color: '#9a8080' }}>Terms</Link>.
+                </p>
               </div>
             </div>
           )
@@ -242,9 +186,14 @@ export default function Pricing() {
       )}
 
       {/* ── Footer ── */}
-      <div className="text-center px-6 py-6" style={{ borderTop: '1px solid #1a0000' }}>
+      <div className="text-center px-6 py-6 flex flex-col gap-2" style={{ borderTop: '1px solid #1a0000' }}>
         <p className="text-xs" style={{ color: '#4a2020' }}>
-          Secure payments via Stripe. Cancel any time. No refunds for partial periods.
+          Secure payments via Stripe. Annual subscriptions renew automatically
+          and can be cancelled any time from the billing portal. No prorated refunds.
+        </p>
+        <p className="text-xs flex items-center justify-center gap-4" style={{ color: '#4a2020' }}>
+          <Link to="/terms"   className="hover:opacity-80 underline">Terms of Service</Link>
+          <Link to="/privacy" className="hover:opacity-80 underline">Privacy Policy</Link>
         </p>
       </div>
     </div>

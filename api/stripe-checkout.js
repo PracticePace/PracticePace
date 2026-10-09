@@ -9,18 +9,33 @@
 // ignored. skipTrial is likewise derived server-side — a client that simply
 // omitted it could mint itself a fresh 14-day trial on every checkout.
 //
-// The only thing still taken from the body is priceId (which plan was clicked).
+// The only thing taken from the body is `plan` — the PLAN KEY, not a price.
+//
+// WHY A KEY AND NOT A PRICE ID (2026-10-09)
+// This used to accept `priceId` straight from the browser and forward it to
+// Stripe. The four price IDs were in the client bundle as VITE_STRIPE_PRICE_*,
+// so a caller could read them — or any other price on our Stripe account they
+// could discover — and name whichever one they liked. Checkout would then
+// create a subscription at a price we did not choose, and the webhook would
+// write entitlement from it. Plan keys are a closed set of two strings the
+// server validates against its own environment, so the worst a tampered
+// request can do is ask for the other published plan at the other published
+// price.
 //
 // Auth follows the same shape as api/invite-coach.js and api/delete-program.js:
 // the JWT is handed to Supabase /auth/v1/user rather than verified at the edge.
 //
 // REQUIRED ENV VARS (Vercel → Settings → Environment Variables):
 //   STRIPE_SECRET_KEY
+//   STRIPE_PRICE_INDIVIDUAL     ($699/yr, 1 program)
+//   STRIPE_PRICE_SCHOOL         ($1,199/yr, unlimited programs)
 //   VITE_SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY
 //
-// Request:  Authorization: Bearer <supabase jwt>;  body { priceId }
+// Request:  Authorization: Bearer <supabase jwt>;  body { plan: 'individual' | 'school' }
 // Response: { url }  — redirect the browser to this URL
+
+import { priceIdForPlanKey, isPlanKey } from './_entitlements.js'
 
 export const config = { runtime: 'edge' }
 
@@ -187,18 +202,23 @@ export default async function handler(req) {
     return json({ error: 'Server misconfigured — contact support.' }, 500)
   }
 
-  // ── Parse body — priceId is the ONLY field still honoured ──────────────────
+  // ── Parse body — `plan` is the ONLY field honoured ─────────────────────────
   let body
   try { body = await req.json() } catch (e) {
     console.error('[stripe-checkout] Failed to parse request body:', e.message)
     return json({ error: 'Invalid request body' }, 400)
   }
 
-  const { priceId } = body
-  if (!priceId || priceId === 'undefined') {
-    console.error('[stripe-checkout] priceId is missing or undefined — check VITE_STRIPE_PRICE_* env vars on the client')
-    return json({ error: 'priceId is required — Stripe price environment variables may not be configured.' }, 400)
+  const plan = body?.plan
+  if (!isPlanKey(plan)) {
+    console.warn('[stripe-checkout] rejected plan key:', JSON.stringify(plan))
+    return json({ error: 'Choose a plan to continue.' }, 400)
   }
+
+  // The price never comes from the caller. Resolved here, from our own env.
+  const priceLookup = priceIdForPlanKey(plan)
+  if (!priceLookup.ok) return json({ error: priceLookup.error }, priceLookup.status)
+  const priceId = priceLookup.priceId
 
   // ── 1. Who is calling? ──────────────────────────────────────────────────────
   const authCheck = await verifyCallerJwt(req, supabaseUrl, serviceKey)
@@ -226,7 +246,7 @@ export default async function handler(req) {
 
   const orgName = await loadOrgName(supabaseUrl, serviceKey, profCheck.profile.org_id)
 
-  console.log('[stripe-checkout] authorised request:', { priceId, accountId, skipTrial })
+  console.log('[stripe-checkout] authorised request:', { plan, priceId, accountId, skipTrial })
 
   try {
     // ── Find or create Stripe customer ────────────────────────────────────────
@@ -258,11 +278,17 @@ export default async function handler(req) {
       'line_items[0][quantity]':                '1',
       'subscription_data[metadata][accountId]': accountId,
       'subscription_data[metadata][priceId]':   priceId,
+      // The plan key rides along so the webhook can write accounts.plan_tier
+      // even if the price is later rotated in Stripe. The webhook still
+      // prefers the tier it derives from the live subscription's price — this
+      // is the fallback, not the primary.
+      'subscription_data[metadata][plan]':      plan,
       success_url: 'https://practicepace.app/dashboard?subscription=success',
       cancel_url:  'https://practicepace.app/dashboard?subscription=cancelled',
       'metadata[accountId]': accountId,
       'metadata[orgName]':   orgName ?? '',
       'metadata[priceId]':   priceId,
+      'metadata[plan]':      plan,
     })
 
     // Only add trial days for brand-new signups with no prior in-app trial
