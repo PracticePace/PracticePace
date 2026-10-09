@@ -5,6 +5,7 @@ import { useAuth }             from '../context/AuthContext'
 import Logo    from '../components/Logo'
 import Tagline from '../components/Tagline'
 import { SPORTS } from '../lib/sports'
+import { PLAN_LIST, PLANS, planLabel } from '../lib/plans'
 
 const STEPS = ['Account Type', 'Program Details', 'Confirmation']
 
@@ -133,26 +134,25 @@ function Step1({ accountType, setAccountType, onNext, onSkip, skipping }) {
         </p>
       </div>
 
+      {/* Cards come from src/lib/plans.js, the same config /pricing and the
+          in-app PlanSelectModal read. This screen used to hardcode its own
+          "$79/mo" and "$199/mo" — a third copy of the prices, and the one a
+          coach sees FIRST. It kept quoting the retired monthly matrix after
+          the annual plans shipped. */}
       <div className="flex flex-col sm:flex-row gap-4">
-        <PlanCard
-          id="single"
-          title="Single Program"
-          price="$79"
-          period="mo"
-          features={['1 sport', 'Unlimited coaches', 'Script builder', 'Live display & timer', 'Scoreboard', 'All features']}
-          selected={accountType === 'single'}
-          onSelect={setAccountType}
-        />
-        <PlanCard
-          id="school"
-          title="School — All Programs"
-          price="$199"
-          period="mo"
-          badge="Best Value"
-          features={['All sports', 'Unlimited programs', 'Unlimited coaches', 'Script builder', 'Live display & timer', 'Scoreboard', 'All features']}
-          selected={accountType === 'school'}
-          onSelect={setAccountType}
-        />
+        {PLAN_LIST.map(plan => (
+          <PlanCard
+            key={plan.key}
+            id={plan.key}
+            title={plan.name}
+            price={plan.priceText}
+            period="yr"
+            badge={plan.highlight ? 'Best Value' : null}
+            features={plan.features}
+            selected={accountType === plan.key}
+            onSelect={setAccountType}
+          />
+        ))}
       </div>
 
       {/* Primary CTA — always active */}
@@ -296,10 +296,10 @@ function Step2({ form, setForm }) {
 
 // ── Step 3 ────────────────────────────────────────────────────────────────────
 function Step3({ accountType, form }) {
-  const planLabel = accountType === 'school' ? 'School — All Programs' : 'Single Program'
+  const planLabelText = planLabel(accountType) ?? PLANS.individual.name
 
   const rows = [
-    { label: 'Plan', value: planLabel },
+    { label: 'Plan', value: planLabelText },
     { label: 'Trial', value: '14 days free — no credit card needed' },
     { label: 'Name', value: form.fullName },
     { label: 'Program', value: form.programName },
@@ -358,7 +358,7 @@ export default function Onboarding() {
 
   const [step, setStep] = useState(1)
   // Default to 'single' so there's always a valid plan even if user skips selection
-  const [accountType, setAccountType] = useState('single')
+  const [accountType, setAccountType] = useState('individual')
   const [form, setForm] = useState({
     fullName: '',
     programName: '',
