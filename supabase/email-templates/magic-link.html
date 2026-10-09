@@ -7,6 +7,21 @@
   </head>
   <!--
     Paste into Supabase Dashboard -> Authentication -> Emails.
+
+    WHY NOT {{ .ConfirmationURL }} — this matters, don't "simplify" it back.
+    ConfirmationURL points at Supabase's /auth/v1/verify, which consumes the
+    token on a GET. Gmail's link-safety prefetcher issues that GET before the
+    coach ever clicks, so the link is already spent when they do. Linking
+    straight at our own /auth/callback with {{ .TokenHash }} means the token is
+    only ever spent by verifyOtp, which is a POST a prefetcher won't make.
+    It is also the only pattern that survives being opened on a different
+    device: a PKCE ?code= needs a code_verifier from the browser that started
+    the flow, a token_hash needs nothing.
+
+    src/pages/AcceptInvite.jsx and src/pages/ResetPassword.jsx already rely on
+    receiving ?token_hash=&type= and running verifyOtp themselves;
+    /auth/callback forwards those two straight through untouched.
+
     Table layout and inline styles only: Outlook and Gmail strip <style> blocks
     and ignore flexbox, so anything fancier renders as an unstyled stack.
     Light background with explicit colors throughout — Gmail's dark mode
@@ -56,7 +71,7 @@
                 <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                   <tr>
                     <td align="center" bgcolor="#cc1111" style="border-radius:6px;">
-                      <a href="{{ .ConfirmationURL }}"
+                      <a href="https://practicepace.app/auth/callback?token_hash={{ .TokenHash }}&amp;type=magiclink"
                          style="display:inline-block;padding:13px 28px;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">Sign in</a>
                     </td>
                   </tr>
@@ -73,7 +88,7 @@
                   If the button doesn't work, copy and paste this link into your browser:
                 </p>
                 <p style="margin:6px 0 0 0;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.5;word-break:break-all;">
-                  <a href="{{ .ConfirmationURL }}" style="color:#cc1111;text-decoration:underline;">{{ .ConfirmationURL }}</a>
+                  <a href="https://practicepace.app/auth/callback?token_hash={{ .TokenHash }}&amp;type=magiclink" style="color:#cc1111;text-decoration:underline;">https://practicepace.app/auth/callback?token_hash={{ .TokenHash }}&amp;type=magiclink</a>
                 </p>
               </td>
             </tr>

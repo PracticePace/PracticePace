@@ -469,7 +469,12 @@ export default async function handler(req) {
           role:      invitedRole,
           full_name: name?.trim() ?? '',
         },
-        redirect_to: 'https://www.practicepace.app/invite',
+        // Goes through /auth/callback (next=/invite), which forwards the
+        // token_hash untouched so AcceptInvite keeps doing its own verifyOtp.
+        // Mirror of INVITE_REDIRECT in src/lib/authRedirects.js — an Edge
+        // function can't import out of src/, so this string is duplicated.
+        // If you change one, change the other.
+        redirect_to: 'https://practicepace.app/auth/callback?next=%2Finvite',
       }),
     })
   } catch (err) {

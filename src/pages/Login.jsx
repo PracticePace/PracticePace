@@ -4,6 +4,7 @@ import { supabase }    from '../lib/supabase'
 import Logo          from '../components/Logo'
 import Tagline       from '../components/Tagline'
 import PasswordInput from '../components/PasswordInput'
+import { SIGNUP_REDIRECT, RESET_PASSWORD_REDIRECT } from '../lib/authRedirects'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -55,8 +56,15 @@ export default function Login() {
     try {
       if (mode === 'create') {
         console.log('[Login] Attempting sign up for', email)
+        // emailRedirectTo was missing entirely, so the confirm link fell back
+        // to the project's Site URL and landed the coach on the marketing home
+        // page with no session and no explanation. /auth/callback handles it.
         const { error: signUpError } = await withTimeout(
-          supabase.auth.signUp({ email, password })
+          supabase.auth.signUp({
+            email,
+            password,
+            options: { emailRedirectTo: SIGNUP_REDIRECT },
+          })
         )
         if (signUpError) throw signUpError
         console.log('[Login] Sign up succeeded — awaiting email confirmation')
@@ -99,8 +107,10 @@ export default function Login() {
     setLoading(true)
     try {
       const { error: resetErr } = await withTimeout(
+        // Goes through /auth/callback, which forwards token_hash straight on
+        // to /reset-password so that page keeps doing its own verifyOtp.
         supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: 'https://www.practicepace.app/reset-password',
+          redirectTo: RESET_PASSWORD_REDIRECT,
         })
       )
       if (resetErr) throw resetErr

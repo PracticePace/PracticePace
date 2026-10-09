@@ -14,6 +14,7 @@ import SportsPage  from './pages/SportsPage'
 import ContactPage from './pages/ContactPage'
 import TermsPage   from './pages/TermsPage'
 import PrivacyPage from './pages/PrivacyPage'
+import AuthCallback from './pages/AuthCallback'
 import Login from './pages/Login'
 import Onboarding from './pages/Onboarding'
 import Dashboard from './pages/Dashboard'
@@ -85,6 +86,10 @@ export default function App() {
             <Route path="/script"     element={<ProtectedRoute><LandscapeOnly><Script /></LandscapeOnly></ProtectedRoute>} />
             <Route path="/scoreboard" element={<ProtectedRoute><LandscapeOnly><Scoreboard /></LandscapeOnly></ProtectedRoute>} />
             <Route path="/admin"      element={<ProtectedRoute><LandscapeOnly><Admin /></LandscapeOnly></ProtectedRoute>} />
+            {/* Landing point for every link we email. Establishes the session
+                then forwards on — see src/lib/authRedirects.js. Must stay
+                public: the whole point is that the coach has no session yet. */}
+            <Route path="/auth/callback"  element={<AuthCallback />} />
             <Route path="/invite"         element={<AcceptInvite />} />
             <Route path="/reset-password" element={<ResetPassword />} />
           </Routes>
