@@ -28,7 +28,7 @@ export default function TermsPage() {
       <P>
         These Terms of Service (&ldquo;Terms&rdquo;) govern your use of
         Practice:Pace, a practice-management application for coaches
-        (&ldquo;the Service&rdquo;). The Service is operated by Practice:Pace
+        (&ldquo;the Service&rdquo;). The Service is operated by Boostr, LLC
         (&ldquo;we&rdquo;, &ldquo;us&rdquo;). By creating an account or using
         the Service, you agree to these Terms. If you do not agree, do not use
         the Service.

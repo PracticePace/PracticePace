@@ -26,7 +26,7 @@ export default function PrivacyPage() {
         This policy explains what Practice:Pace collects, why, who we share it
         with, and what you can ask us to do about it. It applies to the
         Practice:Pace website and application (&ldquo;the Service&rdquo;),
-        operated by Practice:Pace (&ldquo;we&rdquo;, &ldquo;us&rdquo;).
+        operated by Boostr, LLC (&ldquo;we&rdquo;, &ldquo;us&rdquo;).
       </P>
 
       <Section n="1" title="What we collect">
