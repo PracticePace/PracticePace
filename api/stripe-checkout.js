@@ -32,7 +32,19 @@
 //   VITE_SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY
 //
-// Request:  Authorization: Bearer <supabase jwt>;  body { plan: 'individual' | 'school' }
+// DISCOUNT CODES
+// The session always lets the customer type a code at Stripe
+// (allow_promotion_codes). If one arrived with the request — from ?code= on
+// /pricing, carried through signup the same way the plan key is — it is looked
+// up here and pre-applied so the coach never has to retype a code they already
+// followed a link for. An unknown or expired code is NOT an error: the session
+// falls back to the type-it-yourself box, because refusing checkout over a bad
+// code loses the sale over a typo.
+//
+// Stripe rejects a session that sets BOTH discounts and allow_promotion_codes,
+// so it is exactly one or the other.
+//
+// Request:  Authorization: Bearer <supabase jwt>;  body { plan, code? }
 // Response: { url }  — redirect the browser to this URL
 
 import { priceIdForPlanKey, isPlanKey } from './_entitlements.js'
@@ -221,6 +233,11 @@ export default async function handler(req) {
     return json({ error: 'Invalid request body' }, 400)
   }
 
+  // Optional. Normalised the way Stripe stores codes so 'coachfriend' from a
+  // hand-typed URL still matches COACHFRIEND.
+  const rawCode = String(body?.code ?? '').trim().toUpperCase()
+  const wantedCode = /^[A-Z0-9][A-Z0-9_-]{2,39}$/.test(rawCode) ? rawCode : null
+
   const plan = body?.plan
   if (!isPlanKey(plan)) {
     console.warn('[stripe-checkout] rejected plan key:', JSON.stringify(plan))
@@ -275,6 +292,24 @@ export default async function handler(req) {
       console.log('[stripe-checkout] Created Stripe customer:', customerId)
     }
 
+    // ── Resolve a pre-applied promotion code ──────────────────────────────────
+    // Never fatal. Every failure path here leaves promotionCodeId null, which
+    // means the session falls back to allow_promotion_codes.
+    let promotionCodeId = null
+    if (wantedCode) {
+      try {
+        const found = await stripeGet(
+          `/promotion_codes?code=${encodeURIComponent(wantedCode)}&active=true&limit=1`,
+          secretKey,
+        )
+        promotionCodeId = found.data?.[0]?.id ?? null
+        console.log('[stripe-checkout] promo code', wantedCode,
+          promotionCodeId ? `→ ${promotionCodeId}` : '→ not found/inactive, falling back to manual entry')
+      } catch (err) {
+        console.warn('[stripe-checkout] promo lookup failed (non-fatal):', err?.message ?? err)
+      }
+    }
+
     // ── Create Checkout Session ───────────────────────────────────────────────
     // skipTrial = true when the coach is converting from an in-app trial.
     // Omitting trial_period_days means Stripe shows "Subscribe" not "Start trial"
@@ -298,6 +333,17 @@ export default async function handler(req) {
       'metadata[priceId]':   priceId,
       'metadata[plan]':      plan,
     })
+
+    // Exactly one of these two — Stripe 400s if both are set.
+    if (promotionCodeId) {
+      params.set('discounts[0][promotion_code]', promotionCodeId)
+      // So the webhook can record WHICH code was used without a second
+      // lookup, and so it survives the code later being deactivated.
+      params.set('subscription_data[metadata][promoCode]', wantedCode)
+      params.set('metadata[promoCode]', wantedCode)
+    } else {
+      params.set('allow_promotion_codes', 'true')
+    }
 
     // Only add trial days for brand-new signups with no prior in-app trial
     if (!skipTrial) {

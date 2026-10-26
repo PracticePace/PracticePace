@@ -10,10 +10,11 @@
 // toggle with one position on each side was just a control that did nothing.
 
 import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
 import { PLAN_LIST, TRIAL_DAYS } from '../lib/plans'
+import { PENDING_CODE_KEY, normalizePromoCode } from '../lib/siteConfig'
 import MarketingHeader from '../components/marketing/MarketingHeader'
 import MarketingFooter from '../components/marketing/MarketingFooter'
 
@@ -24,8 +25,20 @@ function fmt(n) {
 export default function Pricing() {
   const { user, profile } = useAuth()
   const navigate          = useNavigate()
+  const [search] = useSearchParams()
   const [loading, setLoading] = useState(null)   // plan key being checked out
   const [error,   setError]   = useState('')
+
+  // ?code=COACHFRIEND. Parked immediately so it survives the sign-up round
+  // trip for a visitor who has no account yet; the URL is the source of truth
+  // when present, otherwise fall back to whatever was parked earlier.
+  const promoCode = (() => {
+    const fromUrl = normalizePromoCode(search.get('code'))
+    try {
+      if (fromUrl) { localStorage.setItem(PENDING_CODE_KEY, fromUrl); return fromUrl }
+      return normalizePromoCode(localStorage.getItem(PENDING_CODE_KEY))
+    } catch { return fromUrl }
+  })()
 
   const orgId = profile?.current_org_id ?? null
 
@@ -36,7 +49,9 @@ export default function Pricing() {
     // for a signed-in one bounced to the dashboard. Either way the plan
     // choice was thrown away. Login parks ?plan= for Onboarding to preselect.
     if (!user) {
-      navigate(`/login?mode=signup&plan=${encodeURIComponent(plan.key)}`)
+      const q = new URLSearchParams({ mode: 'signup', plan: plan.key })
+      if (promoCode) q.set('code', promoCode)
+      navigate(`/login?${q.toString()}`)
       return
     }
 
@@ -68,10 +83,13 @@ export default function Pricing() {
           'Content-Type':  'application/json',
           'Authorization': `Bearer ${accessToken}`,
         },
-        body:    JSON.stringify({ plan: plan.key }),
+        body:    JSON.stringify({ plan: plan.key, ...(promoCode ? { code: promoCode } : {}) }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Checkout failed')
+      // Consumed. Leaving it parked would silently re-apply the code to a
+      // second purchase weeks later.
+      try { localStorage.removeItem(PENDING_CODE_KEY) } catch { /* private mode */ }
       window.location.href = data.url
     } catch (err) {
       setError(err.message ?? 'Could not start checkout. Try again.')
@@ -98,6 +116,18 @@ export default function Pricing() {
         <p className="text-sm mt-2" style={{ color: '#6a4040' }}>
           Two plans, both billed annually.
         </p>
+
+        {/* Tells the visitor their link was understood. Deliberately does NOT
+            claim the code is valid — that is only known once Stripe is asked,
+            and promising a discount we then can't apply is worse than this. */}
+        {promoCode && (
+          <p
+            className="inline-block text-xs font-bold mt-4 px-3 py-1.5 rounded-full"
+            style={{ backgroundColor: '#1a2200', color: '#88cc44', border: '1px solid #2a3300' }}
+          >
+            Discount code {promoCode} will be applied at checkout
+          </p>
+        )}
       </div>
 
       {/* ── Plan cards ── */}

@@ -19,6 +19,7 @@ import PlaybookSection   from '../components/dashboard/PlaybookSection'
 import { getSnapshot as getPracticeSnapshot } from '../lib/practiceTimer'
 import PlanSelectModal   from '../components/dashboard/PlanSelectModal'
 import { PLAN_KEYS }     from '../lib/plans'
+import { PENDING_CODE_KEY, normalizePromoCode } from '../lib/siteConfig'
 import ProgramSwitcher   from '../components/dashboard/ProgramSwitcher'
 
 import {
@@ -445,7 +446,11 @@ export default function Dashboard() {
       return
     }
 
-    console.log('[Dashboard] startCheckout →', { plan: planKey, orgId: org.id })
+    let pendingCode = null
+    try { pendingCode = normalizePromoCode(localStorage.getItem(PENDING_CODE_KEY)) }
+    catch { /* private mode */ }
+
+    console.log('[Dashboard] startCheckout →', { plan: planKey, orgId: org.id, code: pendingCode })
 
     setCheckoutLoading(true)
     try {
@@ -467,12 +472,16 @@ export default function Dashboard() {
           'Content-Type':  'application/json',
           'Authorization': `Bearer ${accessToken}`,
         },
-        body:    JSON.stringify({ plan: planKey }),
+        // A code followed in from /pricing before signing up is still parked
+        // here — this is the in-app checkout path, and a coach who clicked a
+        // discount link then finished onboarding should not lose it.
+        body:    JSON.stringify({ plan: planKey, ...(pendingCode ? { code: pendingCode } : {}) }),
       })
       const data = await res.json().catch(() => ({}))
       console.log('[Dashboard] startCheckout ← API response', res.status, data)
       if (!res.ok) throw new Error(data.error ?? `Server error (${res.status})`)
       if (!data.url) throw new Error('No redirect URL returned from checkout API')
+      try { localStorage.removeItem(PENDING_CODE_KEY) } catch { /* private mode */ }
       window.location.href = data.url
     } catch (err) {
       console.error('[Dashboard] startCheckout error:', err.message)

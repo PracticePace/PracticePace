@@ -25,3 +25,16 @@ export const SUPPORT_EMAIL = 'practicepace@gmail.com'
 // possibly a different tab, so it can't be React state or sessionStorage.
 // Read and cleared by Onboarding; written by Login when it sees ?plan=.
 export const PENDING_PLAN_KEY = 'pp_pending_plan'
+
+// Same idea for a discount code followed in from ?code= on /pricing. It has
+// the same journey to survive — sign up, go to email, come back, maybe in a
+// different tab — and the same one-shot lifetime. Cleared once checkout has
+// used it, so a code can't silently re-apply to a second purchase weeks later.
+export const PENDING_CODE_KEY = 'pp_pending_code'
+
+// Shape Stripe will accept, applied before anything is parked or sent so a
+// mistyped URL never becomes a stored value.
+export function normalizePromoCode(raw) {
+  const code = String(raw ?? '').trim().toUpperCase()
+  return /^[A-Z0-9][A-Z0-9_-]{2,39}$/.test(code) ? code : null
+}

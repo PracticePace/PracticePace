@@ -86,7 +86,17 @@ export default function App() {
             <Route path="/display"    element={<ProtectedRoute><LandscapeOnly><Display /></LandscapeOnly></ProtectedRoute>} />
             <Route path="/script"     element={<ProtectedRoute><LandscapeOnly><Script /></LandscapeOnly></ProtectedRoute>} />
             <Route path="/scoreboard" element={<ProtectedRoute><LandscapeOnly><Scoreboard /></LandscapeOnly></ProtectedRoute>} />
-            <Route path="/admin"      element={<ProtectedRoute><LandscapeOnly><Admin /></LandscapeOnly></ProtectedRoute>} />
+            {/* NOT wrapped in ProtectedRoute, deliberately. ProtectedRoute
+                redirects a signed-out visitor to the login screen, which
+                tells them /admin exists and is worth attacking. Admin.jsx
+                renders the ordinary marketing 404 for everyone who is not an
+                owner — including signed-out visitors — so the route is
+                indistinguishable from a typo. The real gate is server-side:
+                /api/admin-stats checks ADMIN_EMAILS and 404s.
+
+                LandscapeOnly is dropped too — this is a dense desktop table,
+                and "Turn your iPad sideways" is the wrong answer for it. */}
+            <Route path="/admin"      element={<Admin />} />
             {/* Landing point for every link we email. Establishes the session
                 then forwards on — see src/lib/authRedirects.js. Must stay
                 public: the whole point is that the coach has no session yet. */}

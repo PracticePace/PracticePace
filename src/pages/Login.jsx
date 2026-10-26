@@ -5,7 +5,7 @@ import Logo          from '../components/Logo'
 import Tagline       from '../components/Tagline'
 import PasswordInput from '../components/PasswordInput'
 import { SIGNUP_REDIRECT, RESET_PASSWORD_REDIRECT } from '../lib/authRedirects'
-import { PENDING_PLAN_KEY } from '../lib/siteConfig'
+import { PENDING_PLAN_KEY, PENDING_CODE_KEY, normalizePromoCode } from '../lib/siteConfig'
 import { PLAN_KEYS } from '../lib/plans'
 
 // Supabase's own minimum is 6. Eight is the number the form promises, so it
@@ -33,10 +33,14 @@ export default function Login() {
   // so it is parked in localStorage rather than held in state or the URL.
   // Onboarding reads and clears it.
   useEffect(() => {
-    const plan = search.get('plan')
-    if (plan && PLAN_KEYS.includes(plan)) {
-      try { localStorage.setItem(PENDING_PLAN_KEY, plan) } catch { /* private mode */ }
-    }
+    try {
+      const plan = search.get('plan')
+      if (plan && PLAN_KEYS.includes(plan)) localStorage.setItem(PENDING_PLAN_KEY, plan)
+
+      // A discount code rides in the same way and for the same reason.
+      const code = normalizePromoCode(search.get('code'))
+      if (code) localStorage.setItem(PENDING_CODE_KEY, code)
+    } catch { /* private mode — the plan and code are conveniences, not state */ }
   }, [search])
 
   // Race any promise against a 10 s timeout — rejects with a typed error on timeout

@@ -15,7 +15,8 @@
 //   accounts — id (matches accountId from Stripe metadata),
 //              stripe_customer_id, stripe_subscription_id,
 //              status ('trialing'|'active'|'past_due'|'canceled'|'complimentary'),
-//              trial_ends_at, price_id, plan_tier
+//              trial_ends_at, price_id, plan_tier,
+//              promo_code, discount_amount_cents
 //   stripe_webhook_events — idempotency + ordering (migration 20260924020000)
 //
 // DURABILITY (2026-09-24). This handler used to return 200 no matter what,
@@ -105,6 +106,39 @@ function priceIdFromSubscription(subData) {
 // tier — see the `...(tier ? {} : {})` spreads at the call sites. Blanking a
 // paying customer's tier because of a config gap would drop them to the
 // Individual program cap, which is a worse failure than a stale tier.
+// What discount, if any, is attached to this subscription?
+//
+// Returns { code, amountCents } — both null when there is none. The code is
+// the human-facing string (COACHFRIEND), taken from the checkout metadata
+// first because that is stable: Stripe's discount object can be detached once
+// a duration:'once' coupon has been consumed, and the promotion_code is only
+// an id anyway.
+//
+// amountCents is computed, not read, because Stripe reports a percent-off
+// coupon as a percentage and we want the dollars it actually took off this
+// subscription's price. Derived at write time so a later price change can't
+// retroactively alter what we recorded.
+function discountFor(subData, metadataCode, unitAmountCents) {
+  const coupon = subData?.discount?.coupon ?? subData?.discounts?.[0]?.coupon ?? null
+  const code   = metadataCode
+    ?? subData?.discount?.promotion_code?.code
+    ?? coupon?.name
+    ?? null
+
+  let amountCents = null
+  if (coupon) {
+    if (typeof coupon.amount_off === 'number') {
+      amountCents = coupon.amount_off
+    } else if (typeof coupon.percent_off === 'number' && Number.isFinite(unitAmountCents)) {
+      amountCents = Math.round(unitAmountCents * (coupon.percent_off / 100))
+    }
+  }
+  // A code with no resolvable coupon still gets recorded with 0 off rather
+  // than null, so "a code was used" stays distinguishable from "no code".
+  if (code && amountCents === null) amountCents = 0
+  return { code: code ?? null, amountCents }
+}
+
 function planTierFor(priceId, metadataPlan) {
   const fromPrice = planTierForPriceId(priceId)
   if (fromPrice) return fromPrice
@@ -361,6 +395,7 @@ export default async function handler(req, res) {
         const subscriptionId = session.subscription
         const priceId        = session.metadata?.priceId
         const metadataPlan   = session.metadata?.plan
+        const metadataCode   = session.metadata?.promoCode ?? null
 
         console.log('[webhook] checkout.session.completed:', {
           accountId, customerId, subscriptionId, priceId,
@@ -382,7 +417,7 @@ export default async function handler(req, res) {
         if (!secretKey) {
           throw retryable('checkout.session.completed: STRIPE_SECRET_KEY missing, cannot read subscription')
         }
-        let subStatus, trialEndsAt, livePriceId
+        let subStatus, trialEndsAt, livePriceId, discount = { code: null, amountCents: null }
         try {
           const subRes = await fetch(`https://api.stripe.com/v1/subscriptions/${subscriptionId}`, {
             headers: { 'Authorization': `Bearer ${secretKey}` },
@@ -396,7 +431,14 @@ export default async function handler(req, res) {
           // what Stripe actually created. They agree today, but only one of them
           // stays correct after a plan change.
           livePriceId = priceIdFromSubscription(subData)
-          console.log('[webhook] Stripe subscription:', { status: subStatus, trial_end: trialEndsAt, price_id: livePriceId })
+          discount = discountFor(
+            subData, metadataCode,
+            subData?.items?.data?.[0]?.price?.unit_amount,
+          )
+          console.log('[webhook] Stripe subscription:', {
+            status: subStatus, trial_end: trialEndsAt, price_id: livePriceId,
+            promo_code: discount.code, discount_cents: discount.amountCents,
+          })
         } catch (err) {
           throw retryable(`checkout.session.completed: subscription fetch failed — ${err?.message ?? err}`)
         }
@@ -421,6 +463,12 @@ export default async function handler(req, res) {
           // Same rule for the tier: write it when we can resolve it, leave the
           // column alone when we can't rather than nulling a known tier.
           ...(planTier ? { plan_tier: planTier } : {}),
+          // Discount is recorded only when there IS one. Writing null on every
+          // checkout would wipe a code off an account that re-subscribes.
+          ...(discount.code ? {
+            promo_code:            discount.code,
+            discount_amount_cents: discount.amountCents,
+          } : {}),
         }
         console.log('[webhook] patching account', accountId, JSON.stringify(patch))
 
