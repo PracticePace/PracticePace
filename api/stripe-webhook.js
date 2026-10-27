@@ -108,22 +108,63 @@ function priceIdFromSubscription(subData) {
 // Individual program cap, which is a worse failure than a stale tier.
 // What discount, if any, is attached to this subscription?
 //
-// Returns { code, amountCents } — both null when there is none. The code is
-// the human-facing string (COACHFRIEND), taken from the checkout metadata
-// first because that is stable: Stripe's discount object can be detached once
-// a duration:'once' coupon has been consumed, and the promotion_code is only
-// an id anyway.
+// Returns { code, amountCents } — both null when there is none.
+//
+// API SHAPE (2026-10-26). Current Stripe versions restructured all of this:
+//
+//   Subscription   `discount` is GONE. `discounts` is an array of STRING ids,
+//                  so the fetch below asks for expand[]=discounts.
+//   Discount       `coupon` is GONE, replaced by `source: { type, coupon }`
+//                  where source.coupon is the coupon ID as a string.
+//   Discount       `promotion_code` is a string id, not an expanded object.
+//
+// So neither the coupon's amounts nor the human-facing code can be read off
+// the subscription any more; both need a follow-up GET. Those only happen
+// when a discount actually exists, which is the rare path.
+//
+// Every read accepts the legacy shape too. We send no Stripe-Version header
+// (raw fetch, not the SDK), so the account's default version governs and
+// could move in either direction.
+//
+// The code is preferred from checkout metadata because that is the most
+// stable source: a duration:'once' discount detaches once consumed, and the
+// promotion code can later be deleted outright.
 //
 // amountCents is computed, not read, because Stripe reports a percent-off
 // coupon as a percentage and we want the dollars it actually took off this
 // subscription's price. Derived at write time so a later price change can't
 // retroactively alter what we recorded.
-function discountFor(subData, metadataCode, unitAmountCents) {
-  const coupon = subData?.discount?.coupon ?? subData?.discounts?.[0]?.coupon ?? null
-  const code   = metadataCode
-    ?? subData?.discount?.promotion_code?.code
-    ?? coupon?.name
-    ?? null
+async function discountFor(subData, metadataCode, unitAmountCents, secretKey) {
+  // discounts[] (new, array of ids or expanded objects) then discount (legacy).
+  const raw = subData?.discounts?.[0] ?? subData?.discount ?? null
+  if (!raw && !metadataCode) return { code: null, amountCents: null }
+
+  let discount = typeof raw === 'string' ? null : raw
+  if (typeof raw === 'string' && secretKey) {
+    // Unexpanded id — shouldn't happen since we ask for expand[]=discounts,
+    // but a redelivery of an event captured before that change would hit it.
+    discount = await stripeGetJson(`/discounts/${raw}`, secretKey).catch(() => null)
+  }
+
+  const couponRef = discount?.source?.coupon ?? discount?.coupon ?? null
+  let coupon = typeof couponRef === 'string' ? null : couponRef
+  if (typeof couponRef === 'string' && secretKey) {
+    coupon = await stripeGetJson(`/coupons/${couponRef}`, secretKey).catch(() => null)
+  }
+
+  // promotion_code is an id on the current API, an object on the old one.
+  let code = metadataCode ?? null
+  if (!code) {
+    const pcRef = discount?.promotion_code ?? null
+    if (typeof pcRef === 'string' && secretKey) {
+      const pc = await stripeGetJson(`/promotion_codes/${pcRef}`, secretKey).catch(() => null)
+      code = pc?.code ?? null
+    } else if (pcRef?.code) {
+      code = pcRef.code
+    }
+  }
+  // Last resort: we name coupons after the code at creation.
+  if (!code) code = coupon?.name ?? null
 
   let amountCents = null
   if (coupon) {
@@ -137,6 +178,17 @@ function discountFor(subData, metadataCode, unitAmountCents) {
   // than null, so "a code was used" stays distinguishable from "no code".
   if (code && amountCents === null) amountCents = 0
   return { code: code ?? null, amountCents }
+}
+
+// Small GET helper for the follow-up lookups above. Throws on a non-2xx so
+// the callers' .catch(() => null) can degrade to "we could not resolve it".
+async function stripeGetJson(path, secretKey) {
+  const res = await fetch(`https://api.stripe.com/v1${path}`, {
+    headers: { 'Authorization': `Bearer ${secretKey}` },
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error?.message ?? `Stripe GET ${path} → ${res.status}`)
+  return data
 }
 
 function planTierFor(priceId, metadataPlan) {
@@ -419,9 +471,12 @@ export default async function handler(req, res) {
         }
         let subStatus, trialEndsAt, livePriceId, discount = { code: null, amountCents: null }
         try {
-          const subRes = await fetch(`https://api.stripe.com/v1/subscriptions/${subscriptionId}`, {
-            headers: { 'Authorization': `Bearer ${secretKey}` },
-          })
+          // expand[]=discounts: on the current API `discounts` is an array of
+          // ids, so without this there is nothing to read the coupon from.
+          const subRes = await fetch(
+            `https://api.stripe.com/v1/subscriptions/${subscriptionId}?expand[]=discounts`,
+            { headers: { 'Authorization': `Bearer ${secretKey}` } },
+          )
           if (!subRes.ok) throw new Error(`Stripe subscription fetch HTTP ${subRes.status}`)
           const subData = await subRes.json()
           subStatus   = subData.status
@@ -431,9 +486,10 @@ export default async function handler(req, res) {
           // what Stripe actually created. They agree today, but only one of them
           // stays correct after a plan change.
           livePriceId = priceIdFromSubscription(subData)
-          discount = discountFor(
+          discount = await discountFor(
             subData, metadataCode,
             subData?.items?.data?.[0]?.price?.unit_amount,
+            secretKey,
           )
           console.log('[webhook] Stripe subscription:', {
             status: subStatus, trial_end: trialEndsAt, price_id: livePriceId,

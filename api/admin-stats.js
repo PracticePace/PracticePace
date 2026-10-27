@@ -151,8 +151,14 @@ async function build(supabaseUrl, serviceKey, stripeKey) {
     const sub   = a.stripe_customer_id ? subsByCustomer.get(a.stripe_customer_id) : null
     const item  = sub?.items?.data?.[0]
     const cents = item?.price?.unit_amount ?? null
-    const renewalIso = sub?.current_period_end
-      ? new Date(sub.current_period_end * 1000).toISOString() : null
+    // Current Stripe versions moved the period boundaries off the
+    // subscription and onto each subscription ITEM. Reading only the old
+    // top-level field left every renewal date null — silently, because a
+    // missing date renders as "—" rather than erroring. Item first, legacy
+    // second, since we send no Stripe-Version header and the account's
+    // default version governs.
+    const periodEnd  = item?.current_period_end ?? sub?.current_period_end ?? null
+    const renewalIso = periodEnd ? new Date(periodEnd * 1000).toISOString() : null
 
     return {
       id:           a.id,

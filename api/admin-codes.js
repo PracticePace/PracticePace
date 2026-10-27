@@ -10,6 +10,23 @@
 // incentive, not a permanent price cut — and a promotion code carrying the
 // code name, max redemptions and expiry.
 //
+// API SHAPE (2026-10-26). Current Stripe versions replaced the top-level
+// `coupon` parameter on promotion_codes with a `promotion` object:
+//
+//   OLD   coupon=co_123
+//   NEW   promotion[type]=coupon  promotion[coupon]=co_123
+//
+// Sending the old one now fails with "Received unknown parameter: coupon".
+// The RESPONSE changed to match: there is no expanded `coupon` object any
+// more, only `promotion.coupon` holding the coupon ID as a STRING. So the
+// list below can no longer read percent_off/amount_off straight off the
+// promotion code — it fetches the coupons separately and joins them.
+//
+// We send no Stripe-Version header (every call here is raw fetch, not the
+// SDK — `stripe` is in package.json but imported nowhere), so the account's
+// default API version governs. Reads below accept BOTH shapes so a version
+// change in either direction doesn't blank the dashboard.
+//
 // WHY A CODE CANNOT BE DELETED, ONLY DEACTIVATED
 // Stripe keeps promotion codes for the life of the subscriptions that used
 // them. Deactivating stops new redemptions and leaves the audit trail intact,
@@ -59,8 +76,30 @@ export default async function handler(req) {
 async function listCodes(stripeKey) {
   const { value, cachedAt } = await cached('admin-codes', async () => {
     const codes = await stripeList('/promotion_codes', stripeKey, { max: 200 })
+
+    // promotion.coupon is an ID, not an object. One list call for every
+    // coupon beats one GET per code — a dashboard with 50 codes would
+    // otherwise make 50 round trips behind a 60-second cache.
+    const couponById = new Map()
+    try {
+      for (const c of await stripeList('/coupons', stripeKey, { max: 300 })) {
+        couponById.set(c.id, c)
+      }
+    } catch (err) {
+      // Non-fatal: the codes still list, the discount column reads "—".
+      console.warn('[admin-codes] coupon list failed (non-fatal):', err?.message ?? err)
+    }
+
     return codes.map(p => {
-      const c = p.coupon ?? {}
+      // New shape first, legacy second. On the old API `p.coupon` was the
+      // expanded object; on the new one it is promotion.coupon, an ID.
+      const couponId = typeof p.promotion?.coupon === 'string' ? p.promotion.coupon
+        : p.promotion?.coupon?.id ?? (typeof p.coupon === 'string' ? p.coupon : p.coupon?.id) ?? null
+      const c = couponById.get(couponId)
+        ?? (typeof p.coupon === 'object' && p.coupon ? p.coupon : null)
+        ?? (typeof p.promotion?.coupon === 'object' && p.promotion.coupon ? p.promotion.coupon : null)
+        ?? {}
+
       const expiresMs = p.expires_at ? p.expires_at * 1000 : null
       const expired   = expiresMs !== null && expiresMs < Date.now()
       const exhausted = p.max_redemptions != null && (p.times_redeemed ?? 0) >= p.max_redemptions
@@ -76,7 +115,7 @@ async function listCodes(stripeKey) {
         expiresAt:      expiresMs ? new Date(expiresMs).toISOString() : null,
         percentOff:     c.percent_off ?? null,
         amountOffCents: c.amount_off ?? null,
-        // The note the owner typed at creation, stashed on the coupon.
+        // The note the owner typed at creation, stashed on both objects.
         note:           p.metadata?.note ?? c.metadata?.note ?? null,
         createdAt:      p.created ? new Date(p.created * 1000).toISOString() : null,
       }
@@ -154,10 +193,12 @@ async function write(req, stripeKey, actorEmail) {
   const coupon = await stripePost('/coupons', couponParams, stripeKey)
 
   // ── 2. Promotion code: the STRING a customer types ────────────────────────
+  // promotion[type]/promotion[coupon], NOT the retired top-level `coupon`.
   const promoParams = new URLSearchParams({
-    coupon:          coupon.id,
+    'promotion[type]':   'coupon',
+    'promotion[coupon]': coupon.id,
     code,
-    max_redemptions: String(maxRedemptions),
+    max_redemptions:     String(maxRedemptions),
   })
   if (expiresAt) promoParams.set('expires_at', String(expiresAt))
   if (note) promoParams.set('metadata[note]', note)
