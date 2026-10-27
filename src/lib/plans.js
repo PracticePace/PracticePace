@@ -89,3 +89,42 @@ export function planLabel(key) {
 // trial_period_days in api/stripe-checkout.js and the 14-day window
 // api/create-account.js writes into accounts.trial_ends_at.
 export const TRIAL_DAYS = 14
+
+// ── Discount maths ───────────────────────────────────────────────────────────
+// Used by /pricing and by Onboarding so the two can never quote different
+// numbers for the same code. Stripe is still the authority — this only
+// decides what we SHOW before the customer reaches checkout.
+//
+// FIRST YEAR ONLY. Every code we issue is a Stripe coupon with
+// duration:'once' (see api/admin-codes.js), so it comes off the first
+// invoice and renewals go back to list price. The copy says so; quoting a
+// permanently lower price would be a promise we don't keep at renewal.
+//
+// Returns null when there is no usable discount, so callers can render the
+// plain price by checking one thing.
+export function discountedPrice(plan, discount) {
+  if (!plan || !discount?.valid) return null
+
+  const listCents = Math.round(plan.price * 100)
+  let offCents = null
+  if (typeof discount.percentOff === 'number') {
+    offCents = Math.round(listCents * (discount.percentOff / 100))
+  } else if (typeof discount.amountOffCents === 'number') {
+    offCents = discount.amountOffCents
+  }
+  if (offCents === null || offCents <= 0) return null
+
+  // A $1,000-off code against the $699 plan is free, not negative.
+  const finalCents = Math.max(0, listCents - offCents)
+  if (finalCents === listCents) return null
+
+  return {
+    listCents,
+    offCents:   listCents - finalCents,
+    finalCents,
+    // Whole dollars: every price we publish is whole, and "$599.00" next to
+    // "$699" reads like a different kind of number.
+    finalLabel: `$${Math.round(finalCents / 100).toLocaleString('en-US')}`,
+    listLabel:  plan.priceText,
+  }
+}

@@ -5,8 +5,8 @@ import { useAuth }             from '../context/AuthContext'
 import Logo    from '../components/Logo'
 import Tagline from '../components/Tagline'
 import { SPORTS } from '../lib/sports'
-import { PLAN_LIST, PLANS, planLabel, PLAN_KEYS } from '../lib/plans'
-import { PENDING_PLAN_KEY } from '../lib/siteConfig'
+import { PLAN_LIST, PLANS, planLabel, PLAN_KEYS, TRIAL_DAYS } from '../lib/plans'
+import { PENDING_PLAN_KEY, PENDING_CODE_KEY, normalizePromoCode } from '../lib/siteConfig'
 
 const STEPS = ['Account Type', 'Program Details', 'Confirmation']
 
@@ -364,6 +364,30 @@ export default function Onboarding() {
   // choice had to survive the confirm-your-email round-trip). Read once on
   // mount, then cleared — a stale choice from three weeks ago shouldn't
   // preselect anything.
+  // A code followed in from /pricing, either on the URL or parked earlier.
+  // NOT consumed here: it stays until a checkout actually succeeds, so the
+  // "trial instead" path below keeps it for whenever they do subscribe.
+  const pendingCode = (() => {
+    try {
+      const fromUrl = normalizePromoCode(new URLSearchParams(window.location.search).get('code'))
+      if (fromUrl) { localStorage.setItem(PENDING_CODE_KEY, fromUrl); return fromUrl }
+      return normalizePromoCode(localStorage.getItem(PENDING_CODE_KEY))
+    } catch { return null }
+  })()
+
+  const [codeChecked, setCodeChecked] = useState(null)
+  const codeDeal = codeChecked?.forCode === pendingCode && codeChecked?.valid ? codeChecked : null
+
+  useEffect(() => {
+    if (!pendingCode) return
+    let alive = true
+    fetch(`/api/validate-code?code=${encodeURIComponent(pendingCode)}`)
+      .then(r => r.json())
+      .then(d => { if (alive) setCodeChecked({ ...d, forCode: pendingCode }) })
+      .catch(() => { if (alive) setCodeChecked({ valid: false, forCode: pendingCode }) })
+    return () => { alive = false }
+  }, [pendingCode])
+
   const [accountType, setAccountType] = useState(() => {
     try {
       const fromUrl = new URLSearchParams(window.location.search).get('plan')
@@ -433,7 +457,32 @@ export default function Onboarding() {
   // ── Full onboarding submit — calls serverless API that uses service role key
   // to bypass RLS. Direct Supabase client inserts are blocked by RLS since
   // the user has no profile row yet at this point in the flow.
-  async function handleSubmit() {
+  // Returns true when the browser is on its way to Stripe. Never throws —
+  // the caller needs to fall back to the dashboard, not to a dead end.
+  async function goToCheckout() {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const accessToken = session?.access_token ?? null
+      if (!accessToken) throw new Error('Your session has expired — please sign in again.')
+
+      const res = await fetch('/api/stripe-checkout', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body:    JSON.stringify({ plan: accountType, code: pendingCode }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.url) throw new Error(data.error ?? 'Could not open checkout.')
+      // Not cleared here — see Dashboard's ?subscription=success handler.
+      window.location.href = data.url
+      return true
+    } catch (err) {
+      console.error('[Onboarding] checkout failed:', err?.message ?? err)
+      setError(`${err?.message ?? 'Could not open checkout.'} Your account is ready — you can subscribe from Settings.`)
+      return false
+    }
+  }
+
+  async function handleSubmit({ thenCheckout = false } = {}) {
     setError('')
     setLoading(true)
 
@@ -468,6 +517,18 @@ export default function Onboarding() {
 
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error ?? `Server error (${res.status})`)
+
+      // With a confirmed code, go straight from account creation to Stripe.
+      // The account has to exist first — /api/stripe-checkout derives the
+      // account id from the session's profile, so there is nothing to bill
+      // against until this point.
+      if (thenCheckout) {
+        const ok = await goToCheckout()
+        if (ok) return            // navigating to Stripe
+        // Checkout failed but the ACCOUNT was created. Falling through to
+        // the dashboard is right: they have a working trial, the error is
+        // shown, and the code stays parked for Settings → Billing.
+      }
 
       // Hard redirect so React Router state can't interfere
       window.location.replace('/dashboard')
@@ -541,16 +602,36 @@ export default function Onboarding() {
               </button>
             ) : (
               <div className="flex flex-col items-end gap-1">
+                {/* With a confirmed code this becomes a buy button, because
+                    that is what the coach was promised on /pricing. The trial
+                    stays one tap away and KEEPS the code — somebody who isn't
+                    ready to pay today shouldn't forfeit their discount. */}
                 <button
                   type="button"
-                  onClick={handleSubmit}
+                  onClick={() => handleSubmit({ thenCheckout: !!codeDeal })}
                   disabled={loading}
                   className="px-6 py-3 rounded-xl text-sm font-black text-white transition-opacity disabled:opacity-50"
                   style={{ backgroundColor: '#cc1111' }}
                 >
-                  {loading ? 'Setting up your account…' : '🚀 Launch My Trial'}
+                  {loading
+                    ? (codeDeal ? 'Opening checkout…' : 'Setting up your account…')
+                    : codeDeal
+                      ? `Subscribe now — ${codeDeal.code ?? pendingCode} applied`
+                      : '🚀 Launch My Trial'}
                 </button>
-                <span className="text-xs" style={{ color: '#4a2020' }}>No credit card required</span>
+                {codeDeal ? (
+                  <button
+                    type="button"
+                    onClick={() => handleSubmit({ thenCheckout: false })}
+                    disabled={loading}
+                    className="text-xs underline transition-opacity hover:opacity-70 disabled:opacity-50"
+                    style={{ color: '#9a8080', background: 'none', border: 'none', cursor: 'pointer' }}
+                  >
+                    or start a free {TRIAL_DAYS}-day trial instead
+                  </button>
+                ) : (
+                  <span className="text-xs" style={{ color: '#4a2020' }}>No credit card required</span>
+                )}
               </div>
             )}
           </div>

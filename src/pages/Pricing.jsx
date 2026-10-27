@@ -9,11 +9,11 @@
 // The monthly/annual toggle is gone. Both plans are billed annually, so a
 // toggle with one position on each side was just a control that did nothing.
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
-import { PLAN_LIST, TRIAL_DAYS } from '../lib/plans'
+import { PLAN_LIST, PLAN_KEYS, TRIAL_DAYS, discountedPrice } from '../lib/plans'
 import { PENDING_CODE_KEY, normalizePromoCode } from '../lib/siteConfig'
 import MarketingHeader from '../components/marketing/MarketingHeader'
 import MarketingFooter from '../components/marketing/MarketingFooter'
@@ -42,6 +42,54 @@ export default function Pricing() {
 
   const orgId = profile?.current_org_id ?? null
 
+  // null = not asked yet, then { valid, percentOff, amountOffCents }.
+  // A code turns the page from "start a free trial" into "subscribe now at
+  // this price", so nothing about the discount is rendered until the server
+  // has confirmed it — quoting a discount we then fail to apply is worse
+  // than a moment of plain pricing.
+  const [checked, setChecked] = useState(null)   // { forCode, valid, … }
+
+  // Tagged with the code it answers, and read back through that tag, so a
+  // result for an older code can never be shown against a newer one.
+  const discount = checked && checked.forCode === promoCode ? checked : null
+
+  useEffect(() => {
+    if (!promoCode) return
+    let alive = true
+    fetch(`/api/validate-code?code=${encodeURIComponent(promoCode)}`)
+      .then(r => r.json())
+      .then(d => { if (alive) setChecked({ ...d, forCode: promoCode }) })
+      // Network failure is not "invalid" — it is "we don't know". Showing
+      // plain pricing is right either way, and checkout still offers
+      // Stripe's own promotion-code box.
+      .catch(() => { if (alive) setChecked({ valid: false, code: promoCode, forCode: promoCode }) })
+    return () => { alive = false }
+  }, [promoCode])
+
+  const codeValid   = discount?.valid === true
+  const codeChecked = discount !== null
+  const codeBad     = codeChecked && !codeValid
+
+  // ?plan= names a plan, so an existing coach following a full code link has
+  // already chosen — send them straight to Stripe rather than asking again.
+  //
+  // Guarded three ways: only with a CONFIRMED code, only once per mount, and
+  // never for an account that is already 'active'. That last one matters —
+  // auto-starting checkout for a current subscriber would quietly sell them
+  // a second subscription.
+  const autoStarted = useRef(false)
+  useEffect(() => {
+    if (autoStarted.current || !codeValid || !user || !orgId) return
+    const wanted = search.get('plan')
+    if (!wanted || !PLAN_KEYS.includes(wanted)) return
+    if (profile?.subscription_status === 'active') return
+    const plan = PLAN_LIST.find(p => p.key === wanted)
+    if (!plan) return
+    autoStarted.current = true
+    startTrial(plan)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codeValid, user, orgId, search])
+
   async function startTrial(plan) {
     // Anonymous visitor: the Create Account tab, carrying the plan they
     // clicked. This used to navigate('/') — the marketing home page — which
@@ -59,7 +107,9 @@ export default function Pricing() {
     // Previously this was a dead-end error telling them to go to Settings for
     // something Settings can't do.
     if (!orgId) {
-      navigate(`/onboarding?plan=${encodeURIComponent(plan.key)}`)
+      const q = new URLSearchParams({ plan: plan.key })
+      if (promoCode) q.set('code', promoCode)
+      navigate(`/onboarding?${q.toString()}`)
       return
     }
 
@@ -87,9 +137,10 @@ export default function Pricing() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Checkout failed')
-      // Consumed. Leaving it parked would silently re-apply the code to a
-      // second purchase weeks later.
-      try { localStorage.removeItem(PENDING_CODE_KEY) } catch { /* private mode */ }
+      // The code is NOT cleared here. Reaching Stripe is not buying: a coach
+      // who abandons the Stripe page, or whose card is declined, must still
+      // have their discount when they come back. Dashboard clears it on
+      // ?subscription=success, which is the first moment it is truly spent.
       window.location.href = data.url
     } catch (err) {
       setError(err.message ?? 'Could not start checkout. Try again.')
@@ -111,21 +162,29 @@ export default function Pricing() {
           Simple, honest pricing.
         </h1>
         <p className="text-base" style={{ color: '#9a8080' }}>
-          Start with a free {TRIAL_DAYS}-day trial. No credit card required to try.
+          {codeValid
+            ? 'Your discount is applied below. Subscribe now and your first year is discounted.'
+            : `Start with a free ${TRIAL_DAYS}-day trial. No credit card required to try.`}
         </p>
         <p className="text-sm mt-2" style={{ color: '#6a4040' }}>
           Two plans, both billed annually.
         </p>
 
-        {/* Tells the visitor their link was understood. Deliberately does NOT
-            claim the code is valid — that is only known once Stripe is asked,
-            and promising a discount we then can't apply is worse than this. */}
-        {promoCode && (
+        {/* Three states, and the difference matters. Nothing is claimed until
+            the server has confirmed the code; an unknown code says so quietly
+            and the page simply carries on as the normal trial pricing page. */}
+        {codeValid && (
           <p
             className="inline-block text-xs font-bold mt-4 px-3 py-1.5 rounded-full"
             style={{ backgroundColor: '#1a2200', color: '#88cc44', border: '1px solid #2a3300' }}
           >
-            Discount code {promoCode} will be applied at checkout
+            ✓ Code {discount.code ?? promoCode} applied
+          </p>
+        )}
+        {codeBad && (
+          <p className="text-xs mt-4" style={{ color: '#9a8080' }}>
+            This code isn&rsquo;t valid. Normal pricing is shown below &mdash; you can
+            still try a code at checkout.
           </p>
         )}
       </div>
@@ -134,6 +193,7 @@ export default function Pricing() {
       <div className="flex-1 flex items-start justify-center gap-5 px-6 pb-12 flex-wrap">
         {PLAN_LIST.map(plan => {
           const isLoading = loading === plan.key
+          const deal      = discountedPrice(plan, discount)
 
           return (
             <div
@@ -159,21 +219,45 @@ export default function Pricing() {
                   <p className="text-sm mt-1" style={{ color: '#9a8080' }}>{plan.tagline}</p>
                 </div>
 
-                {/* Price */}
-                <div className="flex items-end gap-1">
-                  <span className="text-4xl font-black text-white">${fmt(plan.price)}</span>
+                {/* Price. With a confirmed code the list price stays visible,
+                    struck through — the saving is the point, and hiding what
+                    it was makes the discount unreadable. */}
+                <div className="flex items-end gap-2 flex-wrap">
+                  {deal ? (
+                    <>
+                      <span className="text-2xl font-black" style={{ color: '#6a4040', textDecoration: 'line-through' }}>
+                        {deal.listLabel}
+                      </span>
+                      <span className="text-4xl font-black" style={{ color: '#88cc44' }}>{deal.finalLabel}</span>
+                    </>
+                  ) : (
+                    <span className="text-4xl font-black text-white">${fmt(plan.price)}</span>
+                  )}
                   <span className="text-sm mb-1.5" style={{ color: '#9a8080' }}>
                     {plan.period}
                   </span>
                 </div>
 
+                {deal && (
+                  <p className="text-xs font-semibold -mt-2" style={{ color: '#88cc44' }}>
+                    First year with {discount.code ?? promoCode}. Renews at {deal.listLabel}{plan.period}.
+                  </p>
+                )}
+
                 {/* Who pays */}
                 <p className="text-xs" style={{ color: '#6a4040' }}>{plan.billedBy}</p>
 
-                {/* Trial note */}
-                <p className="text-xs font-semibold" style={{ color: '#cc8800' }}>
-                  ✦ {TRIAL_DAYS}-day free trial — cancel any time
-                </p>
+                {/* Trial note — replaced by the charge-now note when a code
+                    is applied, because that path has no trial at all. */}
+                {deal ? (
+                  <p className="text-xs font-semibold" style={{ color: '#cc8800' }}>
+                    ✦ Billed today — cancel any time
+                  </p>
+                ) : (
+                  <p className="text-xs font-semibold" style={{ color: '#cc8800' }}>
+                    ✦ {TRIAL_DAYS}-day free trial — cancel any time
+                  </p>
+                )}
 
                 {/* Features */}
                 <ul className="flex flex-col gap-2 flex-1">
@@ -197,7 +281,9 @@ export default function Pricing() {
                     boxShadow:       plan.highlight ? '0 4px 20px #cc111166' : 'none',
                   }}
                 >
-                  {isLoading ? 'Starting…' : `Start Free ${TRIAL_DAYS}-Day Trial`}
+                  {isLoading
+                    ? (deal ? 'Opening checkout…' : 'Starting…')
+                    : deal ? 'Subscribe now' : `Start Free ${TRIAL_DAYS}-Day Trial`}
                 </button>
 
                 {/* Terms consent — sits with the button that creates the

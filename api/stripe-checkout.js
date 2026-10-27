@@ -345,10 +345,19 @@ export default async function handler(req) {
       params.set('allow_promotion_codes', 'true')
     }
 
-    // Only add trial days for brand-new signups with no prior in-app trial
-    if (!skipTrial) {
+    // Trial days only for a brand-new signup with no prior in-app trial AND
+    // no discount applied.
+    //
+    // A discount code is a "buy now" offer, not a "try now" one: the coupon
+    // is duration:'once', so stacking it on a 14-day Stripe trial would burn
+    // the discount against an invoice two weeks out and leave the customer
+    // wondering where it went. With a code the card is charged today, which
+    // is also what /pricing promises on that path ("Billed today").
+    if (!skipTrial && !promotionCodeId) {
       params.set('subscription_data[trial_period_days]', '14')
       console.log('[stripe-checkout] Adding 14-day trial to session')
+    } else if (promotionCodeId) {
+      console.log('[stripe-checkout] discount applied — charging immediately, no trial')
     }
 
     const session = await stripePost('/checkout/sessions', params, secretKey)

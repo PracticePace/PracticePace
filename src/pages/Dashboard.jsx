@@ -210,6 +210,25 @@ export default function Dashboard() {
     trialExpired
   )
 
+  // Stripe sends the browser back to /dashboard?subscription=success. That
+  // return is the first moment a discount code is genuinely spent, so it is
+  // the only place the parked code is cleared — leaving it would silently
+  // re-apply to a second purchase, clearing it any earlier would lose it for
+  // anyone who backed out of the Stripe page.
+  //
+  // The query string is stripped afterwards so a reload or a bookmarked URL
+  // doesn't repeat this.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const params = new URLSearchParams(window.location.search)
+      if (params.get('subscription') !== 'success') return
+      try { localStorage.removeItem(PENDING_CODE_KEY) } catch { /* private mode */ }
+      console.log('[Dashboard] subscription success — cleared any pending discount code')
+      window.history.replaceState({}, '', window.location.pathname)
+    }, 0)
+    return () => clearTimeout(t)
+  }, [])
+
   // Use user?.id (stable string) not user (new object every token refresh).
   // Without this, every token refresh fires loadAll() and makes the app
   // look like it's reloading every time the user switches back to the tab.
@@ -481,7 +500,9 @@ export default function Dashboard() {
       console.log('[Dashboard] startCheckout ← API response', res.status, data)
       if (!res.ok) throw new Error(data.error ?? `Server error (${res.status})`)
       if (!data.url) throw new Error('No redirect URL returned from checkout API')
-      try { localStorage.removeItem(PENDING_CODE_KEY) } catch { /* private mode */ }
+      // NOT cleared here. Reaching Stripe is not buying — an abandoned
+      // checkout or a declined card must leave the discount intact. It is
+      // cleared below, on ?subscription=success.
       window.location.href = data.url
     } catch (err) {
       console.error('[Dashboard] startCheckout error:', err.message)
